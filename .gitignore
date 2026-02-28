@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.bak
+*.backup
+*_backup.py
+*.pp

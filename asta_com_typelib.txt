@@ -1,0 +1,1759 @@
+ASTA POWERPROJECT COM TYPE LIBRARY DUMP
+================================================================================
+Connected to running Asta instance
+
+################################################################################
+# APPLICATION OBJECT
+################################################################################
+
+================================================================================
+INTERFACE: IApplication
+================================================================================
+  Functions: 45, Variables: 0
+
+  [METHOD] void QueryInterface(ptr riid, ptr ppvObj)
+  [METHOD] uint32 AddRef()
+  [METHOD] uint32 Release()
+  [METHOD] void GetTypeInfoCount(ptr pctinfo)
+  [ERROR] func_4: 'int' object is not subscriptable
+  [ERROR] func_5: 'int' object is not subscriptable
+  [ERROR] func_6: 'int' object is not subscriptable
+  [PROP_GET] string Name()
+  [PROP_GET] ptr Application()
+  [PROP_GET] string Fullname()
+  [PROP_GET] ptr Parent()
+  [PROP_GET] bool Visible()
+  [ERROR] func_12: 'int' object is not subscriptable
+  [PROP_GET] ptr Projects()
+  [PROP_GET] ptr Servers()
+  [PROP_GET] ptr ActiveProject()
+  [METHOD] int32 NumPrinters()
+  [ERROR] func_17: 'int' object is not subscriptable
+  [PROP_GET] variant ObjectTypes()
+  [PROP_GET] variant EnglishObjectTypes()
+  [ERROR] func_20: 'int' object is not subscriptable
+  [ERROR] func_21: 'int' object is not subscriptable
+  [ERROR] func_22: 'int' object is not subscriptable
+  [ERROR] func_23: 'int' object is not subscriptable
+  [ERROR] func_24: 'int' object is not subscriptable
+  [PROP_GET] string Version()
+  [PROP_GET] bool IsInInstemMode()
+  [ERROR] func_27: 'int' object is not subscriptable
+  [METHOD] ptr CreateRelativeTimeObject()
+  [PROP_GET] IDispatch VBE()
+  [ERROR] func_30: 'int' object is not subscriptable
+  [ERROR] func_31: 'int' object is not subscriptable
+  [ERROR] func_32: 'int' object is not subscriptable
+  [PROP_GET] userdefined ProtectionMethod()
+  [PROP_GET] userdefined BuildType()
+  [ERROR] func_35: 'int' object is not subscriptable
+  [PROP_GET] ptr CommandBars()
+  [PROP_GET] bool ConnectedToBIMCloud()
+  [METHOD] void ConnectToBIMCloud()
+  [PROP_GET] ptr CloudIFCModelRootFolder()
+  [ERROR] func_40: 'int' object is not subscriptable
+  [PROP_GET] IDispatch ActiveModel()
+  [METHOD] variant GetSelectedViewerProducts()
+  [METHOD] variant GetVisibleViewerProducts()
+  [ERROR] func_44: 'int' object is not subscriptable
+
+  --- Implemented Interfaces (1) ---
+  [IMPL] IDispatch (flags=0)
+
+################################################################################
+# PROJECT OBJECT (ActiveProject)
+################################################################################
+
+================================================================================
+INTERFACE: IProject
+================================================================================
+  Functions: 266, Variables: 0
+
+  [METHOD] void QueryInterface(ptr riid, ptr ppvObj)
+  [METHOD] uint32 AddRef()
+  [METHOD] uint32 Release()
+  [METHOD] void GetTypeInfoCount(ptr pctinfo)
+  [ERROR] func_4: 'int' object is not subscriptable
+  [ERROR] func_5: 'int' object is not subscriptable
+  [ERROR] func_6: 'int' object is not subscriptable
+  [PROP_GET] string Name()
+  [PROP_GET] ptr Application()
+  [PROP_GET] IDispatch Parent()
+  [PROP_GET] ptr Views()
+  [PROP_GET] ptr CurrentView()
+  [PROP_GET] ptr Bars()
+  [PROP_GET] ptr Server()
+  [PROP_GET] ptr BaselineSummaries()
+  [PROP_GET] ptr ProjectSummary()
+  [PROP_GET] ptr BookedOutSets()
+  [PROP_GET] bool IsLocalProject()
+  [PROP_GET] string FileName()
+  [PROP_GET] int32 DataSourceId()
+  [ERROR] func_20: 'int' object is not subscriptable
+  [ERROR] func_21: 'int' object is not subscriptable
+  [PROP_GET] ptr BslnProjects()
+  [METHOD] void Save()
+  [ERROR] func_24: 'int' object is not subscriptable
+  [METHOD] void Undo()
+  [METHOD] void Redo()
+  [METHOD] void UndoAll()
+  [ERROR] func_28: 'int' object is not subscriptable
+  [PROP_GET] userdefined TransactionMode()
+  [PROP_PUT] void TransactionMode(userdefined p0)
+  [ERROR] func_31: 'int' object is not subscriptable
+  [METHOD] bool TransactionInProgress()
+  [METHOD] void EndTransaction()
+  [METHOD] void AbandonTransaction()
+  [METHOD] void ResetTransaction()
+  [PROP_GET] int32 ProjectID()
+  [ERROR] func_37: 'int' object is not subscriptable
+  [ERROR] func_38: 'int' object is not subscriptable
+  [ERROR] func_39: 'int' object is not subscriptable
+  [ERROR] func_40: 'int' object is not subscriptable
+  [ERROR] func_41: 'int' object is not subscriptable
+  [ERROR] func_42: 'int' object is not subscriptable
+  [ERROR] func_43: 'int' object is not subscriptable
+  [ERROR] func_44: 'int' object is not subscriptable
+  [ERROR] func_45: 'int' object is not subscriptable
+  [ERROR] func_46: 'int' object is not subscriptable
+  [METHOD] void WaitForNotificationProcessing()
+  [PROP_GET] ptr TaggedBookableObjects()
+  [ERROR] func_49: 'int' object is not subscriptable
+  [ERROR] func_50: 'int' object is not subscriptable
+  [ERROR] func_51: 'int' object is not subscriptable
+  [METHOD] void UntagAllTaggedBookableObjects()
+  [ERROR] func_53: 'int' object is not subscriptable
+  [METHOD] void Mount()
+  [METHOD] void Dismount()
+  [ERROR] func_56: 'int' object is not subscriptable
+  [ERROR] func_57: 'int' object is not subscriptable
+  [ERROR] func_58: 'int' object is not subscriptable
+  [ERROR] func_59: 'int' object is not subscriptable
+  [ERROR] func_60: 'int' object is not subscriptable
+  [ERROR] func_61: 'int' object is not subscriptable
+  [METHOD] variant ListOfUDFs(userdefined object_type)
+  [ERROR] func_63: 'int' object is not subscriptable
+  [ERROR] func_64: 'int' object is not subscriptable
+  [ERROR] func_65: 'int' object is not subscriptable
+  [PROP_GET] date ProjectStart()
+  [PROP_GET] date ProjectEnd()
+  [ERROR] func_68: 'int' object is not subscriptable
+  [ERROR] func_69: 'int' object is not subscriptable
+  [ERROR] func_70: 'int' object is not subscriptable
+  [ERROR] func_71: 'int' object is not subscriptable
+  [ERROR] func_72: 'int' object is not subscriptable
+  [ERROR] func_73: 'int' object is not subscriptable
+  [ERROR] func_74: 'int' object is not subscriptable
+  [METHOD] ptr CurrentUser()
+  [PROP_GET] userdefined ProgressMethod()
+  [PROP_PUT] void ProgressMethod(userdefined p0)
+  [ERROR] func_78: 'int' object is not subscriptable
+  [ERROR] func_79: 'int' object is not subscriptable
+  [PROP_GET] ptr Histograms()
+  [PROP_GET] ptr ViewDefinitions()
+  [PROP_GET] int32 NumSpareFields()
+  [ERROR] func_83: 'int' object is not subscriptable
+  [ERROR] func_84: 'int' object is not subscriptable
+  [ERROR] func_85: 'int' object is not subscriptable
+  [ERROR] func_86: 'int' object is not subscriptable
+  [ERROR] func_87: 'int' object is not subscriptable
+  [ERROR] func_88: 'int' object is not subscriptable
+  [ERROR] func_89: 'int' object is not subscriptable
+  [ERROR] func_90: 'int' object is not subscriptable
+  [ERROR] func_91: 'int' object is not subscriptable
+  [ERROR] func_92: 'int' object is not subscriptable
+  [ERROR] func_93: 'int' object is not subscriptable
+  [ERROR] func_94: 'int' object is not subscriptable
+  [PROP_GET] ptr AllCodeLibraryEntrys()
+  [PROP_GET] ptr CodeLibraryEntrys()
+  [PROP_GET] ptr AllCodeLibrarys()
+  [PROP_GET] ptr CodeLibrarys()
+  [PROP_GET] ptr AllLinkCategorys()
+  [PROP_GET] ptr LinkCategorys()
+  [PROP_GET] ptr AllCalendars()
+  [PROP_GET] ptr Calendars()
+  [PROP_GET] ptr AllExceptions()
+  [PROP_GET] ptr Exceptions()
+  [PROP_GET] ptr AllWorkPatterns()
+  [PROP_GET] ptr WorkPatterns()
+  [PROP_GET] ptr AllTimeUnits()
+  [PROP_GET] ptr TimeUnits()
+  [PROP_GET] ptr AllProgressPeriods()
+  [PROP_GET] ptr ProgressPeriods()
+  [PROP_GET] ptr AllTableDefinitions()
+  [PROP_GET] ptr TableDefinitions()
+  [PROP_GET] ptr AllConsumableResources()
+  [PROP_GET] ptr ConsumableResources()
+  [PROP_GET] ptr AllPermanentResources()
+  [PROP_GET] ptr PermanentResources()
+  [PROP_GET] ptr AllPermResourceSkills()
+  [PROP_GET] ptr PermResourceSkills()
+  [PROP_GET] ptr AllAllocationGroups()
+  [PROP_GET] ptr AllocationGroups()
+  [PROP_GET] ptr AllWorkUnits()
+  [PROP_GET] ptr WorkUnits()
+  [PROP_GET] ptr AllCostCentres()
+  [PROP_GET] ptr CostCentres()
+  [PROP_GET] ptr AllCurrencyUnits()
+  [PROP_GET] ptr CurrencyUnits()
+  [PROP_GET] ptr AllResourceGraphDefinitions()
+  [PROP_GET] ptr ResourceGraphDefinitions()
+  [PROP_GET] ptr AllHistogramReports()
+  [PROP_GET] ptr HistogramReports()
+  [PROP_GET] ptr AllSorts()
+  [PROP_GET] ptr Sorts()
+  [PROP_GET] ptr AllUsers()
+  [PROP_GET] ptr Users()
+  [PROP_GET] ptr AllCostAndIncomeRates()
+  [PROP_GET] ptr CostAndIncomeRates()
+  [PROP_GET] ptr AllPrintProfiles()
+  [PROP_GET] ptr PrintProfiles()
+  [PROP_GET] ptr AllStandardWorks()
+  [PROP_GET] ptr StandardWorks()
+  [PROP_GET] ptr AllFilters()
+  [PROP_GET] ptr Filters()
+  [PROP_GET] ptr AllFilterCriterias()
+  [PROP_GET] ptr FilterCriterias()
+  [PROP_GET] ptr AllReports()
+  [PROP_GET] ptr Reports()
+  [PROP_GET] ptr AllReportedObjects()
+  [PROP_GET] ptr ReportedObjects()
+  [PROP_GET] ptr AllReportedFields()
+  [PROP_GET] ptr ReportedFields()
+  [ERROR] func_151: 'int' object is not subscriptable
+  [METHOD] void ClearUndoLog()
+  [ERROR] func_153: 'int' object is not subscriptable
+  [PROP_GET] int32 ServerProjectID()
+  [PROP_GET] int32 InitialView()
+  [ERROR] func_156: 'int' object is not subscriptable
+  [PROP_GET] bool SelectiveNotifications()
+  [ERROR] func_158: 'int' object is not subscriptable
+  [METHOD] void SubscribeToObjectTypeNotification(userdefined type)
+  [ERROR] func_160: 'int' object is not subscriptable
+  [METHOD] void UnSubscribeFromObjectTypeNotification(userdefined type)
+  [ERROR] func_162: 'int' object is not subscriptable
+  [METHOD] variant SubscribedNotificationObjects()
+  [ERROR] func_164: 'int' object is not subscriptable
+  [ERROR] func_165: 'int' object is not subscriptable
+  [PROP_GET] int32 CurrentBaselineId()
+  [ERROR] func_167: 'int' object is not subscriptable
+  [ERROR] func_168: 'int' object is not subscriptable
+  [PROP_GET] ptr UserDefinedTables()
+  [PROP_GET] ptr UserDefinedEnumerators()
+  [METHOD] bool IsModified()
+  [ERROR] func_172: 'int' object is not subscriptable
+  [ERROR] func_173: 'int' object is not subscriptable
+  [METHOD] string ListOfUDFsAsCommaSeparatedString(userdefined object_type)
+  [ERROR] func_175: 'int' object is not subscriptable
+  [METHOD] void ActivateProject()
+  [METHOD] bool IsProjectLocked()
+  [ERROR] func_178: 'int' object is not subscriptable
+  [ERROR] func_179: 'int' object is not subscriptable
+  [ERROR] func_180: 'int' object is not subscriptable
+  [ERROR] func_181: 'int' object is not subscriptable
+  [PROP_GET] ptr CurrentDefaultCalendar()
+  [ERROR] func_183: 'int' object is not subscriptable
+  [ERROR] func_184: 'int' object is not subscriptable
+  [METHOD] void ValidateProgress()
+  [ERROR] func_186: 'int' object is not subscriptable
+  [METHOD] bool WaitForNotificationProcessingWithCheck()
+  [PROP_GET] ptr AllTabularReports()
+  [PROP_GET] ptr TabularReports()
+  [PROP_GET] ptr AllCustomTimeUnits()
+  [PROP_GET] ptr CustomTimeUnits()
+  [ERROR] func_192: 'int' object is not subscriptable
+  [ERROR] func_193: 'int' object is not subscriptable
+  [ERROR] func_194: 'int' object is not subscriptable
+  [ERROR] func_195: 'int' object is not subscriptable
+  [PROP_GET] ptr OrphanBars()
+  [ERROR] func_197: 'int' object is not subscriptable
+  [ERROR] func_198: 'int' object is not subscriptable
+  [ERROR] func_199: 'int' object is not subscriptable
+  [ERROR] func_200: 'int' object is not subscriptable
+  [ERROR] func_201: 'int' object is not subscriptable
+  [PROP_GET] ptr AllWbsEntrys()
+  [PROP_GET] ptr WbsEntrys()
+  [METHOD] ptr NaturalOrderHierarchyAppearance()
+  [METHOD] ptr WBSHierarchyAppearance()
+  [PROP_GET] ptr AllViewCategorys()
+  [PROP_GET] ptr ViewCategorys()
+  [PROP_GET] ptr AllSortCategorys()
+  [PROP_GET] ptr SortCategorys()
+  [PROP_GET] ptr AllFilterCategorys()
+  [PROP_GET] ptr FilterCategorys()
+  [PROP_GET] ptr AllTableDefinitionCategorys()
+  [PROP_GET] ptr TableDefinitionCategorys()
+  [PROP_GET] ptr AllFormulas()
+  [PROP_GET] ptr Formulas()
+  [PROP_GET] ptr AllFormulaCategorys()
+  [PROP_GET] ptr FormulaCategorys()
+  [ERROR] func_218: 'int' object is not subscriptable
+  [ERROR] func_219: 'int' object is not subscriptable
+  [PROP_GET] ptr TaskPoolCharts()
+  [METHOD] void StartListenerThread()
+  [PROP_GET] bool IsListenerThreadRunning()
+  [PROP_GET] ptr AllIFCProductSearchs()
+  [PROP_GET] ptr IFCProductSearchs()
+  [PROP_GET] ptr AllIFCProductSelections()
+  [PROP_GET] ptr IFCProductSelections()
+  [PROP_GET] ptr AllIFCModels()
+  [PROP_GET] ptr IFCModels()
+  [PROP_GET] ptr AllModelSnapshots()
+  [PROP_GET] ptr ModelSnapshots()
+  [PROP_GET] ptr AllModelSnapshotCategorys()
+  [PROP_GET] ptr ModelSnapshotCategorys()
+  [ERROR] func_233: 'int' object is not subscriptable
+  [ERROR] func_234: 'int' object is not subscriptable
+  [PROP_GET] ptr AllResourceCurves()
+  [PROP_GET] ptr ResourceCurves()
+  [ERROR] func_237: 'int' object is not subscriptable
+  [ERROR] func_238: 'int' object is not subscriptable
+  [ERROR] func_239: 'int' object is not subscriptable
+  [ERROR] func_240: 'int' object is not subscriptable
+  [PROP_GET] ptr AllIFCGroupModels()
+  [PROP_GET] ptr IFCGroupModels()
+  [PROP_GET] ptr AllSecurityGroups()
+  [PROP_GET] ptr SecurityGroups()
+  [PROP_GET] bool ShowHiddenTasks()
+  [ERROR] func_246: 'int' object is not subscriptable
+  [ERROR] func_247: 'int' object is not subscriptable
+  [PROP_GET] ptr AllIFCSimulationProfiles()
+  [PROP_GET] ptr IFCSimulationProfiles()
+  [PROP_GET] ptr AllIFCObjects()
+  [PROP_GET] ptr IFCObjects()
+  [PROP_GET] ptr AllMilestoneAppearances()
+  [PROP_GET] ptr MilestoneAppearances()
+  [ERROR] func_254: 'int' object is not subscriptable
+  [ERROR] func_255: 'int' object is not subscriptable
+  [ERROR] func_256: 'int' object is not subscriptable
+  [ERROR] func_257: 'int' object is not subscriptable
+  [ERROR] func_258: 'int' object is not subscriptable
+  [PROP_GET] ptr AllQualityChecks()
+  [PROP_GET] ptr QualityChecks()
+  [PROP_GET] ptr AllMaterials()
+  [PROP_GET] ptr Materials()
+  [PROP_GET] ptr AllTaskActivityTemplates()
+  [PROP_GET] ptr TaskActivityTemplates()
+  [ERROR] func_265: 'int' object is not subscriptable
+
+  --- Implemented Interfaces (1) ---
+  [IMPL] IDispatch (flags=0)
+
+################################################################################
+# BARS COLLECTION
+################################################################################
+
+================================================================================
+INTERFACE: IBars
+================================================================================
+  Functions: 20, Variables: 0
+
+  [METHOD] void QueryInterface(ptr riid, ptr ppvObj)
+  [METHOD] uint32 AddRef()
+  [METHOD] uint32 Release()
+  [METHOD] void GetTypeInfoCount(ptr pctinfo)
+  [ERROR] func_4: 'int' object is not subscriptable
+  [ERROR] func_5: 'int' object is not subscriptable
+  [ERROR] func_6: 'int' object is not subscriptable
+  [PROP_GET] int32 Count()
+  [PROP_GET] IDispatch Application()
+  [PROP_GET] IDispatch Parent()
+  [PROP_GET] userdefined ObjectType()
+  [ERROR] func_11: 'int' object is not subscriptable
+  [METHOD] variant All()
+  [METHOD] IUnknown _NewEnum()
+  [METHOD] IDispatch Add()
+  [ERROR] func_15: 'int' object is not subscriptable
+  [ERROR] func_16: 'int' object is not subscriptable
+  [ERROR] func_17: 'int' object is not subscriptable
+  [ERROR] func_18: 'int' object is not subscriptable
+  [ERROR] func_19: 'int' object is not subscriptable
+
+  --- Implemented Interfaces (1) ---
+  [IMPL] IDispatch (flags=0)
+
+################################################################################
+# BAR OBJECT (single bar)
+################################################################################
+
+================================================================================
+INTERFACE: IBar
+================================================================================
+  Functions: 152, Variables: 0
+
+  [METHOD] void QueryInterface(ptr riid, ptr ppvObj)
+  [METHOD] uint32 AddRef()
+  [METHOD] uint32 Release()
+  [METHOD] void GetTypeInfoCount(ptr pctinfo)
+  [ERROR] func_4: 'int' object is not subscriptable
+  [ERROR] func_5: 'int' object is not subscriptable
+  [ERROR] func_6: 'int' object is not subscriptable
+  [PROP_GET] ptr Extensions()
+  [PROP_GET] date LastEditedDate()
+  [PROP_GET] int32 LastEditedBy()
+  [PROP_GET] int32 AltId()
+  [ERROR] func_11: 'int' object is not subscriptable
+  [PROP_GET] userdefined SignificantBookoutStatus()
+  [PROP_GET] userdefined BookedFromStatus()
+  [PROP_GET] int32 SubprojectId()
+  [PROP_GET] ptr Codes()
+  [PROP_GET] ptr Tasks()
+  [PROP_GET] date Start()
+  [PROP_GET] date End()
+  [PROP_GET] int32 NaturalOrder()
+  [PROP_GET] int32 SpareInteger()
+  [ERROR] func_21: 'int' object is not subscriptable
+  [PROP_GET] string Name()
+  [ERROR] func_23: 'int' object is not subscriptable
+  [PROP_GET] ptr ExpandedTask()
+  [PROP_GET] userdefined Priority()
+  [PROP_PUT] void Priority(userdefined p0)
+  [PROP_GET] bool Unschedulable()
+  [PROP_GET] userdefined ObjectType()
+  [ERROR] func_29: 'int' object is not subscriptable
+  [ERROR] func_30: 'int' object is not subscriptable
+  [PROP_GET] int32 ID()
+  [PROP_GET] int16 LockStatus()
+  [PROP_GET] IDispatch Application()
+  [PROP_GET] IDispatch Parent()
+  [PROP_GET] int32 ProjectID()
+  [METHOD] bool EditLock()
+  [METHOD] bool UserLock()
+  [METHOD] bool Unlock()
+  [PROP_GET] string LastEditedName()
+  [ERROR] func_40: 'int' object is not subscriptable
+  [ERROR] func_41: 'int' object is not subscriptable
+  [PROP_GET] string BookoutTag()
+  [ERROR] func_43: 'int' object is not subscriptable
+  [ERROR] func_44: 'int' object is not subscriptable
+  [ERROR] func_45: 'int' object is not subscriptable
+  [ERROR] func_46: 'int' object is not subscriptable
+  [ERROR] func_47: 'int' object is not subscriptable
+  [ERROR] func_48: 'int' object is not subscriptable
+  [METHOD] string GetFullPath()
+  [METHOD] variant GetToken(ptr pName)
+  [ERROR] func_51: 'int' object is not subscriptable
+  [ERROR] func_52: 'int' object is not subscriptable
+  [ERROR] func_53: 'int' object is not subscriptable
+  [ERROR] func_54: 'int' object is not subscriptable
+  [ERROR] func_55: 'int' object is not subscriptable
+  [ERROR] func_56: 'int' object is not subscriptable
+  [ERROR] func_57: 'int' object is not subscriptable
+  [ERROR] func_58: 'int' object is not subscriptable
+  [ERROR] func_59: 'int' object is not subscriptable
+  [ERROR] func_60: 'int' object is not subscriptable
+  [ERROR] func_61: 'int' object is not subscriptable
+  [ERROR] func_62: 'int' object is not subscriptable
+  [ERROR] func_63: 'int' object is not subscriptable
+  [ERROR] func_64: 'int' object is not subscriptable
+  [ERROR] func_65: 'int' object is not subscriptable
+  [ERROR] func_66: 'int' object is not subscriptable
+  [ERROR] func_67: 'int' object is not subscriptable
+  [ERROR] func_68: 'int' object is not subscriptable
+  [ERROR] func_69: 'int' object is not subscriptable
+  [PROP_GET] date ReportDate()
+  [PROP_GET] string Pathname()
+  [PROP_GET] string Parentname()
+  [PROP_GET] ptr Duration()
+  [PROP_GET] ptr ActualDuration()
+  [PROP_GET] ptr DurationRemaining()
+  [PROP_GET] double DurationPercentComplete()
+  [PROP_GET] double CostPercentComplete()
+  [ERROR] func_78: 'int' object is not subscriptable
+  [ERROR] func_79: 'int' object is not subscriptable
+  [ERROR] func_80: 'int' object is not subscriptable
+  [ERROR] func_81: 'int' object is not subscriptable
+  [ERROR] func_82: 'int' object is not subscriptable
+  [PROP_GET] ptr ElapsedDuration()
+  [PROP_GET] IDispatch Chart()
+  [PROP_GET] IDispatch Summary()
+  [PROP_GET] IDispatch Etask()
+  [PROP_GET] double EffortPercentComplete()
+  [PROP_GET] double WorkPercentComplete()
+  [PROP_GET] double QuantityPercentComplete()
+  [PROP_GET] double MilestonePercentComplete()
+  [PROP_GET] double ActualQuantity()
+  [PROP_GET] double QuantityRemaining()
+  [PROP_GET] double ActualWork()
+  [PROP_GET] double WorkRemaining()
+  [PROP_GET] ptr Cost()
+  [PROP_GET] ptr Income()
+  [PROP_GET] double ActualEffort()
+  [PROP_GET] double EffortRemaining()
+  [PROP_GET] int32 MilestonesDone()
+  [PROP_GET] int32 MilestonesRemaining()
+  [PROP_GET] double DistribAvgPercentComplete()
+  [PROP_GET] ptr UserDefinedTables()
+  [PROP_GET] string DescriptiveBookoutStatus()
+  [PROP_GET] userdefined ProcessState()
+  [PROP_GET] userdefined WaitingState()
+  [PROP_GET] date ActualStart()
+  [ERROR] func_107: 'int' object is not subscriptable
+  [PROP_GET] date ActualEnd()
+  [ERROR] func_109: 'int' object is not subscriptable
+  [PROP_GET] date Suspend()
+  [PROP_GET] bool OwnedByTimesheet()
+  [ERROR] func_112: 'int' object is not subscriptable
+  [ERROR] func_113: 'int' object is not subscriptable
+  [ERROR] func_114: 'int' object is not subscriptable
+  [PROP_GET] double OverallPercentComplete()
+  [ERROR] func_116: 'int' object is not subscriptable
+  [ERROR] func_117: 'int' object is not subscriptable
+  [ERROR] func_118: 'int' object is not subscriptable
+  [PROP_GET] ptr CumulativeDurationV()
+  [PROP_GET] ptr CumulativeActualDurationV()
+  [PROP_GET] ptr CumulativeRemainingDurationV()
+  [METHOD] IDispatch NextBar()
+  [METHOD] IDispatch PreviousBar()
+  [PROP_GET] ptr ArchivedCharts()
+  [METHOD] void EditToken(ptr pName, ptr pValue)
+  [PROP_GET] bool MarkForHiding()
+  [ERROR] func_127: 'int' object is not subscriptable
+  [PROP_GET] bool InferredHidden()
+  [ERROR] func_129: 'int' object is not subscriptable
+  [ERROR] func_130: 'int' object is not subscriptable
+  [PROP_GET] bool TasksMayOverlap()
+  [ERROR] func_132: 'int' object is not subscriptable
+  [PROP_GET] string WbnCode()
+  [PROP_GET] string WbnPathname()
+  [PROP_GET] date ActualFinish()
+  [ERROR] func_136: 'int' object is not subscriptable
+  [METHOD] void EditTokenV(ptr pName, ptr pValue)
+  [PROP_GET] date Resume()
+  [PROP_GET] bool TaskPoolItem()
+  [PROP_GET] ptr BudgetedCost()
+  [PROP_GET] string OrderString()
+  [PROP_GET] int16 WorkFaceFrequency()
+  [ERROR] func_143: 'int' object is not subscriptable
+  [PROP_GET] bool WorkFaceFrequencyForward()
+  [ERROR] func_145: 'int' object is not subscriptable
+  [PROP_GET] double OriginalDurationPercentComplete()
+  [PROP_GET] double OriginalDurationPercentCompleteOwn()
+  [PROP_GET] IDispatch Project()
+  [PROP_GET] date OriginalStartV()
+  [PROP_GET] date OriginalFinishV()
+  [PROP_GET] ptr OriginalDuration()
+
+  --- Implemented Interfaces (1) ---
+  [IMPL] IDispatch (flags=0)
+
+################################################################################
+# TASK OBJECT (from bar.ExpandedTask)
+################################################################################
+
+================================================================================
+INTERFACE: IExpandedTask
+================================================================================
+  Functions: 541, Variables: 0
+
+  [METHOD] void QueryInterface(ptr riid, ptr ppvObj)
+  [METHOD] uint32 AddRef()
+  [METHOD] uint32 Release()
+  [METHOD] void GetTypeInfoCount(ptr pctinfo)
+  [ERROR] func_4: 'int' object is not subscriptable
+  [ERROR] func_5: 'int' object is not subscriptable
+  [ERROR] func_6: 'int' object is not subscriptable
+  [PROP_GET] ptr Extensions()
+  [PROP_GET] date LastEditedDate()
+  [PROP_GET] int32 LastEditedBy()
+  [PROP_GET] int32 AltId()
+  [ERROR] func_11: 'int' object is not subscriptable
+  [PROP_GET] userdefined SignificantBookoutStatus()
+  [PROP_GET] userdefined BookedFromStatus()
+  [PROP_GET] int32 SubprojectId()
+  [PROP_GET] ptr Codes()
+  [PROP_GET] ptr Duration()
+  [PROP_GET] ptr LinksIn()
+  [PROP_GET] ptr LinksOut()
+  [PROP_GET] date Start()
+  [PROP_GET] date End()
+  [PROP_GET] ptr DurationTimeUnit()
+  [ERROR] func_22: 'int' object is not subscriptable
+  [PROP_GET] bool Unschedulable()
+  [PROP_GET] ptr Cost()
+  [PROP_GET] ptr Income()
+  [PROP_GET] ptr ActualCost()
+  [PROP_GET] ptr ActualDuration()
+  [PROP_GET] ptr Allocations()
+  [PROP_GET] ptr SummarisedBy()
+  [PROP_GET] date EarlyStartDate()
+  [ERROR] func_31: 'int' object is not subscriptable
+  [PROP_GET] date LateStartDate()
+  [ERROR] func_33: 'int' object is not subscriptable
+  [PROP_GET] date FreeStartDate()
+  [ERROR] func_35: 'int' object is not subscriptable
+  [PROP_GET] date StartConstraintDate()
+  [ERROR] func_37: 'int' object is not subscriptable
+  [PROP_GET] date EndConstraintDate()
+  [ERROR] func_39: 'int' object is not subscriptable
+  [PROP_GET] double DemandEffort()
+  [PROP_GET] double ScheduledEffort()
+  [PROP_GET] double EffortBudget()
+  [ERROR] func_43: 'int' object is not subscriptable
+  [PROP_GET] double ActualEffort()
+  [PROP_GET] int32 NaturalOrder()
+  [PROP_GET] int32 LogicalPrecedence()
+  [ERROR] func_47: 'int' object is not subscriptable
+  [PROP_GET] int32 SpareInteger()
+  [ERROR] func_49: 'int' object is not subscriptable
+  [PROP_GET] double ActualQuantity()
+  [PROP_GET] double UserPercentComplete()
+  [ERROR] func_52: 'int' object is not subscriptable
+  [PROP_GET] double DurationPercentComplete()
+  [PROP_GET] string Name()
+  [ERROR] func_55: 'int' object is not subscriptable
+  [PROP_GET] string WbnCode()
+  [ERROR] func_57: 'int' object is not subscriptable
+  [PROP_GET] string Notes()
+  [ERROR] func_59: 'int' object is not subscriptable
+  [PROP_GET] string UniqueTaskId()
+  [ERROR] func_61: 'int' object is not subscriptable
+  [PROP_GET] ptr Calendar()
+  [ERROR] func_63: 'int' object is not subscriptable
+  [PROP_GET] ptr EffortTimeUnit()
+  [ERROR] func_65: 'int' object is not subscriptable
+  [PROP_GET] ptr WorkUnit()
+  [ERROR] func_67: 'int' object is not subscriptable
+  [PROP_GET] ptr LatestAllocProgressPeriod()
+  [PROP_GET] double Work()
+  [ERROR] func_70: 'int' object is not subscriptable
+  [PROP_GET] double ActualWork()
+  [PROP_GET] ptr Bar()
+  [PROP_GET] userdefined Constraint()
+  [PROP_GET] userdefined DemandStatus()
+  [PROP_GET] userdefined Priority()
+  [PROP_PUT] void Priority(userdefined p0)
+  [PROP_GET] bool Critical()
+  [ERROR] func_78: 'int' object is not subscriptable
+  [PROP_GET] bool UseParentCalendar()
+  [ERROR] func_80: 'int' object is not subscriptable
+  [PROP_GET] ptr CumulativeCost()
+  [PROP_GET] ptr CumulativeIncome()
+  [PROP_GET] ptr CumulativeActualCost()
+  [PROP_GET] ptr CumulativeDuration()
+  [PROP_GET] ptr ActualCumulativeDuration()
+  [PROP_GET] double ActualCumulativeQuantity()
+  [PROP_GET] double CumulativeQuantityRemaining()
+  [PROP_GET] double CumulativeEffortPercentComplete()
+  [PROP_GET] double CumulativeWorkPercentComplete()
+  [PROP_GET] double CumulativeQuantityPercentComplete()
+  [PROP_GET] double MilestonePercentComplete()
+  [PROP_GET] date FirstPreferredStart()
+  [PROP_GET] date DurationCalculatedProgressDate()
+  [PROP_GET] date EffortCalculatedProgressDate()
+  [PROP_GET] date CostCalculatedProgressDate()
+  [PROP_GET] date EarlyEndDateRt()
+  [ERROR] func_97: 'int' object is not subscriptable
+  [PROP_GET] date LateEndDateRt()
+  [ERROR] func_99: 'int' object is not subscriptable
+  [PROP_GET] date FreeEndDateRt()
+  [ERROR] func_101: 'int' object is not subscriptable
+  [PROP_GET] double CumulativeDemandEffort()
+  [PROP_GET] double CumulativeScheduledEffort()
+  [PROP_GET] double ActualCumulativeEffort()
+  [PROP_GET] double CumulativeEffortRemaining()
+  [PROP_GET] double ActualCumulativeWork()
+  [PROP_GET] double CumulativeWorkRemaining()
+  [PROP_GET] int32 MilestonesDone()
+  [PROP_GET] int32 MilestonesRemaining()
+  [PROP_GET] ptr CumulativeEffortTimeUnit()
+  [ERROR] func_111: 'int' object is not subscriptable
+  [PROP_GET] ptr CumulativeLatestProgressPeriod()
+  [PROP_GET] bool NewlyCreatedWithNoBars()
+  [PROP_GET] ptr CommonAtts()
+  [PROP_PUT] void CommonAtts(ptr p0)
+  [PROP_GET] ptr ChildBars()
+  [PROP_GET] date IssueDate()
+  [ERROR] func_118: 'int' object is not subscriptable
+  [PROP_GET] date RevisionDate()
+  [ERROR] func_120: 'int' object is not subscriptable
+  [PROP_GET] string DrawnBy()
+  [ERROR] func_122: 'int' object is not subscriptable
+  [PROP_GET] string RevisionComment()
+  [ERROR] func_124: 'int' object is not subscriptable
+  [PROP_GET] string ChartManager()
+  [ERROR] func_126: 'int' object is not subscriptable
+  [PROP_GET] string RevisionNumber()
+  [ERROR] func_128: 'int' object is not subscriptable
+  [PROP_GET] string ProgrammeNumber()
+  [ERROR] func_130: 'int' object is not subscriptable
+  [PROP_GET] string Comment()
+  [ERROR] func_132: 'int' object is not subscriptable
+  [PROP_GET] ptr ProgressPeriod()
+  [ERROR] func_134: 'int' object is not subscriptable
+  [PROP_GET] userdefined type()
+  [PROP_PUT] void type(userdefined p0)
+  [PROP_GET] userdefined ObjectType()
+  [ERROR] func_138: 'int' object is not subscriptable
+  [ERROR] func_139: 'int' object is not subscriptable
+  [PROP_GET] int32 ID()
+  [PROP_GET] int16 LockStatus()
+  [PROP_GET] IDispatch Application()
+  [PROP_GET] IDispatch Parent()
+  [PROP_GET] int32 ProjectID()
+  [METHOD] bool EditLock()
+  [METHOD] bool UserLock()
+  [METHOD] bool Unlock()
+  [PROP_GET] string LastEditedName()
+  [ERROR] func_149: 'int' object is not subscriptable
+  [ERROR] func_150: 'int' object is not subscriptable
+  [PROP_GET] string BookoutTag()
+  [ERROR] func_152: 'int' object is not subscriptable
+  [ERROR] func_153: 'int' object is not subscriptable
+  [ERROR] func_154: 'int' object is not subscriptable
+  [ERROR] func_155: 'int' object is not subscriptable
+  [ERROR] func_156: 'int' object is not subscriptable
+  [ERROR] func_157: 'int' object is not subscriptable
+  [ERROR] func_158: 'int' object is not subscriptable
+  [ERROR] func_159: 'int' object is not subscriptable
+  [METHOD] IDispatch GetActualParentBar()
+  [METHOD] variant GetToken(ptr pName)
+  [METHOD] date GetUserStart()
+  [METHOD] date GetUserEnd()
+  [METHOD] ptr GetUserDuration()
+  [ERROR] func_165: 'int' object is not subscriptable
+  [METHOD] void SetUserDuration(ptr dur)
+  [ERROR] func_167: 'int' object is not subscriptable
+  [ERROR] func_168: 'int' object is not subscriptable
+  [ERROR] func_169: 'int' object is not subscriptable
+  [ERROR] func_170: 'int' object is not subscriptable
+  [ERROR] func_171: 'int' object is not subscriptable
+  [ERROR] func_172: 'int' object is not subscriptable
+  [PROP_GET] ptr ElapsedDuration()
+  [PROP_GET] IDispatch Calendarv()
+  [PROP_GET] IDispatch Chart()
+  [PROP_GET] IDispatch Summary()
+  [PROP_GET] IDispatch Etask()
+  [PROP_GET] ptr TotalDuration()
+  [ERROR] func_179: 'int' object is not subscriptable
+  [ERROR] func_180: 'int' object is not subscriptable
+  [ERROR] func_181: 'int' object is not subscriptable
+  [ERROR] func_182: 'int' object is not subscriptable
+  [ERROR] func_183: 'int' object is not subscriptable
+  [ERROR] func_184: 'int' object is not subscriptable
+  [ERROR] func_185: 'int' object is not subscriptable
+  [ERROR] func_186: 'int' object is not subscriptable
+  [METHOD] bool RemoveConstraint()
+  [ERROR] func_188: 'int' object is not subscriptable
+  [PROP_GET] double TotalEffort()
+  [ERROR] func_190: 'int' object is not subscriptable
+  [ERROR] func_191: 'int' object is not subscriptable
+  [ERROR] func_192: 'int' object is not subscriptable
+  [ERROR] func_193: 'int' object is not subscriptable
+  [ERROR] func_194: 'int' object is not subscriptable
+  [PROP_GET] ptr ForecastAtCompletion()
+  [ERROR] func_196: 'int' object is not subscriptable
+  [ERROR] func_197: 'int' object is not subscriptable
+  [ERROR] func_198: 'int' object is not subscriptable
+  [ERROR] func_199: 'int' object is not subscriptable
+  [ERROR] func_200: 'int' object is not subscriptable
+  [ERROR] func_201: 'int' object is not subscriptable
+  [ERROR] func_202: 'int' object is not subscriptable
+  [ERROR] func_203: 'int' object is not subscriptable
+  [ERROR] func_204: 'int' object is not subscriptable
+  [ERROR] func_205: 'int' object is not subscriptable
+  [ERROR] func_206: 'int' object is not subscriptable
+  [ERROR] func_207: 'int' object is not subscriptable
+  [ERROR] func_208: 'int' object is not subscriptable
+  [ERROR] func_209: 'int' object is not subscriptable
+  [ERROR] func_210: 'int' object is not subscriptable
+  [ERROR] func_211: 'int' object is not subscriptable
+  [ERROR] func_212: 'int' object is not subscriptable
+  [ERROR] func_213: 'int' object is not subscriptable
+  [ERROR] func_214: 'int' object is not subscriptable
+  [ERROR] func_215: 'int' object is not subscriptable
+  [ERROR] func_216: 'int' object is not subscriptable
+  [ERROR] func_217: 'int' object is not subscriptable
+  [ERROR] func_218: 'int' object is not subscriptable
+  [ERROR] func_219: 'int' object is not subscriptable
+  [ERROR] func_220: 'int' object is not subscriptable
+  [ERROR] func_221: 'int' object is not subscriptable
+  [ERROR] func_222: 'int' object is not subscriptable
+  [ERROR] func_223: 'int' object is not subscriptable
+  [ERROR] func_224: 'int' object is not subscriptable
+  [ERROR] func_225: 'int' object is not subscriptable
+  [ERROR] func_226: 'int' object is not subscriptable
+  [ERROR] func_227: 'int' object is not subscriptable
+  [ERROR] func_228: 'int' object is not subscriptable
+  [ERROR] func_229: 'int' object is not subscriptable
+  [ERROR] func_230: 'int' object is not subscriptable
+  [ERROR] func_231: 'int' object is not subscriptable
+  [ERROR] func_232: 'int' object is not subscriptable
+  [ERROR] func_233: 'int' object is not subscriptable
+  [PROP_GET] date ReportDate()
+  [PROP_GET] string WbnPathname()
+  [ERROR] func_236: 'int' object is not subscriptable
+  [PROP_GET] string Pathname()
+  [PROP_GET] string Parentname()
+  [PROP_GET] string BarAndTaskName()
+  [ERROR] func_240: 'int' object is not subscriptable
+  [ERROR] func_241: 'int' object is not subscriptable
+  [ERROR] func_242: 'int' object is not subscriptable
+  [ERROR] func_243: 'int' object is not subscriptable
+  [ERROR] func_244: 'int' object is not subscriptable
+  [ERROR] func_245: 'int' object is not subscriptable
+  [PROP_GET] ptr Slip()
+  [ERROR] func_247: 'int' object is not subscriptable
+  [PROP_GET] ptr StartFlagGap()
+  [PROP_GET] ptr EndFlagGap()
+  [ERROR] func_250: 'int' object is not subscriptable
+  [PROP_GET] string AssignedResources()
+  [PROP_GET] double EffortPercentComplete()
+  [PROP_GET] double WorkPercentComplete()
+  [PROP_GET] double QuantityPercentComplete()
+  [PROP_GET] double CostPercentComplete()
+  [PROP_GET] double IncomePercentComplete()
+  [PROP_GET] ptr TotalFloat()
+  [PROP_GET] ptr FreeFloat()
+  [PROP_GET] date EarlyEndDate()
+  [PROP_GET] date LateEndDate()
+  [PROP_GET] date FreeEndDate()
+  [PROP_GET] double EffortRemaining()
+  [PROP_GET] ptr CostRemaining()
+  [PROP_GET] ptr ActualIncome()
+  [PROP_GET] ptr IncomeRemaining()
+  [PROP_GET] double QuantityRemaining()
+  [PROP_GET] double WorkRemaining()
+  [PROP_GET] string UtidPrefix()
+  [PROP_GET] int32 UtidNumber()
+  [PROP_GET] double CumulativeDurationPercentComplete()
+  [PROP_GET] date EffectiveProgressDate()
+  [ERROR] func_272: 'int' object is not subscriptable
+  [ERROR] func_273: 'int' object is not subscriptable
+  [ERROR] func_274: 'int' object is not subscriptable
+  [ERROR] func_275: 'int' object is not subscriptable
+  [ERROR] func_276: 'int' object is not subscriptable
+  [ERROR] func_277: 'int' object is not subscriptable
+  [ERROR] func_278: 'int' object is not subscriptable
+  [ERROR] func_279: 'int' object is not subscriptable
+  [ERROR] func_280: 'int' object is not subscriptable
+  [ERROR] func_281: 'int' object is not subscriptable
+  [ERROR] func_282: 'int' object is not subscriptable
+  [ERROR] func_283: 'int' object is not subscriptable
+  [ERROR] func_284: 'int' object is not subscriptable
+  [ERROR] func_285: 'int' object is not subscriptable
+  [ERROR] func_286: 'int' object is not subscriptable
+  [ERROR] func_287: 'int' object is not subscriptable
+  [ERROR] func_288: 'int' object is not subscriptable
+  [PROP_GET] double CumulativeCostPercentComplete()
+  [PROP_GET] double DistribAvgPercentComplete()
+  [ERROR] func_291: 'int' object is not subscriptable
+  [METHOD] IDispatch ConvertToTask()
+  [METHOD] userdefined GetTheTagField()
+  [METHOD] void SetTheTagField(userdefined tag_value)
+  [PROP_GET] string ChartName()
+  [PROP_GET] string ChartPath()
+  [PROP_GET] string CumulativeEffortDescription()
+  [PROP_GET] date ImposedStart()
+  [ERROR] func_299: 'int' object is not subscriptable
+  [PROP_GET] date ImposedEnd()
+  [ERROR] func_301: 'int' object is not subscriptable
+  [PROP_GET] ptr UserDefinedTables()
+  [PROP_GET] string DescriptiveBookoutStatus()
+  [PROP_GET] double ChartOrder()
+  [PROP_GET] userdefined ProcessState()
+  [PROP_GET] userdefined WaitingState()
+  [PROP_GET] date ActualStart()
+  [ERROR] func_308: 'int' object is not subscriptable
+  [PROP_GET] date ActualEnd()
+  [ERROR] func_310: 'int' object is not subscriptable
+  [PROP_GET] date Suspend()
+  [PROP_GET] bool IsBuffer()
+  [ERROR] func_313: 'int' object is not subscriptable
+  [PROP_GET] bool OwnedByTimesheet()
+  [ERROR] func_315: 'int' object is not subscriptable
+  [PROP_GET] double ProjectPercentageLikelihood()
+  [PROP_GET] string ProjectName()
+  [PROP_GET] IDispatch ProjectManager()
+  [PROP_GET] string ProjectManagerEmail()
+  [PROP_GET] double ProjectRisk()
+  [PROP_GET] double ProjectPriority()
+  [PROP_GET] string ProjectStatus()
+  [PROP_GET] string ProjectType()
+  [ERROR] func_324: 'int' object is not subscriptable
+  [PROP_GET] bool BufferTask()
+  [ERROR] func_326: 'int' object is not subscriptable
+  [PROP_GET] int32 HierarchyLevel()
+  [ERROR] func_328: 'int' object is not subscriptable
+  [PROP_GET] int32 BufferTaskType()
+  [PROP_GET] IDispatch Project()
+  [ERROR] func_331: 'int' object is not subscriptable
+  [ERROR] func_332: 'int' object is not subscriptable
+  [PROP_GET] double PercentageLikelihood()
+  [ERROR] func_334: 'int' object is not subscriptable
+  [PROP_GET] double ProjRisk()
+  [ERROR] func_336: 'int' object is not subscriptable
+  [PROP_GET] double ProjPriority()
+  [ERROR] func_338: 'int' object is not subscriptable
+  [PROP_GET] string ProjType()
+  [ERROR] func_340: 'int' object is not subscriptable
+  [PROP_GET] string ProjStatus()
+  [ERROR] func_342: 'int' object is not subscriptable
+  [PROP_GET] ptr ManagerResource()
+  [ERROR] func_344: 'int' object is not subscriptable
+  [PROP_GET] bool IsProject()
+  [ERROR] func_346: 'int' object is not subscriptable
+  [PROP_GET] bool ContainsProjects()
+  [ERROR] func_348: 'int' object is not subscriptable
+  [PROP_GET] double OverallPercentComplete()
+  [PROP_GET] double OverallPercentCompleteWeight()
+  [ERROR] func_351: 'int' object is not subscriptable
+  [ERROR] func_352: 'int' object is not subscriptable
+  [ERROR] func_353: 'int' object is not subscriptable
+  [PROP_GET] bool VInterruptible()
+  [ERROR] func_355: 'int' object is not subscriptable
+  [METHOD] void CalculateOPCWeights()
+  [PROP_GET] ptr CumulativeDurationV()
+  [PROP_GET] ptr CumulativeActualDurationV()
+  [PROP_GET] ptr CumulativeRemainingDurationV()
+  [METHOD] IDispatch NextTask()
+  [METHOD] IDispatch PreviousTask()
+  [METHOD] void EditToken(ptr pName, ptr pValue)
+  [PROP_GET] date CalculatedProgressDate()
+  [PROP_GET] date EarliestProgressDate()
+  [PROP_GET] date LatestProgressDate()
+  [PROP_GET] ptr RowFont()
+  [PROP_PUT] void RowFont(ptr p0)
+  [PROP_GET] userdefined RowColour()
+  [PROP_PUT] void RowColour(userdefined p0)
+  [PROP_GET] userdefined RowForegroundColour()
+  [PROP_PUT] void RowForegroundColour(userdefined p0)
+  [PROP_GET] int32 ProjectBaselineId()
+  [ERROR] func_373: 'int' object is not subscriptable
+  [PROP_GET] string ProjectBaselineName()
+  [PROP_GET] string ProjectBaselineDescription()
+  [PROP_GET] string ProjectBaselineCreationDate()
+  [PROP_GET] string ProjectBaselineUpdateDate()
+  [PROP_GET] string ProjectBaselineLocation()
+  [PROP_GET] bool MarkForHiding()
+  [ERROR] func_380: 'int' object is not subscriptable
+  [PROP_GET] bool StartOnNewDay()
+  [ERROR] func_382: 'int' object is not subscriptable
+  [PROP_GET] bool LongestPath()
+  [ERROR] func_384: 'int' object is not subscriptable
+  [ERROR] func_385: 'int' object is not subscriptable
+  [ERROR] func_386: 'int' object is not subscriptable
+  [ERROR] func_387: 'int' object is not subscriptable
+  [ERROR] func_388: 'int' object is not subscriptable
+  [PROP_GET] bool InferredHidden()
+  [PROP_GET] bool OnlyPmMayApprove()
+  [ERROR] func_391: 'int' object is not subscriptable
+  [ERROR] func_392: 'int' object is not subscriptable
+  [PROP_GET] int32 SwimLane()
+  [PROP_GET] date ActualFinish()
+  [ERROR] func_395: 'int' object is not subscriptable
+  [PROP_GET] date Finish()
+  [PROP_GET] double SumWeights()
+  [PROP_GET] double CalculatedOverallPercentCompleteWeight()
+  [ERROR] func_399: 'int' object is not subscriptable
+  [PROP_GET] ptr Wbs()
+  [ERROR] func_401: 'int' object is not subscriptable
+  [PROP_GET] string WbsCode()
+  [PROP_GET] string WbsName()
+  [PROP_GET] string WbsPath()
+  [ERROR] func_405: 'int' object is not subscriptable
+  [PROP_GET] double TotalCumulativeWork()
+  [PROP_GET] IDispatch ProjectInclusive()
+  [PROP_GET] double PercentageOfTotalDuration()
+  [PROP_GET] string BarName()
+  [ERROR] func_410: 'int' object is not subscriptable
+  [ERROR] func_411: 'int' object is not subscriptable
+  [ERROR] func_412: 'int' object is not subscriptable
+  [ERROR] func_413: 'int' object is not subscriptable
+  [PROP_GET] bool TaskWorkDriven()
+  [METHOD] void EditTokenV(ptr pName, ptr pValue)
+  [PROP_GET] double TotalTaskWork()
+  [PROP_GET] double TotalTaskWorkRemaining()
+  [PROP_GET] double TotalActualTaskWork()
+  [PROP_GET] double CumulativeTaskWork()
+  [PROP_GET] double CumulativeTaskWorkRemaining()
+  [PROP_GET] double CumulativeActualTaskWork()
+  [PROP_GET] date StartOrResume()
+  [PROP_GET] bool TaskPoolItem()
+  [METHOD] void CopyToTaskPool()
+  [ERROR] func_425: 'int' object is not subscriptable
+  [ERROR] func_426: 'int' object is not subscriptable
+  [PROP_GET] ptr IFCModel()
+  [ERROR] func_428: 'int' object is not subscriptable
+  [PROP_GET] IDispatch IFCProductSet()
+  [ERROR] func_430: 'int' object is not subscriptable
+  [PROP_GET] userdefined IFCTaskType()
+  [PROP_PUT] void IFCTaskType(userdefined p0)
+  [PROP_GET] int32 NumberOfActivities()
+  [ERROR] func_434: 'int' object is not subscriptable
+  [ERROR] func_435: 'int' object is not subscriptable
+  [ERROR] func_436: 'int' object is not subscriptable
+  [ERROR] func_437: 'int' object is not subscriptable
+  [ERROR] func_438: 'int' object is not subscriptable
+  [PROP_GET] ptr BudgetedCost()
+  [PROP_GET] string IFCProductBuildOrders()
+  [PROP_GET] string TaskOrderString()
+  [PROP_GET] string OrderString()
+  [PROP_GET] ptr CriticalPathDrag()
+  [PROP_PUT] void CriticalPathDrag(ptr p0)
+  [PROP_GET] userdefined ConditionalBreak()
+  [PROP_PUT] void ConditionalBreak(userdefined p0)
+  [PROP_GET] int16 WorkFaceFrequency()
+  [ERROR] func_448: 'int' object is not subscriptable
+  [PROP_GET] bool WorkFaceFrequencyForward()
+  [ERROR] func_450: 'int' object is not subscriptable
+  [PROP_GET] int32 CascadeActivityNumber()
+  [ERROR] func_452: 'int' object is not subscriptable
+  [PROP_GET] ptr OriginalBufferDuration()
+  [PROP_PUT] void OriginalBufferDuration(ptr p0)
+  [PROP_GET] ptr CumulativeOriginalDuration()
+  [PROP_GET] double OriginalDurationPercentComplete()
+  [PROP_GET] ptr OriginalDurationV()
+  [PROP_GET] IDispatch ChartInclusive()
+  [PROP_GET] userdefined DurationType()
+  [PROP_PUT] void DurationType(userdefined p0)
+  [PROP_GET] date EarlyEndDateRs()
+  [ERROR] func_462: 'int' object is not subscriptable
+  [PROP_GET] date LateEndDateRs()
+  [ERROR] func_464: 'int' object is not subscriptable
+  [PROP_GET] date FreeEndDateRs()
+  [ERROR] func_466: 'int' object is not subscriptable
+  [PROP_GET] int32 Flags()
+  [ERROR] func_468: 'int' object is not subscriptable
+  [PROP_GET] bool TaskMayStartBeforeAllocs()
+  [ERROR] func_470: 'int' object is not subscriptable
+  [PROP_GET] int32 LogicalPath()
+  [ERROR] func_472: 'int' object is not subscriptable
+  [PROP_GET] int32 LogicalPathOrder()
+  [ERROR] func_474: 'int' object is not subscriptable
+  [PROP_GET] ptr LogicalPathDuration()
+  [PROP_PUT] void LogicalPathDuration(ptr p0)
+  [PROP_GET] double IFCProductSetVolume()
+  [PROP_GET] double IFCProductSetArea()
+  [PROP_GET] int32 IFCProductCount()
+  [PROP_GET] string IFCProductEntity()
+  [PROP_GET] ptr IFCSimulationProfile()
+  [ERROR] func_482: 'int' object is not subscriptable
+  [PROP_GET] double OriginalDurationPercentCompleteOwn()
+  [PROP_GET] ptr OriginalDurationVOwn()
+  [PROP_GET] date DateZero()
+  [ERROR] func_486: 'int' object is not subscriptable
+  [PROP_GET] date ProjectDateZero()
+  [ERROR] func_488: 'int' object is not subscriptable
+  [ERROR] func_489: 'int' object is not subscriptable
+  [PROP_GET] date OriginalStart()
+  [PROP_GET] date OriginalFinish()
+  [PROP_GET] ptr CommonCalendar()
+  [PROP_GET] ptr PlannedDuration()
+  [METHOD] int32 NumDatedNotes()
+  [ERROR] func_495: 'int' object is not subscriptable
+  [ERROR] func_496: 'int' object is not subscriptable
+  [ERROR] func_497: 'int' object is not subscriptable
+  [ERROR] func_498: 'int' object is not subscriptable
+  [ERROR] func_499: 'int' object is not subscriptable
+  [ERROR] func_500: 'int' object is not subscriptable
+  [ERROR] func_501: 'int' object is not subscriptable
+  [PROP_GET] date OriginalStartV()
+  [ERROR] func_503: 'int' object is not subscriptable
+  [PROP_GET] date OriginalFinishV()
+  [ERROR] func_505: 'int' object is not subscriptable
+  [PROP_GET] string TextNotesAsString()
+  [PROP_GET] string PhotoNotesAsString()
+  [PROP_GET] date DeliveryDate()
+  [ERROR] func_509: 'int' object is not subscriptable
+  [PROP_GET] date ProjectDeliveryDate()
+  [PROP_GET] bool IsCompleted()
+  [PROP_GET] bool HasPredecessor()
+  [PROP_GET] bool HasSuccessor()
+  [PROP_GET] int32 PredecessorCount()
+  [PROP_GET] bool BreaksCriticalPathIntegrity()
+  [ERROR] func_516: 'int' object is not subscriptable
+  [PROP_GET] date ChartIssueDate()
+  [PROP_GET] string ChartProgrammeNumber()
+  [PROP_GET] bool HasFinishSuccessor()
+  [PROP_GET] ptr WorkMaterial()
+  [ERROR] func_521: 'int' object is not subscriptable
+  [PROP_GET] ptr Activities()
+  [PROP_GET] int32 TaskActivityCount()
+  [PROP_GET] int32 CompletedTaskActivities()
+  [PROP_GET] int32 StartedTaskActivities()
+  [PROP_GET] int32 UnstartedTaskActivities()
+  [PROP_GET] bool DisplayInTimeline()
+  [ERROR] func_528: 'int' object is not subscriptable
+  [PROP_GET] userdefined TimelineTaskStyle()
+  [PROP_PUT] void TimelineTaskStyle(userdefined p0)
+  [PROP_GET] userdefined TimelineFontColour()
+  [PROP_PUT] void TimelineFontColour(userdefined p0)
+  [PROP_GET] int32 TimelineFontColourRgb()
+  [ERROR] func_534: 'int' object is not subscriptable
+  [PROP_GET] userdefined TimelineBackgroundColour()
+  [PROP_PUT] void TimelineBackgroundColour(userdefined p0)
+  [PROP_GET] int32 TimelineBackgroundColourRgb()
+  [ERROR] func_538: 'int' object is not subscriptable
+  [PROP_GET] ptr TimelineTaskSettings()
+  [PROP_PUT] void TimelineTaskSettings(ptr p0)
+
+  --- Implemented Interfaces (1) ---
+  [IMPL] IDispatch (flags=0)
+project.Links not available: '<win32com.gen_py.Teamplan Type Library.IProject instance at 0x2608136262176>' object has no attribute 'Links'
+bar.Dependencies not available: '<win32com.gen_py.Teamplan Type Library.IBar instance at 0x2608172389616>' object has no attribute 'Dependencies'
+
+################################################################################
+# PERMANENTRESOURCES COLLECTION
+################################################################################
+
+================================================================================
+INTERFACE: IPermanentResources
+================================================================================
+  Functions: 16, Variables: 0
+
+  [METHOD] void QueryInterface(ptr riid, ptr ppvObj)
+  [METHOD] uint32 AddRef()
+  [METHOD] uint32 Release()
+  [METHOD] void GetTypeInfoCount(ptr pctinfo)
+  [ERROR] func_4: 'int' object is not subscriptable
+  [ERROR] func_5: 'int' object is not subscriptable
+  [ERROR] func_6: 'int' object is not subscriptable
+  [PROP_GET] int32 Count()
+  [PROP_GET] IDispatch Application()
+  [PROP_GET] IDispatch Parent()
+  [PROP_GET] userdefined ObjectType()
+  [ERROR] func_11: 'int' object is not subscriptable
+  [METHOD] variant All()
+  [METHOD] IUnknown _NewEnum()
+  [METHOD] IDispatch Add()
+  [ERROR] func_15: 'int' object is not subscriptable
+
+  --- Implemented Interfaces (1) ---
+  [IMPL] IDispatch (flags=0)
+
+--- Single PermanentResource ---
+
+================================================================================
+INTERFACE: IPermanentResource
+================================================================================
+  Functions: 121, Variables: 0
+
+  [METHOD] void QueryInterface(ptr riid, ptr ppvObj)
+  [METHOD] uint32 AddRef()
+  [METHOD] uint32 Release()
+  [METHOD] void GetTypeInfoCount(ptr pctinfo)
+  [ERROR] func_4: 'int' object is not subscriptable
+  [ERROR] func_5: 'int' object is not subscriptable
+  [ERROR] func_6: 'int' object is not subscriptable
+  [PROP_GET] ptr Extensions()
+  [PROP_GET] date LastEditedDate()
+  [PROP_GET] int32 LastEditedBy()
+  [PROP_GET] int32 AltId()
+  [ERROR] func_11: 'int' object is not subscriptable
+  [PROP_GET] userdefined SignificantBookoutStatus()
+  [PROP_GET] userdefined BookedFromStatus()
+  [PROP_GET] ptr ResAppearance()
+  [PROP_PUT] void ResAppearance(ptr p0)
+  [PROP_GET] double Availability()
+  [ERROR] func_17: 'int' object is not subscriptable
+  [PROP_GET] double TotalAvailability()
+  [PROP_GET] int32 SpareInteger()
+  [ERROR] func_20: 'int' object is not subscriptable
+  [PROP_GET] string Name()
+  [ERROR] func_22: 'int' object is not subscriptable
+  [PROP_GET] string ShortNameSingle()
+  [ERROR] func_24: 'int' object is not subscriptable
+  [PROP_GET] string ShortNamePlural()
+  [ERROR] func_26: 'int' object is not subscriptable
+  [PROP_GET] ptr Calendar()
+  [ERROR] func_28: 'int' object is not subscriptable
+  [PROP_GET] ptr Cost()
+  [PROP_GET] ptr Income()
+  [PROP_GET] ptr CumulativeCost()
+  [PROP_GET] ptr CumulativeIncome()
+  [PROP_GET] ptr ParentResources()
+  [PROP_GET] ptr SubResources()
+  [PROP_GET] double ScheduledEffort()
+  [PROP_GET] double DemandEffort()
+  [PROP_GET] double CumulativeScheduledEffort()
+  [PROP_GET] double CumulativeDemandEffort()
+  [PROP_GET] double ActualEffort()
+  [PROP_GET] double EffortRemaining()
+  [PROP_GET] double ActualCumulativeEffort()
+  [PROP_GET] double CumulativeEffortRemaining()
+  [PROP_GET] string EmailAddress()
+  [ERROR] func_44: 'int' object is not subscriptable
+  [PROP_GET] ptr EffortTimeUnit()
+  [ERROR] func_46: 'int' object is not subscriptable
+  [PROP_GET] bool PureTree()
+  [PROP_GET] userdefined ObjectType()
+  [ERROR] func_49: 'int' object is not subscriptable
+  [ERROR] func_50: 'int' object is not subscriptable
+  [PROP_GET] int32 ID()
+  [PROP_GET] int16 LockStatus()
+  [PROP_GET] IDispatch Application()
+  [PROP_GET] IDispatch Parent()
+  [PROP_GET] int32 ProjectID()
+  [METHOD] bool EditLock()
+  [METHOD] bool UserLock()
+  [METHOD] bool Unlock()
+  [PROP_GET] string LastEditedName()
+  [ERROR] func_60: 'int' object is not subscriptable
+  [ERROR] func_61: 'int' object is not subscriptable
+  [PROP_GET] string BookoutTag()
+  [METHOD] bool GetObjectAsFolder()
+  [ERROR] func_64: 'int' object is not subscriptable
+  [METHOD] void GetAppearance(ptr pfore, ptr pback, ptr pPattern)
+  [METHOD] void SetAppearance(userdefined fore, userdefined back, userdefined Pattern)
+  [ERROR] func_67: 'int' object is not subscriptable
+  [ERROR] func_68: 'int' object is not subscriptable
+  [ERROR] func_69: 'int' object is not subscriptable
+  [ERROR] func_70: 'int' object is not subscriptable
+  [ERROR] func_71: 'int' object is not subscriptable
+  [ERROR] func_72: 'int' object is not subscriptable
+  [ERROR] func_73: 'int' object is not subscriptable
+  [ERROR] func_74: 'int' object is not subscriptable
+  [ERROR] func_75: 'int' object is not subscriptable
+  [ERROR] func_76: 'int' object is not subscriptable
+  [ERROR] func_77: 'int' object is not subscriptable
+  [ERROR] func_78: 'int' object is not subscriptable
+  [ERROR] func_79: 'int' object is not subscriptable
+  [ERROR] func_80: 'int' object is not subscriptable
+  [ERROR] func_81: 'int' object is not subscriptable
+  [METHOD] int32 StandardWorkCount()
+  [ERROR] func_83: 'int' object is not subscriptable
+  [ERROR] func_84: 'int' object is not subscriptable
+  [ERROR] func_85: 'int' object is not subscriptable
+  [ERROR] func_86: 'int' object is not subscriptable
+  [ERROR] func_87: 'int' object is not subscriptable
+  [ERROR] func_88: 'int' object is not subscriptable
+  [ERROR] func_89: 'int' object is not subscriptable
+  [ERROR] func_90: 'int' object is not subscriptable
+  [ERROR] func_91: 'int' object is not subscriptable
+  [ERROR] func_92: 'int' object is not subscriptable
+  [ERROR] func_93: 'int' object is not subscriptable
+  [METHOD] variant GetToken(ptr pName)
+  [ERROR] func_95: 'int' object is not subscriptable
+  [PROP_GET] string Pathname()
+  [PROP_GET] string Parentname()
+  [METHOD] IDispatch AddSubResource()
+  [ERROR] func_99: 'int' object is not subscriptable
+  [METHOD] string GetFullPath()
+  [PROP_GET] date AvailableFrom()
+  [PROP_GET] date AvailableTo()
+  [PROP_GET] ptr UserDefinedTables()
+  [PROP_GET] string DescriptiveBookoutStatus()
+  [METHOD] double PlannedActualEffortBetween(ptr pstart_date, ptr pend_date)
+  [METHOD] double PlannedStandardWorkBetween(ptr pstart_date, ptr pend_date)
+  [PROP_GET] bool OwnedByTimesheet()
+  [ERROR] func_108: 'int' object is not subscriptable
+  [PROP_GET] bool UseLineStyleOnAllocations()
+  [ERROR] func_110: 'int' object is not subscriptable
+  [ERROR] func_111: 'int' object is not subscriptable
+  [ERROR] func_112: 'int' object is not subscriptable
+  [PROP_GET] bool ExcludedFromTimesheet()
+  [ERROR] func_114: 'int' object is not subscriptable
+  [PROP_GET] bool NoNewAssignments()
+  [ERROR] func_116: 'int' object is not subscriptable
+  [PROP_GET] double AvailabilityAllSkills()
+  [PROP_GET] string Fullname()
+  [PROP_GET] string OrderString()
+  [PROP_GET] int32 HierarchyLevel()
+
+  --- Implemented Interfaces (1) ---
+  [IMPL] IDispatch (flags=0)
+
+################################################################################
+# CONSUMABLERESOURCES COLLECTION
+################################################################################
+
+================================================================================
+INTERFACE: IConsumableResources
+================================================================================
+  Functions: 16, Variables: 0
+
+  [METHOD] void QueryInterface(ptr riid, ptr ppvObj)
+  [METHOD] uint32 AddRef()
+  [METHOD] uint32 Release()
+  [METHOD] void GetTypeInfoCount(ptr pctinfo)
+  [ERROR] func_4: 'int' object is not subscriptable
+  [ERROR] func_5: 'int' object is not subscriptable
+  [ERROR] func_6: 'int' object is not subscriptable
+  [PROP_GET] int32 Count()
+  [PROP_GET] IDispatch Application()
+  [PROP_GET] IDispatch Parent()
+  [PROP_GET] userdefined ObjectType()
+  [ERROR] func_11: 'int' object is not subscriptable
+  [METHOD] variant All()
+  [METHOD] IUnknown _NewEnum()
+  [METHOD] IDispatch Add()
+  [ERROR] func_15: 'int' object is not subscriptable
+
+  --- Implemented Interfaces (1) ---
+  [IMPL] IDispatch (flags=0)
+
+--- Single ConsumableResource ---
+
+================================================================================
+INTERFACE: IConsumableResource
+================================================================================
+  Functions: 120, Variables: 0
+
+  [METHOD] void QueryInterface(ptr riid, ptr ppvObj)
+  [METHOD] uint32 AddRef()
+  [METHOD] uint32 Release()
+  [METHOD] void GetTypeInfoCount(ptr pctinfo)
+  [ERROR] func_4: 'int' object is not subscriptable
+  [ERROR] func_5: 'int' object is not subscriptable
+  [ERROR] func_6: 'int' object is not subscriptable
+  [PROP_GET] ptr Extensions()
+  [PROP_GET] date LastEditedDate()
+  [PROP_GET] int32 LastEditedBy()
+  [PROP_GET] int32 AltId()
+  [ERROR] func_11: 'int' object is not subscriptable
+  [PROP_GET] userdefined SignificantBookoutStatus()
+  [PROP_GET] userdefined BookedFromStatus()
+  [PROP_GET] ptr ResAppearance()
+  [PROP_PUT] void ResAppearance(ptr p0)
+  [PROP_GET] double Availability()
+  [ERROR] func_17: 'int' object is not subscriptable
+  [PROP_GET] double TotalAvailability()
+  [PROP_GET] int32 SpareInteger()
+  [ERROR] func_20: 'int' object is not subscriptable
+  [PROP_GET] string Name()
+  [ERROR] func_22: 'int' object is not subscriptable
+  [PROP_GET] string ShortNameSingle()
+  [ERROR] func_24: 'int' object is not subscriptable
+  [PROP_GET] string ShortNamePlural()
+  [ERROR] func_26: 'int' object is not subscriptable
+  [PROP_GET] ptr Calendar()
+  [ERROR] func_28: 'int' object is not subscriptable
+  [PROP_GET] ptr Cost()
+  [PROP_GET] ptr Income()
+  [PROP_GET] ptr CumulativeCost()
+  [PROP_GET] ptr CumulativeIncome()
+  [PROP_GET] ptr CostPerUnit()
+  [PROP_PUT] void CostPerUnit(ptr p0)
+  [PROP_GET] ptr IncomePerUnit()
+  [PROP_PUT] void IncomePerUnit(ptr p0)
+  [PROP_GET] ptr Defaults()
+  [PROP_PUT] void Defaults(ptr p0)
+  [PROP_GET] ptr SubResources()
+  [PROP_GET] date Start()
+  [PROP_GET] date End()
+  [PROP_GET] date AvailableFrom()
+  [ERROR] func_43: 'int' object is not subscriptable
+  [PROP_GET] date AvailableTo()
+  [ERROR] func_45: 'int' object is not subscriptable
+  [PROP_GET] double CumulativeScheduled()
+  [PROP_GET] double CumulativeDemand()
+  [PROP_GET] string Measurement()
+  [ERROR] func_49: 'int' object is not subscriptable
+  [PROP_GET] ptr ConsumableResource()
+  [PROP_GET] userdefined ObjectType()
+  [ERROR] func_52: 'int' object is not subscriptable
+  [ERROR] func_53: 'int' object is not subscriptable
+  [PROP_GET] int32 ID()
+  [PROP_GET] int16 LockStatus()
+  [PROP_GET] IDispatch Application()
+  [PROP_GET] IDispatch Parent()
+  [PROP_GET] int32 ProjectID()
+  [METHOD] bool EditLock()
+  [METHOD] bool UserLock()
+  [METHOD] bool Unlock()
+  [PROP_GET] string LastEditedName()
+  [ERROR] func_63: 'int' object is not subscriptable
+  [ERROR] func_64: 'int' object is not subscriptable
+  [PROP_GET] string BookoutTag()
+  [METHOD] bool GetObjectAsFolder()
+  [ERROR] func_67: 'int' object is not subscriptable
+  [METHOD] void GetAppearance(ptr pfore, ptr pback, ptr pPattern)
+  [METHOD] void SetAppearance(userdefined fore, userdefined back, userdefined Pattern)
+  [ERROR] func_70: 'int' object is not subscriptable
+  [ERROR] func_71: 'int' object is not subscriptable
+  [ERROR] func_72: 'int' object is not subscriptable
+  [ERROR] func_73: 'int' object is not subscriptable
+  [ERROR] func_74: 'int' object is not subscriptable
+  [ERROR] func_75: 'int' object is not subscriptable
+  [ERROR] func_76: 'int' object is not subscriptable
+  [ERROR] func_77: 'int' object is not subscriptable
+  [ERROR] func_78: 'int' object is not subscriptable
+  [ERROR] func_79: 'int' object is not subscriptable
+  [ERROR] func_80: 'int' object is not subscriptable
+  [ERROR] func_81: 'int' object is not subscriptable
+  [ERROR] func_82: 'int' object is not subscriptable
+  [ERROR] func_83: 'int' object is not subscriptable
+  [ERROR] func_84: 'int' object is not subscriptable
+  [METHOD] int32 StandardWorkCount()
+  [ERROR] func_86: 'int' object is not subscriptable
+  [ERROR] func_87: 'int' object is not subscriptable
+  [ERROR] func_88: 'int' object is not subscriptable
+  [ERROR] func_89: 'int' object is not subscriptable
+  [ERROR] func_90: 'int' object is not subscriptable
+  [ERROR] func_91: 'int' object is not subscriptable
+  [ERROR] func_92: 'int' object is not subscriptable
+  [ERROR] func_93: 'int' object is not subscriptable
+  [ERROR] func_94: 'int' object is not subscriptable
+  [ERROR] func_95: 'int' object is not subscriptable
+  [ERROR] func_96: 'int' object is not subscriptable
+  [METHOD] variant GetToken(ptr pName)
+  [ERROR] func_98: 'int' object is not subscriptable
+  [PROP_GET] string Pathname()
+  [PROP_GET] string Parentname()
+  [METHOD] string GetFullPath()
+  [PROP_GET] ptr UserDefinedTables()
+  [PROP_GET] string DescriptiveBookoutStatus()
+  [PROP_GET] bool OwnedByTimesheet()
+  [ERROR] func_105: 'int' object is not subscriptable
+  [PROP_GET] bool UseLineStyleOnAllocations()
+  [ERROR] func_107: 'int' object is not subscriptable
+  [ERROR] func_108: 'int' object is not subscriptable
+  [ERROR] func_109: 'int' object is not subscriptable
+  [PROP_GET] date Finish()
+  [PROP_GET] bool NoNewAssignments()
+  [ERROR] func_112: 'int' object is not subscriptable
+  [PROP_GET] string Fullname()
+  [PROP_GET] string OrderString()
+  [PROP_GET] int32 HierarchyLevel()
+  [ERROR] func_116: 'int' object is not subscriptable
+  [ERROR] func_117: 'int' object is not subscriptable
+  [METHOD] int32 GetNumDefaultCodes()
+  [ERROR] func_119: 'int' object is not subscriptable
+
+  --- Implemented Interfaces (1) ---
+  [IMPL] IDispatch (flags=0)
+
+################################################################################
+# COSTCENTRES COLLECTION
+################################################################################
+
+================================================================================
+INTERFACE: ICostCentres
+================================================================================
+  Functions: 16, Variables: 0
+
+  [METHOD] void QueryInterface(ptr riid, ptr ppvObj)
+  [METHOD] uint32 AddRef()
+  [METHOD] uint32 Release()
+  [METHOD] void GetTypeInfoCount(ptr pctinfo)
+  [ERROR] func_4: 'int' object is not subscriptable
+  [ERROR] func_5: 'int' object is not subscriptable
+  [ERROR] func_6: 'int' object is not subscriptable
+  [PROP_GET] int32 Count()
+  [PROP_GET] IDispatch Application()
+  [PROP_GET] IDispatch Parent()
+  [PROP_GET] userdefined ObjectType()
+  [ERROR] func_11: 'int' object is not subscriptable
+  [METHOD] variant All()
+  [METHOD] IUnknown _NewEnum()
+  [METHOD] IDispatch Add()
+  [ERROR] func_15: 'int' object is not subscriptable
+
+  --- Implemented Interfaces (1) ---
+  [IMPL] IDispatch (flags=0)
+
+--- Single CostCentre ---
+
+================================================================================
+INTERFACE: ICostCentre
+================================================================================
+  Functions: 72, Variables: 0
+
+  [METHOD] void QueryInterface(ptr riid, ptr ppvObj)
+  [METHOD] uint32 AddRef()
+  [METHOD] uint32 Release()
+  [METHOD] void GetTypeInfoCount(ptr pctinfo)
+  [ERROR] func_4: 'int' object is not subscriptable
+  [ERROR] func_5: 'int' object is not subscriptable
+  [ERROR] func_6: 'int' object is not subscriptable
+  [PROP_GET] ptr Extensions()
+  [PROP_GET] date LastEditedDate()
+  [PROP_GET] int32 LastEditedBy()
+  [PROP_GET] int32 AltId()
+  [ERROR] func_11: 'int' object is not subscriptable
+  [PROP_GET] userdefined SignificantBookoutStatus()
+  [PROP_GET] userdefined BookedFromStatus()
+  [PROP_GET] ptr Cost()
+  [PROP_GET] ptr Income()
+  [PROP_GET] ptr CumulativeCost()
+  [PROP_GET] ptr CumulativeIncome()
+  [PROP_GET] ptr CostAppearance()
+  [PROP_PUT] void CostAppearance(ptr p0)
+  [PROP_GET] ptr Defaults()
+  [PROP_PUT] void Defaults(ptr p0)
+  [PROP_GET] ptr SubCostCentres()
+  [PROP_GET] date Start()
+  [PROP_GET] date End()
+  [PROP_GET] date TotalStart()
+  [PROP_GET] date TotalEnd()
+  [PROP_GET] int32 SpareInteger()
+  [ERROR] func_28: 'int' object is not subscriptable
+  [PROP_GET] string Name()
+  [ERROR] func_30: 'int' object is not subscriptable
+  [PROP_GET] ptr CostCentre()
+  [PROP_GET] userdefined ObjectType()
+  [ERROR] func_33: 'int' object is not subscriptable
+  [ERROR] func_34: 'int' object is not subscriptable
+  [PROP_GET] int32 ID()
+  [PROP_GET] int16 LockStatus()
+  [PROP_GET] IDispatch Application()
+  [PROP_GET] IDispatch Parent()
+  [PROP_GET] int32 ProjectID()
+  [METHOD] bool EditLock()
+  [METHOD] bool UserLock()
+  [METHOD] bool Unlock()
+  [PROP_GET] string LastEditedName()
+  [ERROR] func_44: 'int' object is not subscriptable
+  [ERROR] func_45: 'int' object is not subscriptable
+  [PROP_GET] string BookoutTag()
+  [METHOD] bool GetObjectAsFolder()
+  [ERROR] func_48: 'int' object is not subscriptable
+  [METHOD] string GetFullPath()
+  [METHOD] variant GetToken(ptr pName)
+  [PROP_GET] string Pathname()
+  [PROP_GET] string Parentname()
+  [PROP_GET] ptr UserDefinedTables()
+  [PROP_GET] string DescriptiveBookoutStatus()
+  [PROP_GET] bool OwnedByTimesheet()
+  [ERROR] func_56: 'int' object is not subscriptable
+  [PROP_GET] bool UseLineStyleOnAllocations()
+  [ERROR] func_58: 'int' object is not subscriptable
+  [ERROR] func_59: 'int' object is not subscriptable
+  [ERROR] func_60: 'int' object is not subscriptable
+  [PROP_GET] date Finish()
+  [PROP_GET] date TotalFinish()
+  [PROP_GET] bool NoNewAssignments()
+  [ERROR] func_64: 'int' object is not subscriptable
+  [PROP_GET] string Fullname()
+  [PROP_GET] string OrderString()
+  [PROP_GET] int32 HierarchyLevel()
+  [ERROR] func_68: 'int' object is not subscriptable
+  [ERROR] func_69: 'int' object is not subscriptable
+  [METHOD] int32 GetNumDefaultCodes()
+  [ERROR] func_71: 'int' object is not subscriptable
+
+  --- Implemented Interfaces (1) ---
+  [IMPL] IDispatch (flags=0)
+
+################################################################################
+# PROGRESS PERIODS
+################################################################################
+
+================================================================================
+INTERFACE: IProgressPeriods
+================================================================================
+  Functions: 16, Variables: 0
+
+  [METHOD] void QueryInterface(ptr riid, ptr ppvObj)
+  [METHOD] uint32 AddRef()
+  [METHOD] uint32 Release()
+  [METHOD] void GetTypeInfoCount(ptr pctinfo)
+  [ERROR] func_4: 'int' object is not subscriptable
+  [ERROR] func_5: 'int' object is not subscriptable
+  [ERROR] func_6: 'int' object is not subscriptable
+  [PROP_GET] int32 Count()
+  [PROP_GET] IDispatch Application()
+  [PROP_GET] IDispatch Parent()
+  [PROP_GET] userdefined ObjectType()
+  [ERROR] func_11: 'int' object is not subscriptable
+  [METHOD] variant All()
+  [METHOD] IUnknown _NewEnum()
+  [METHOD] IDispatch Add()
+  [ERROR] func_15: 'int' object is not subscriptable
+
+  --- Implemented Interfaces (1) ---
+  [IMPL] IDispatch (flags=0)
+
+################################################################################
+# CURRENT VIEW
+################################################################################
+
+================================================================================
+INTERFACE: IBarChartView
+================================================================================
+  Functions: 182, Variables: 0
+
+  [METHOD] void QueryInterface(ptr riid, ptr ppvObj)
+  [METHOD] uint32 AddRef()
+  [METHOD] uint32 Release()
+  [METHOD] void GetTypeInfoCount(ptr pctinfo)
+  [ERROR] func_4: 'int' object is not subscriptable
+  [ERROR] func_5: 'int' object is not subscriptable
+  [ERROR] func_6: 'int' object is not subscriptable
+  [PROP_GET] string Name()
+  [PROP_GET] ptr Application()
+  [PROP_GET] IDispatch Parent()
+  [PROP_GET] userdefined type()
+  [PROP_GET] ptr selection()
+  [PROP_GET] ptr Definition()
+  [ERROR] func_13: 'int' object is not subscriptable
+  [METHOD] void Refresh()
+  [ERROR] func_15: 'int' object is not subscriptable
+  [PROP_GET] int32 BarLineCount()
+  [ERROR] func_17: 'int' object is not subscriptable
+  [ERROR] func_18: 'int' object is not subscriptable
+  [ERROR] func_19: 'int' object is not subscriptable
+  [ERROR] func_20: 'int' object is not subscriptable
+  [ERROR] func_21: 'int' object is not subscriptable
+  [ERROR] func_22: 'int' object is not subscriptable
+  [ERROR] func_23: 'int' object is not subscriptable
+  [METHOD] variant AllBarIds()
+  [METHOD] variant AllLinkIds()
+  [METHOD] variant AllTaskBaseIds()
+  [METHOD] variant AllAllocIds()
+  [ERROR] func_28: 'int' object is not subscriptable
+  [ERROR] func_29: 'int' object is not subscriptable
+  [PROP_GET] bool DisplayBaselinesOnTheirOwnLine()
+  [PROP_PUT] void VisibleCodeLibrary(ptr p0)
+  [PROP_GET] ptr VisibleCodeLibrary()
+  [ERROR] func_33: 'int' object is not subscriptable
+  [METHOD] variant GetDisplayedNonWorkingExceptions()
+  [ERROR] func_35: 'int' object is not subscriptable
+  [PROP_GET] bool DisplayNonWorkingChartShading()
+  [ERROR] func_37: 'int' object is not subscriptable
+  [PROP_GET] bool DisplayNonWorkingTaskShading()
+  [ERROR] func_39: 'int' object is not subscriptable
+  [PROP_GET] bool DisplayNonWorkingAllocShading()
+  [ERROR] func_41: 'int' object is not subscriptable
+  [PROP_GET] bool PinchAllocsInNonWorkingTime()
+  [ERROR] func_43: 'int' object is not subscriptable
+  [PROP_GET] bool PinchTasksInNonWorkingTime()
+  [ERROR] func_45: 'int' object is not subscriptable
+  [PROP_GET] bool RemoveOutlineWithNonWorkingDisplay()
+  [PROP_GET] ptr Sort()
+  [PROP_PUT] void Sort(ptr p0)
+  [PROP_GET] ptr Filter()
+  [PROP_PUT] void Filter(ptr p0)
+  [PROP_GET] bool BaselineAppearanceFromTask()
+  [ERROR] func_52: 'int' object is not subscriptable
+  [ERROR] func_53: 'int' object is not subscriptable
+  [PROP_GET] bool DisplayAnnotations()
+  [ERROR] func_55: 'int' object is not subscriptable
+  [PROP_GET] bool DisplayBarChart()
+  [PROP_PUT] void SnappingUnit(ptr p0)
+  [PROP_GET] ptr SnappingUnit()
+  [METHOD] void SnapSplitterBar(userdefined pos)
+  [ERROR] func_60: 'int' object is not subscriptable
+  [METHOD] variant GetOpenBaselineIds()
+  [ERROR] func_62: 'int' object is not subscriptable
+  [ERROR] func_63: 'int' object is not subscriptable
+  [PROP_GET] bool DisplayCriticalPath()
+  [ERROR] func_65: 'int' object is not subscriptable
+  [PROP_GET] bool DisplayProgressLines()
+  [ERROR] func_67: 'int' object is not subscriptable
+  [PROP_GET] bool DisplayConstraintFlags()
+  [ERROR] func_69: 'int' object is not subscriptable
+  [PROP_GET] bool DisplayCostAllocations()
+  [ERROR] func_71: 'int' object is not subscriptable
+  [PROP_GET] bool DisplayCriticalHalfLinks()
+  [ERROR] func_73: 'int' object is not subscriptable
+  [PROP_GET] bool DisplayCriticalLocalLinks()
+  [ERROR] func_75: 'int' object is not subscriptable
+  [PROP_GET] bool DisplayDemandAllocations()
+  [ERROR] func_77: 'int' object is not subscriptable
+  [PROP_GET] bool DisplayExpandedsAsTasks()
+  [ERROR] func_79: 'int' object is not subscriptable
+  [PROP_GET] bool DisplayFreeFloat()
+  [ERROR] func_81: 'int' object is not subscriptable
+  [PROP_GET] bool DisplayHammocksAsTasks()
+  [ERROR] func_83: 'int' object is not subscriptable
+  [PROP_GET] bool DisplayNonCriticalHalfLinks()
+  [ERROR] func_85: 'int' object is not subscriptable
+  [PROP_GET] bool DisplayNonCriticalLocalLinks()
+  [ERROR] func_87: 'int' object is not subscriptable
+  [PROP_GET] bool DisplayReflectedLinks()
+  [ERROR] func_89: 'int' object is not subscriptable
+  [PROP_GET] bool DisplayScheduledAllocations()
+  [ERROR] func_91: 'int' object is not subscriptable
+  [PROP_GET] bool DisplayStartLine()
+  [ERROR] func_93: 'int' object is not subscriptable
+  [PROP_GET] bool DisplaySummariesAsTasks()
+  [ERROR] func_95: 'int' object is not subscriptable
+  [PROP_GET] bool DisplayTotalFloat()
+  [ERROR] func_97: 'int' object is not subscriptable
+  [PROP_GET] userdefined AllocationAppearanceMode()
+  [PROP_PUT] void AllocationAppearanceMode(userdefined p0)
+  [PROP_GET] ptr AllocationCodeLibrary()
+  [PROP_PUT] void AllocationCodeLibrary(ptr p0)
+  [PROP_GET] userdefined ChartBackGroundCol()
+  [PROP_PUT] void ChartBackGroundCol(userdefined p0)
+  [PROP_GET] ptr CriticalityThreshold()
+  [PROP_GET] bool CriticalLinksUseCategory()
+  [ERROR] func_106: 'int' object is not subscriptable
+  [PROP_GET] bool ProgressLineIsJagged()
+  [ERROR] func_108: 'int' object is not subscriptable
+  [PROP_GET] userdefined ProgressShadingMode()
+  [PROP_PUT] void ProgressShadingMode(userdefined p0)
+  [PROP_GET] date BaseSnappingDate()
+  [ERROR] func_112: 'int' object is not subscriptable
+  [PROP_GET] ptr DefaultCostAppearance()
+  [PROP_GET] ptr DefaultSatisfiedDemandAppearance()
+  [PROP_GET] ptr DefaultScheduledAppearance()
+  [PROP_GET] ptr DefaultTaskAppearance()
+  [PROP_GET] ptr DefaultUnsatisfiedDemandAppearance()
+  [PROP_GET] bool IgnoreFiltersOnAnnotations()
+  [ERROR] func_119: 'int' object is not subscriptable
+  [PROP_GET] bool ResetToSnappingBaseEachDay()
+  [ERROR] func_121: 'int' object is not subscriptable
+  [PROP_GET] bool SplitProgressedSections()
+  [ERROR] func_123: 'int' object is not subscriptable
+  [PROP_GET] bool UpgradeNearlyCriticalTasks()
+  [ERROR] func_125: 'int' object is not subscriptable
+  [METHOD] variant GetDisplayedProgressLines()
+  [ERROR] func_127: 'int' object is not subscriptable
+  [METHOD] variant GetHiddenAnnotationCategories()
+  [ERROR] func_129: 'int' object is not subscriptable
+  [METHOD] variant GetHiddenResourceAndCosts()
+  [ERROR] func_131: 'int' object is not subscriptable
+  [METHOD] variant GetHiddenLinkCategories()
+  [ERROR] func_133: 'int' object is not subscriptable
+  [METHOD] double GetBarHeights(userdefined type)
+  [ERROR] func_135: 'int' object is not subscriptable
+  [METHOD] double GetGaps(userdefined type)
+  [ERROR] func_137: 'int' object is not subscriptable
+  [ERROR] func_138: 'int' object is not subscriptable
+  [ERROR] func_139: 'int' object is not subscriptable
+  [ERROR] func_140: 'int' object is not subscriptable
+  [ERROR] func_141: 'int' object is not subscriptable
+  [ERROR] func_142: 'int' object is not subscriptable
+  [ERROR] func_143: 'int' object is not subscriptable
+  [ERROR] func_144: 'int' object is not subscriptable
+  [ERROR] func_145: 'int' object is not subscriptable
+  [PROP_GET] bool DisplayDrivingLinks()
+  [ERROR] func_147: 'int' object is not subscriptable
+  [METHOD] IDispatch GetDefaultCalendar()
+  [ERROR] func_149: 'int' object is not subscriptable
+  [METHOD] ptr ProjectTree()
+  [METHOD] ptr DateZone()
+  [METHOD] ptr SpreadSheet()
+  [METHOD] ptr Histogram()
+  [METHOD] void Cut()
+  [METHOD] void Copy()
+  [METHOD] void Paste()
+  [ERROR] func_157: 'int' object is not subscriptable
+  [ERROR] func_158: 'int' object is not subscriptable
+  [PROP_GET] ptr RBSCBSFilter()
+  [PROP_PUT] void RBSCBSFilter(ptr p0)
+  [METHOD] void Close()
+  [METHOD] variant AllViewObjectIds()
+  [METHOD] bool IsRbsOrCbs()
+  [PROP_GET] ptr SubHeadingCalendar()
+  [PROP_PUT] void SubHeadingCalendar(ptr p0)
+  [ERROR] func_166: 'int' object is not subscriptable
+  [PROP_GET] bool SummaryRowAppearanceOnSpreadsheet()
+  [ERROR] func_168: 'int' object is not subscriptable
+  [PROP_GET] bool SummaryRowAppearanceOnBarchart()
+  [ERROR] func_170: 'int' object is not subscriptable
+  [PROP_GET] userdefined SuppressSummaryTaskOption()
+  [PROP_PUT] void SuppressSummaryTaskOption(userdefined p0)
+  [PROP_GET] userdefined SuppressHammockTaskOption()
+  [PROP_PUT] void SuppressHammockTaskOption(userdefined p0)
+  [PROP_GET] userdefined SuppressExpandedTaskOption()
+  [PROP_PUT] void SuppressExpandedTaskOption(userdefined p0)
+  [ERROR] func_177: 'int' object is not subscriptable
+  [ERROR] func_178: 'int' object is not subscriptable
+  [METHOD] int TopmostRow()
+  [METHOD] variant GetMultipleDisplayLibraries()
+  [ERROR] func_181: 'int' object is not subscriptable
+
+  --- Implemented Interfaces (1) ---
+  [IMPL] IDispatch (flags=0)
+
+
+################################################################################
+# TYPE LIBRARY FILE ANALYSIS
+################################################################################
+No teamplan.tlb file found. Checking Asta install paths...
+  Found: C:\Program Files\Elecosoft\Powerproject\astadkit.ocx
+  Found: C:\Program Files\Elecosoft\Powerproject\Powerproject.exe

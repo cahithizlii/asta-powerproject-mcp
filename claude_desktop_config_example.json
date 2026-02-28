@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "asta_powerproject_mcp": {
+      "command": "python",
+      "args": ["C:\\PATH\\TO\\asta-powerproject-mcp\\asta_mcp_server.py"],
+      "env": {}
+    }
+  }
+}

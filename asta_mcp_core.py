@@ -1981,12 +1981,8 @@ async def asta_delete_task(params: DeleteTaskInput) -> str:
         com_initialized = True
         app, project, method = _connect_asta_com()
         _com_project = project
-        project.StartTransaction("Delete Task")
+        # _com_delete_task manages its own transactions internally
         result = _com_delete_task(project, params.task_id)
-        if "error" in result:
-            project.AbandonTransaction()
-            return json.dumps(result, indent=2)
-        _com_end_transaction(project)
         result["com_method"] = method
         return json.dumps(result, indent=2, default=str)
     except RuntimeError:
@@ -3648,12 +3644,34 @@ def _com_update_task(project, task_id: int, name: str = None,
 def _com_delete_task(project, task_id: int) -> dict:
     """Delete a task/bar via COM. Returns result dict.
 
-    Searches full hierarchy. Removes links first to avoid
-    "Cannot delete object referred to by other objects" error.
-    Uses parent_task.ChildBars.Remove(index) for deletion.
+    NOTE: This function manages its own transactions internally.
+    The caller's outer transaction should NOT wrap this function —
+    the caller should AbandonTransaction before calling, or this function
+    will end the caller's transaction first.
+
+    Steps (each in separate transaction for reliability):
+    1. Remove links from the task
+    2. Remove tasks from the bar (bar.Tasks.Remove)
+    3. Remove the bar from its parent's ChildBars
+
+    GetActualParentBar() is unreliable (returns self), so we search
+    the hierarchy manually.
     """
     import win32com.client
     result = {"method": "COM", "task_id": task_id}
+
+    def _wait():
+        try:
+            project.WaitForNotificationProcessing()
+        except Exception:
+            pass
+
+    # End any caller's transaction first
+    try:
+        project.EndTransaction()
+        _wait()
+    except Exception:
+        pass
 
     # Find the bar in hierarchy
     bar = _find_bar_by_id(project, task_id)
@@ -3663,34 +3681,88 @@ def _com_delete_task(project, task_id: int) -> dict:
 
     result["name"] = bar.Name
 
-    # Remove links first (to avoid "referred to by other objects" error)
+    # Step 1: Remove links (separate transaction)
     try:
         task, _ = _get_bar_task(bar)
-        if task:
-            while task.LinksOut.Count > 0:
-                task.LinksOut.Remove(1)
-            while task.LinksIn.Count > 0:
-                task.LinksIn.Remove(1)
+        if task and (task.LinksOut.Count > 0 or task.LinksIn.Count > 0):
+            project.StartTransaction("Delete links")
+            try:
+                while task.LinksOut.Count > 0:
+                    task.LinksOut.Remove(1)
+                while task.LinksIn.Count > 0:
+                    task.LinksIn.Remove(1)
+                project.EndTransaction()
+                _wait()
+            except Exception:
+                try:
+                    project.AbandonTransaction()
+                except Exception:
+                    pass
     except Exception:
         pass
 
-    # Find parent and remove by index
+    # Step 2: Clear progress (which creates ActualStart — prevents deletion)
+    bar = _find_bar_by_id(project, task_id)  # Re-fetch after txn
+    if bar is None:
+        result["deleted"] = True
+        return result
     try:
-        task, _ = _get_bar_task(bar)
-        if task:
-            parent_bar = win32com.client.Dispatch(task.GetActualParentBar())
-            parent_task = win32com.client.Dispatch(parent_bar.Tasks(1))
-            child_bars = parent_task.ChildBars
-            for i in range(child_bars.Count, 0, -1):
-                b = win32com.client.Dispatch(child_bars.Item(i))
-                if b.ID == task_id:
-                    child_bars.Remove(i)
-                    result["deleted"] = True
-                    return result
+        pct = getattr(bar, 'OverallPercentComplete', 0) or 0
+        if pct > 0:
+            project.StartTransaction("Clear progress")
+            try:
+                bar.OverallPercentComplete = 0.0
+                project.EndTransaction()
+                _wait()
+            except Exception:
+                try:
+                    project.AbandonTransaction()
+                except Exception:
+                    pass
     except Exception:
         pass
 
-    # Fallback: try top-level bars
+    # Step 3: Remove tasks from the bar (separate transaction)
+    bar = _find_bar_by_id(project, task_id)  # Re-fetch after txn
+    if bar is None:
+        result["deleted"] = True
+        return result
+    try:
+        if bar.Tasks.Count > 0:
+            project.StartTransaction("Delete tasks")
+            try:
+                while bar.Tasks.Count > 0:
+                    bar.Tasks.Remove(1)
+                project.EndTransaction()
+                _wait()
+            except Exception:
+                try:
+                    project.AbandonTransaction()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # Step 3: Remove the bar from hierarchy (separate transaction)
+    bar = _find_bar_by_id(project, task_id)  # Re-fetch after txn
+    if bar is None:
+        result["deleted"] = True
+        return result
+
+    project.StartTransaction("Delete bar")
+    try:
+        root_bar = project.Bars.Item(1)
+        root_task = win32com.client.Dispatch(root_bar.Tasks(1))
+        deleted = _delete_from_parent(root_task, task_id)
+        if deleted:
+            project.EndTransaction()
+            _wait()
+            result["deleted"] = True
+            return result
+    except Exception:
+        pass
+
+    # Fallback: try removing from project.Bars (top-level)
     try:
         bars = project.Bars
         for i in range(bars.Count, 0, -1):
@@ -3698,6 +3770,8 @@ def _com_delete_task(project, task_id: int) -> dict:
                 b = bars.Item(i)
                 if b.ID == task_id:
                     bars.Remove(i)
+                    project.EndTransaction()
+                    _wait()
                     result["deleted"] = True
                     return result
             except Exception:
@@ -3705,8 +3779,40 @@ def _com_delete_task(project, task_id: int) -> dict:
     except Exception:
         pass
 
+    try:
+        project.AbandonTransaction()
+    except Exception:
+        pass
+
     result["error"] = f"Bar {task_id} found but could not be deleted"
     return result
+
+
+def _delete_from_parent(parent_task, target_id, depth=0, max_depth=6):
+    """Recursively search for target_id in ChildBars and remove it."""
+    import win32com.client
+    if depth >= max_depth:
+        return False
+    try:
+        child_bars = parent_task.ChildBars
+        for i in range(child_bars.Count, 0, -1):
+            try:
+                cb = win32com.client.Dispatch(child_bars.Item(i))
+                if cb.ID == target_id:
+                    child_bars.Remove(i)
+                    return True
+                # Recurse: check if target is a grandchild
+                try:
+                    ct = win32com.client.Dispatch(cb.Tasks(1))
+                    if _delete_from_parent(ct, target_id, depth + 1, max_depth):
+                        return True
+                except Exception:
+                    pass
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return False
 
 
 def _com_explore_link_interfaces(project) -> dict:

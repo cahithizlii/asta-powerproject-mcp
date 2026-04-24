@@ -3,12 +3,12 @@
 """
 Asta Powerproject File MCP Server
 ===================================
-A lightweight, file/MPXJ-only MCP server for Asta Powerproject.
-Provides read-only analysis tools for project files using MPXJ (Java library).
-Only 3 consolidated tools: asta_query, asta_resource, asta_calendar.
+MCP server for reading, querying, editing, and writing Asta/MS Project files.
+Supports native MSPDI XML parsing (zero Java dependency) and MPXJ fallback for .pp/.mpp.
+4 tools: asta_query (expanded), asta_file_resource, asta_calendar, asta_file_edit (NEW).
 
 Author: Claude AI for Cahit
-Version: 1.0.0
+Version: 2.0.0
 """
 
 import json
@@ -22,6 +22,9 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 from mcp.server.fastmcp import FastMCP
+
+# Native MSPDI XML parser (zero Java dependency)
+from mspdi_parser import MspdiProject
 
 # ============================================================================
 # LOGGING CONFIGURATION
@@ -46,13 +49,15 @@ logger = logging.getLogger("asta_mcp_file")
 mcp = FastMCP(
     "asta_powerproject_file",
     instructions=(
-        "FILE-BASED read-only analysis tools for Asta Powerproject project files (.pp/.mpp/.xml). "
-        "IMPORTANT: These tools are a SECONDARY fallback — only use them when the user explicitly "
-        "asks to read/analyze a specific project FILE, or when asta_powerproject_mcp (COM) tools "
-        "are unavailable. For live operations with a running Asta instance, ALWAYS prefer the "
-        "asta_powerproject_mcp tools (asta_task, asta_link, asta_resource, asta_schedule, etc.) "
-        "which connect directly via COM — no file path needed. "
-        "These file tools require a file_path parameter pointing to a .pp/.mpp/.xml file."
+        "FILE-BASED tools for Asta Powerproject / MS Project files (.pp/.mpp/.xml/.mspdi). "
+        "Supports READING, QUERYING, EDITING, and WRITING project files. "
+        "For .xml/.mspdi files: uses native Python parser (zero Java dependency, full MSPDI support). "
+        "For .pp/.mpp files: uses MPXJ/Java fallback. "
+        "4 tools: asta_query (13 read actions including code_libraries, search, missing_links), "
+        "asta_file_resource (3 actions), asta_calendar (1 action), "
+        "asta_file_edit (8 write actions: add/update/delete tasks, links, codes, save). "
+        "IMPORTANT: For live operations with running Asta, prefer asta_powerproject_mcp (COM) tools. "
+        "These file tools require a file_path parameter."
     )
 )
 
@@ -1161,13 +1166,45 @@ def _com_auto_export() -> str:
 def _resolve_file_path(file_path: str = None) -> str:
     """Resolve file_path: if None, try COM auto-export.
 
-    Returns a valid file path for MPXJ reading.
+    Returns a valid file path for reading.
     Raises RuntimeError if neither file_path nor COM is available.
     """
     if file_path:
         return file_path
     # Try COM auto-export
     return _com_auto_export()
+
+
+# Project manager cache to avoid re-parsing the same file
+_manager_cache = {"path": None, "manager": None, "timestamp": 0}
+
+
+def _get_manager(file_path: str = None):
+    """Factory: returns MspdiProject for .xml/.mspdi, AstaFileManager for .pp/.mpp.
+
+    Caches the last manager for 60 seconds to avoid re-parsing on rapid successive queries.
+    """
+    resolved = _resolve_file_path(file_path)
+
+    # Check cache
+    cache = _manager_cache
+    if (cache["path"] == resolved and cache["manager"] is not None
+            and (time.time() - cache["timestamp"]) < 60):
+        return cache["manager"]
+
+    ext = os.path.splitext(resolved)[1].lower()
+
+    if ext in ('.xml', '.mspdi'):
+        mgr = MspdiProject(resolved)
+        logger.info(f"Using native MSPDI parser for {resolved}")
+    else:
+        mgr = AstaFileManager(resolved)
+        logger.info(f"Using MPXJ parser for {resolved}")
+
+    cache["path"] = resolved
+    cache["manager"] = mgr
+    cache["timestamp"] = time.time()
+    return mgr
 
 
 # ============================================================================
@@ -1232,6 +1269,44 @@ class DelayAnalysisInput(ProjectFileInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.MARKDOWN)
 
 
+class SearchTasksInput(ProjectFileInput):
+    pattern: str = Field(..., description="Name pattern to search for (case-insensitive)")
+    include_summary: bool = Field(default=True)
+    response_format: ResponseFormat = Field(default=ResponseFormat.MARKDOWN)
+    limit: int = Field(default=100, ge=1, le=500)
+
+
+class CodeLibrariesInput(ProjectFileInput):
+    response_format: ResponseFormat = Field(default=ResponseFormat.MARKDOWN)
+
+
+class TaskCodesInput(ProjectFileInput):
+    task_id: int = Field(..., ge=0)
+    response_format: ResponseFormat = Field(default=ResponseFormat.MARKDOWN)
+
+
+class FilterByCodeInput(ProjectFileInput):
+    library_name: str = Field(..., description="Code library name (e.g., 'Disiplinler', 'Bloklar')")
+    value: Optional[str] = Field(default=None, description="Filter value (case-insensitive substring match)")
+    response_format: ResponseFormat = Field(default=ResponseFormat.MARKDOWN)
+    limit: int = Field(default=100, ge=1, le=500)
+
+
+class LatestFinishingInput(ProjectFileInput):
+    count: int = Field(default=20, ge=1, le=200)
+    response_format: ResponseFormat = Field(default=ResponseFormat.MARKDOWN)
+
+
+class MissingLinksInput(ProjectFileInput):
+    response_format: ResponseFormat = Field(default=ResponseFormat.MARKDOWN)
+
+
+class LinkChainInput(ProjectFileInput):
+    from_pattern: str = Field(..., description="Name pattern for source tasks")
+    to_pattern: str = Field(..., description="Name pattern for target tasks")
+    response_format: ResponseFormat = Field(default=ResponseFormat.MARKDOWN)
+
+
 class ResourceLoadingInput(ProjectFileInput):
     response_format: ResponseFormat = Field(default=ResponseFormat.MARKDOWN)
 
@@ -1259,7 +1334,7 @@ async def asta_analyze_project(params: AnalyzeProjectInput) -> str:
         Project analysis in markdown or JSON format
     """
     try:
-        mgr = AstaFileManager(_resolve_file_path(params.file_path))
+        mgr = _get_manager(params.file_path)
         summary = mgr.get_project_summary()
         tasks = mgr.get_all_tasks()
 
@@ -1316,7 +1391,7 @@ async def asta_list_tasks(params: ListTasksInput) -> str:
         Task list in markdown or JSON format
     """
     try:
-        mgr = AstaFileManager(_resolve_file_path(params.file_path))
+        mgr = _get_manager(params.file_path)
         tasks = mgr.get_all_tasks(include_summary=params.include_summary)
 
         total = len(tasks)
@@ -1368,7 +1443,7 @@ async def asta_get_task(params: GetTaskInput) -> str:
         Detailed task information in markdown or JSON
     """
     try:
-        mgr = AstaFileManager(_resolve_file_path(params.file_path))
+        mgr = _get_manager(params.file_path)
         task = mgr.get_task_by_id(params.task_id)
 
         if not task:
@@ -1425,7 +1500,7 @@ async def asta_get_critical_path(params: CriticalPathInput) -> str:
         List of critical path tasks with their schedule details
     """
     try:
-        mgr = AstaFileManager(_resolve_file_path(params.file_path))
+        mgr = _get_manager(params.file_path)
         critical = mgr.get_critical_path()
 
         if params.response_format == ResponseFormat.JSON:
@@ -1468,7 +1543,7 @@ async def asta_list_resources(params: ResourcesInput) -> str:
         Resource list in markdown or JSON format
     """
     try:
-        mgr = AstaFileManager(_resolve_file_path(params.file_path))
+        mgr = _get_manager(params.file_path)
         resources = mgr.get_resources()
 
         if params.response_format == ResponseFormat.JSON:
@@ -1505,7 +1580,7 @@ async def asta_get_resource_assignments(params: ResourcesInput) -> str:
         Resource assignment list in markdown or JSON format
     """
     try:
-        mgr = AstaFileManager(_resolve_file_path(params.file_path))
+        mgr = _get_manager(params.file_path)
         assignments = mgr.get_resource_assignments()
 
         if params.response_format == ResponseFormat.JSON:
@@ -1542,7 +1617,7 @@ async def asta_get_calendars(params: ProjectFileInput) -> str:
         Calendar list in JSON format
     """
     try:
-        mgr = AstaFileManager(_resolve_file_path(params.file_path))
+        mgr = _get_manager(params.file_path)
         calendars = mgr.get_calendars()
         return json.dumps({"total": len(calendars), "calendars": calendars}, indent=2, default=str)
 
@@ -1567,7 +1642,7 @@ async def asta_float_analysis(params: FloatAnalysisInput) -> str:
         Float distribution analysis
     """
     try:
-        mgr = AstaFileManager(_resolve_file_path(params.file_path))
+        mgr = _get_manager(params.file_path)
         analysis = mgr.get_float_analysis()
 
         if params.response_format == ResponseFormat.JSON:
@@ -1611,7 +1686,7 @@ async def asta_get_wbs_tree(params: WBSTreeInput) -> str:
         WBS tree in markdown or JSON format
     """
     try:
-        mgr = AstaFileManager(_resolve_file_path(params.file_path))
+        mgr = _get_manager(params.file_path)
         tree = mgr.get_wbs_tree(max_depth=params.max_depth)
 
         max_nodes = 200
@@ -1679,7 +1754,7 @@ async def asta_delay_analysis(params: DelayAnalysisInput) -> str:
         Delay analysis with statistics and task details
     """
     try:
-        mgr = AstaFileManager(_resolve_file_path(params.file_path))
+        mgr = _get_manager(params.file_path)
         analysis = mgr.get_delay_analysis()
 
         if params.response_format == ResponseFormat.JSON:
@@ -1734,7 +1809,7 @@ async def asta_resource_loading(params: ResourceLoadingInput) -> str:
         Resource loading analysis with work/cost totals
     """
     try:
-        mgr = AstaFileManager(_resolve_file_path(params.file_path))
+        mgr = _get_manager(params.file_path)
         loading = mgr.get_resource_loading()
 
         if params.response_format == ResponseFormat.JSON:
@@ -1774,7 +1849,218 @@ async def asta_resource_loading(params: ResourceLoadingInput) -> str:
 
 
 # ============================================================================
-# 3 CONSOLIDATED TOOL DISPATCHERS
+# NEW TOOL FUNCTIONS (for native MSPDI parser)
+# ============================================================================
+
+async def asta_search_tasks(params: SearchTasksInput) -> str:
+    """Search tasks by name pattern."""
+    try:
+        mgr = _get_manager(params.file_path)
+        if not hasattr(mgr, 'search_tasks'):
+            return "Task search requires native MSPDI parser. Use .xml file."
+        tasks = mgr.search_tasks(params.pattern, include_summary=params.include_summary)
+        total = len(tasks)
+        limited = tasks[:params.limit]
+
+        if params.response_format == ResponseFormat.JSON:
+            return json.dumps({"pattern": params.pattern, "total": total, "returned": len(limited), "tasks": limited}, indent=2, default=str)
+
+        lines = [f"# Search: '{params.pattern}'", "", f"**Found:** {total} tasks"]
+        if total > params.limit:
+            lines.append(f" (showing first {params.limit})")
+        lines.append("")
+        for t in limited:
+            crit = " **[CRITICAL]**" if t['critical'] else ""
+            prefix = "[S] " if t['summary'] else "[M] " if t['milestone'] else ""
+            lines.append(f"- **{prefix}{t['name']}** (ID:{t['id']}){crit} | {t['start']} - {t['finish']} | {t['duration']}")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error searching tasks: {e}"
+
+
+async def asta_code_libraries(params: CodeLibrariesInput) -> str:
+    """List all code libraries and their values."""
+    try:
+        mgr = _get_manager(params.file_path)
+        if not hasattr(mgr, 'get_code_libraries'):
+            return "Code library queries require native MSPDI parser. Use .xml file."
+        libs = mgr.get_code_libraries()
+
+        if params.response_format == ResponseFormat.JSON:
+            return json.dumps({"total": len(libs), "libraries": libs}, indent=2, default=str)
+
+        lines = ["# Code Libraries", "", f"**Total:** {len(libs)} libraries", ""]
+        for lib in libs:
+            lines.append(f"## {lib['name']}")
+            if lib['values']:
+                for v in lib['values'][:20]:
+                    desc = f" ({v['description']})" if v['description'] else ""
+                    lines.append(f"- {v['value']}{desc}")
+                if len(lib['values']) > 20:
+                    lines.append(f"  *...and {len(lib['values']) - 20} more values*")
+            else:
+                lines.append("- (no predefined values)")
+            lines.append("")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error getting code libraries: {e}"
+
+
+async def asta_task_codes(params: TaskCodesInput) -> str:
+    """Get code assignments for a specific task."""
+    try:
+        mgr = _get_manager(params.file_path)
+        if not hasattr(mgr, 'get_task_codes'):
+            return "Task code queries require native MSPDI parser. Use .xml file."
+        result = mgr.get_task_codes(params.task_id)
+
+        if "error" in result:
+            return result["error"]
+
+        if params.response_format == ResponseFormat.JSON:
+            return json.dumps(result, indent=2, default=str)
+
+        lines = [f"# Codes for: {result['task_name']} (ID: {result['task_id']})", ""]
+        if result['codes']:
+            for lib, val in result['codes'].items():
+                lines.append(f"- **{lib}:** {val}")
+        else:
+            lines.append("No codes assigned.")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error getting task codes: {e}"
+
+
+async def asta_filter_by_code(params: FilterByCodeInput) -> str:
+    """Filter tasks by code library."""
+    try:
+        mgr = _get_manager(params.file_path)
+        if not hasattr(mgr, 'filter_tasks_by_code'):
+            return "Code filter requires native MSPDI parser. Use .xml file."
+        tasks = mgr.filter_tasks_by_code(params.library_name, params.value)
+        total = len(tasks)
+        limited = tasks[:params.limit]
+
+        if params.response_format == ResponseFormat.JSON:
+            return json.dumps({"library": params.library_name, "filter_value": params.value,
+                             "total": total, "returned": len(limited), "tasks": limited}, indent=2, default=str)
+
+        val_str = f" = '{params.value}'" if params.value else ""
+        lines = [f"# Filter: {params.library_name}{val_str}", "",
+                 f"**Found:** {total} tasks", ""]
+        lines.extend(["| ID | Name | Code Value | Duration | Start | Finish | Crit |",
+                      "|---|---|---|---|---|---|---|"])
+        for t in limited:
+            crit = "YES" if t['critical'] else ""
+            lines.append(f"| {t['id']} | {t['name']} | {t['code_value']} | {t['duration']} | {t['start']} | {t['finish']} | {crit} |")
+        if total > params.limit:
+            lines.append(f"\n*...and {total - params.limit} more tasks*")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error filtering by code: {e}"
+
+
+async def asta_latest_finishing(params: LatestFinishingInput) -> str:
+    """Get tasks with the latest finish dates."""
+    try:
+        mgr = _get_manager(params.file_path)
+        if not hasattr(mgr, 'get_latest_finishing'):
+            return "Latest finishing query requires native MSPDI parser. Use .xml file."
+        tasks = mgr.get_latest_finishing(params.count)
+
+        if params.response_format == ResponseFormat.JSON:
+            return json.dumps({"count": len(tasks), "tasks": tasks}, indent=2, default=str)
+
+        lines = ["# Latest Finishing Activities", "",
+                 f"**Top {len(tasks)} activities by finish date:**", ""]
+        lines.extend(["| ID | Name | Finish | Start | Duration | Critical | Predecessors |",
+                      "|---|---|---|---|---|---|---|"])
+        for t in tasks:
+            crit = "YES" if t['critical'] else ""
+            pred_str = ", ".join([f"{p['task_id']}({p['type']})" for p in t.get('predecessors', [])[:5]])
+            if len(t.get('predecessors', [])) > 5:
+                pred_str += "..."
+            lines.append(f"| {t['id']} | {t['name']} | {t['finish']} | {t['start']} | {t['duration']} | {crit} | {pred_str} |")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error getting latest finishing: {e}"
+
+
+async def asta_missing_links(params: MissingLinksInput) -> str:
+    """Find tasks with missing predecessors or successors."""
+    try:
+        mgr = _get_manager(params.file_path)
+        if not hasattr(mgr, 'find_missing_links'):
+            return "Missing links analysis requires native MSPDI parser. Use .xml file."
+        result = mgr.find_missing_links()
+
+        if params.response_format == ResponseFormat.JSON:
+            return json.dumps(result, indent=2, default=str)
+
+        lines = ["# Missing Links Analysis (Open Ends)", "",
+                 f"**No Predecessors:** {result['no_predecessors_count']} tasks",
+                 f"**No Successors:** {result['no_successors_count']} tasks", ""]
+
+        if result['no_predecessors']:
+            lines.extend(["## Tasks Without Predecessors", "",
+                         "| ID | Name | Start | Finish | Critical |",
+                         "|---|---|---|---|---|"])
+            for t in result['no_predecessors'][:50]:
+                crit = "YES" if t['critical'] else ""
+                lines.append(f"| {t['id']} | {t['name']} | {t['start']} | {t['finish']} | {crit} |")
+            if result['no_predecessors_count'] > 50:
+                lines.append(f"\n*...and {result['no_predecessors_count'] - 50} more*")
+
+        if result['no_successors']:
+            lines.extend(["", "## Tasks Without Successors", "",
+                         "| ID | Name | Start | Finish | Critical |",
+                         "|---|---|---|---|---|"])
+            for t in result['no_successors'][:50]:
+                crit = "YES" if t['critical'] else ""
+                lines.append(f"| {t['id']} | {t['name']} | {t['start']} | {t['finish']} | {crit} |")
+            if result['no_successors_count'] > 50:
+                lines.append(f"\n*...and {result['no_successors_count'] - 50} more*")
+
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error finding missing links: {e}"
+
+
+async def asta_link_chain(params: LinkChainInput) -> str:
+    """Trace link chains between task groups."""
+    try:
+        mgr = _get_manager(params.file_path)
+        if not hasattr(mgr, 'get_link_chain'):
+            return "Link chain analysis requires native MSPDI parser. Use .xml file."
+        result = mgr.get_link_chain(params.from_pattern, params.to_pattern)
+
+        if "error" in result:
+            return result["error"]
+
+        if params.response_format == ResponseFormat.JSON:
+            return json.dumps(result, indent=2, default=str)
+
+        lines = [f"# Link Chain: '{params.from_pattern}' -> '{params.to_pattern}'", "",
+                 f"**From tasks found:** {result['from_tasks_found']}",
+                 f"**To tasks found:** {result['to_tasks_found']}",
+                 f"**Chains found:** {result['chains_found']}", ""]
+
+        for i, chain in enumerate(result['chains'][:30]):
+            lines.append(f"### Chain {i+1}")
+            for step in chain:
+                link = step.get('link', '')
+                lines.append(f"  {link} **{step['name']}** (ID:{step['id']})")
+            lines.append("")
+
+        if result['chains_found'] > 30:
+            lines.append(f"*...and {result['chains_found'] - 30} more chains*")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error tracing link chain: {e}"
+
+
+# ============================================================================
+# 4 CONSOLIDATED TOOL DISPATCHERS
 # ============================================================================
 
 @mcp.tool(
@@ -1785,7 +2071,7 @@ async def asta_query(params: dict) -> str:
     """Query and analyze Asta Powerproject data from a FILE (read-only, MPXJ-based).
 
     SECONDARY TOOL: Only use when reading/analyzing a specific .pp/.mpp/.xml file.
-    For live operations with running Asta, use asta_export → report or asta_task → get instead.
+    For live operations with running Asta, use asta_export -> report or asta_task -> get instead.
 
     Actions:
     - analyze: Full project analysis. Params: file_path, response_format
@@ -1795,6 +2081,13 @@ async def asta_query(params: dict) -> str:
     - float: Float/slack analysis. Params: file_path, response_format
     - delay: Delay analysis. Params: file_path, response_format
     - get_task: Get task details. Params: file_path, task_id, response_format
+    - search: Search tasks by name. Params: file_path, pattern, include_summary, limit, response_format
+    - code_libraries: List code libraries. Params: file_path, response_format
+    - task_codes: Get codes for a task. Params: file_path, task_id, response_format
+    - filter_by_code: Filter tasks by code. Params: file_path, library_name, value, limit, response_format
+    - latest_finishing: Tasks finishing latest. Params: file_path, count, response_format
+    - missing_links: Find open ends. Params: file_path, response_format
+    - link_chain: Trace link chains. Params: file_path, from_pattern, to_pattern, response_format
 
     All actions require a file_path to a .pp/.mpp/.xml project file.
     Default list_tasks limit is 100 (max 500).
@@ -1816,8 +2109,22 @@ async def asta_query(params: dict) -> str:
             result = await asta_delay_analysis(DelayAnalysisInput(**p))
         elif action == "get_task":
             result = await asta_get_task(GetTaskInput(**p))
+        elif action == "search":
+            result = await asta_search_tasks(SearchTasksInput(**p))
+        elif action == "code_libraries":
+            result = await asta_code_libraries(CodeLibrariesInput(**p))
+        elif action == "task_codes":
+            result = await asta_task_codes(TaskCodesInput(**p))
+        elif action == "filter_by_code":
+            result = await asta_filter_by_code(FilterByCodeInput(**p))
+        elif action == "latest_finishing":
+            result = await asta_latest_finishing(LatestFinishingInput(**p))
+        elif action == "missing_links":
+            result = await asta_missing_links(MissingLinksInput(**p))
+        elif action == "link_chain":
+            result = await asta_link_chain(LinkChainInput(**p))
         else:
-            return json.dumps({"error": f"Unknown action '{action}'. Valid: analyze, list_tasks, critical_path, wbs, float, delay, get_task"})
+            return json.dumps({"error": f"Unknown action '{action}'. Valid: analyze, list_tasks, critical_path, wbs, float, delay, get_task, search, code_libraries, task_codes, filter_by_code, latest_finishing, missing_links, link_chain"})
         return _truncate_response(result)
     except Exception as e:
         return json.dumps({"error": f"asta_query({action}) failed: {e}"})
@@ -1884,6 +2191,114 @@ async def asta_calendar_query(params: dict) -> str:
         return _truncate_response(result)
     except Exception as e:
         return json.dumps({"error": f"asta_calendar({action}) failed: {e}"})
+
+
+@mcp.tool(
+    name="asta_file_edit",
+    annotations={"title": "File-Based Project Editor", "readOnlyHint": False}
+)
+async def asta_file_edit(params: dict) -> str:
+    """Edit Asta/MS Project data in a FILE and save as MSPDI XML.
+
+    Modifies tasks, links, codes, and progress IN MEMORY, then saves to a new XML file.
+    The saved file is compatible with both MS Project and Asta Powerproject import.
+
+    Actions:
+    - add_task: Add task. Params: file_path, name, duration, start_date, finish_date, is_milestone, is_summary, parent_task_id, calendar_uid
+    - update_task: Update task. Params: file_path, task_id, name, duration, percent_complete, notes, start_date, finish_date
+    - delete_task: Delete task. Params: file_path, task_id
+    - add_link: Add link. Params: file_path, predecessor_id, successor_id, link_type (FS/SS/FF/SF), lag
+    - remove_link: Remove link. Params: file_path, predecessor_id, successor_id
+    - update_link: Update link. Params: file_path, predecessor_id, successor_id, new_link_type, new_lag
+    - assign_code: Assign code. Params: file_path, task_id, library_name, value
+    - update_progress: Update progress. Params: file_path, task_id, percent_complete, actual_start, actual_finish
+    - save: Save to MSPDI XML. Params: file_path, output_path
+
+    IMPORTANT: Changes are made in memory. Call 'save' action to write the output file.
+    The manager is cached, so multiple edits followed by one save is efficient.
+    """
+    action = params.get("action", "")
+    p = {k: v for k, v in params.items() if k != "action"}
+    try:
+        mgr = _get_manager(p.get("file_path"))
+
+        if action == "add_task":
+            kwargs = {
+                "name": p.get("name", "New Task"),
+                "duration_str": p.get("duration", "1d"),
+            }
+            if isinstance(mgr, MspdiProject):
+                kwargs.update({
+                    "start_date": p.get("start_date"),
+                    "finish_date": p.get("finish_date"),
+                    "is_milestone": p.get("is_milestone", False),
+                    "is_summary": p.get("is_summary", False),
+                    "parent_task_id": p.get("parent_task_id"),
+                    "calendar_uid": p.get("calendar_uid"),
+                })
+            result = mgr.add_task(**kwargs)
+        elif action == "update_task":
+            kwargs = {
+                "task_id": p.get("task_id"),
+                "name": p.get("name"),
+                "duration_str": p.get("duration"),
+                "percent_complete": p.get("percent_complete"),
+                "notes": p.get("notes"),
+            }
+            if isinstance(mgr, MspdiProject):
+                kwargs.update({
+                    "start_date": p.get("start_date"),
+                    "finish_date": p.get("finish_date"),
+                })
+            result = mgr.update_task(**kwargs)
+        elif action == "delete_task":
+            result = mgr.delete_task(task_id=p.get("task_id"))
+        elif action == "add_link":
+            result = mgr.add_link(
+                predecessor_id=p.get("predecessor_id"),
+                successor_id=p.get("successor_id"),
+                link_type=p.get("link_type", "FS"),
+                lag_str=p.get("lag"),
+            )
+        elif action == "remove_link":
+            result = mgr.remove_link(
+                predecessor_id=p.get("predecessor_id"),
+                successor_id=p.get("successor_id"),
+            )
+        elif action == "update_link":
+            result = mgr.update_link(
+                predecessor_id=p.get("predecessor_id"),
+                successor_id=p.get("successor_id"),
+                new_link_type=p.get("new_link_type"),
+                new_lag_str=p.get("new_lag"),
+            )
+        elif action == "assign_code":
+            if not hasattr(mgr, 'assign_code'):
+                return json.dumps({"error": "Code assignment requires native MSPDI parser. Use .xml file."})
+            result = mgr.assign_code(
+                task_id=p.get("task_id"),
+                library_name=p.get("library_name"),
+                value=p.get("value"),
+            )
+        elif action == "update_progress":
+            result = mgr.update_progress(
+                task_id=p.get("task_id"),
+                percent_complete=p.get("percent_complete"),
+                actual_start=p.get("actual_start"),
+                actual_finish=p.get("actual_finish"),
+            )
+        elif action == "save":
+            output_path = mgr.save(output_path=p.get("output_path"))
+            # Invalidate cache since file has changed
+            _manager_cache["manager"] = None
+            result = {"saved": True, "output_path": output_path,
+                      "message": f"Project saved to: {output_path}"}
+        else:
+            return json.dumps({"error": f"Unknown action '{action}'. Valid: add_task, update_task, delete_task, add_link, remove_link, update_link, assign_code, update_progress, save"})
+
+        return _truncate_response(json.dumps(result, indent=2, default=str))
+    except Exception as e:
+        return json.dumps({"error": f"asta_file_edit({action}) failed: {e}"})
 
 
 # ============================================================================

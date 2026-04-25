@@ -3481,7 +3481,8 @@ def _set_bar_dates(bar, start_date_str: str = None, finish_date_str: str = None,
 
 def _com_add_task(project, name: str, duration_str: str = "1d",
                   start_date: str = None, finish_date: str = None,
-                  parent_bar_id: int = None, is_summary: bool = False) -> dict:
+                  parent_bar_id: int = None, is_summary: bool = False,
+                  is_milestone: bool = False) -> dict:
     """Add a task via COM. Returns result dict.
 
     VERIFIED WORKING workflow (v21):
@@ -3492,6 +3493,7 @@ def _com_add_task(project, name: str, duration_str: str = "1d",
     5. Dates take effect after project.Reschedule()
 
     For summaries: ChildBars.Add() + bar.Tasks.AddSummaryTask(date)
+    For milestones: ChildBars.Add() + bar.Tasks.AddMilestone(date)
     """
     import win32com.client
     import pywintypes
@@ -3544,20 +3546,26 @@ def _com_add_task(project, name: str, duration_str: str = "1d",
         return result
 
     # Add a task to the bar
-    if is_summary:
+    if is_milestone:
+        try:
+            task = new_bar.Tasks.AddMilestone(ole_start)
+            if task:
+                result["type"] = "milestone"
+        except Exception as e:
+            result["task_id"] = bar_id
+            result["name"] = name
+            result["warning"] = f"Bar created but AddMilestone failed: {str(e)[:80]}"
+            return result
+    elif is_summary:
         try:
             task = new_bar.Tasks.AddSummaryTask(ole_start)
             if task:
                 result["type"] = "summary"
-        except Exception:
-            result["type_warning"] = "Could not create as summary, created as normal task"
-            try:
-                task = new_bar.Tasks.AddTask(ole_start, duration_str or "1d")
-            except Exception as e:
-                result["task_id"] = bar_id
-                result["name"] = name
-                result["warning"] = f"Bar created but task creation failed: {str(e)[:80]}"
-                return result
+        except Exception as e:
+            result["task_id"] = bar_id
+            result["name"] = name
+            result["warning"] = f"Bar created but AddSummaryTask failed: {str(e)[:80]}"
+            return result
     else:
         # Normal task: AddTask(start_date, duration_or_end_date)
         try:
@@ -5301,7 +5309,7 @@ class ManageResourcesInput(BaseModel):
 
     action: str = Field(
         ...,
-        description="Action: 'list', 'create_permanent', 'create_consumable', "
+        description="Action: 'list', 'list_rates', 'create_permanent', 'create_consumable', "
                     "'create_cost_centre', 'delete_resource', 'delete_cost_centre'."
     )
     name: Optional[str] = Field(default=None, description="Resource or cost centre name.")
@@ -5329,7 +5337,7 @@ class ManageResourcesInput(BaseModel):
     @field_validator("action")
     @classmethod
     def validate_action(cls, v: str) -> str:
-        allowed = {"list", "create_permanent", "create_consumable",
+        allowed = {"list", "list_rates", "create_permanent", "create_consumable",
                     "create_cost_centre", "delete_resource", "delete_cost_centre"}
         if v.lower() not in allowed:
             raise ValueError(f"action must be one of {allowed}")
@@ -5350,6 +5358,7 @@ def asta_manage_resources(params: ManageResourcesInput) -> str:
     """
     import pythoncom
     import pywintypes
+    import win32com.client
 
     com_initialized = False
     result: Dict[str, Any] = {"tool": "asta_manage_resources", "action": params.action, "success": False}
@@ -5388,10 +5397,22 @@ def asta_manage_resources(params: ManageResourcesInput) -> str:
                 for i in range(1, cons.Count + 1):
                     try:
                         r = cons.Item(i)
+                        # Read CostPerUnit via IAmountAndCurrency.Amount
+                        cost_per_unit = 0.0
+                        try:
+                            r_d = win32com.client.Dispatch(r)
+                            cpu_did = r_d._oleobj_.GetIDsOfNames(0, 'CostPerUnit')
+                            cpu_raw = r_d._oleobj_.InvokeTypes(cpu_did, 0, 2, (9, 0), ())
+                            if cpu_raw:
+                                cpu_d = win32com.client.Dispatch(cpu_raw)
+                                cost_per_unit = cpu_d._oleobj_.InvokeTypes(0, 0, 2, (5, 0), ())
+                        except Exception:
+                            pass
                         cons_list.append({
                             "id": r.ID,
                             "name": r.Name,
                             "availability": safe_float(getattr(r, 'Availability', None)),
+                            "cost_per_unit": cost_per_unit,
                         })
                     except Exception:
                         continue
@@ -5405,9 +5426,21 @@ def asta_manage_resources(params: ManageResourcesInput) -> str:
                 for i in range(1, ccs.Count + 1):
                     try:
                         cc = ccs.Item(i)
+                        # Read Cost via IAmountAndCurrency.Amount
+                        cc_cost = 0.0
+                        try:
+                            cc_d = win32com.client.Dispatch(cc)
+                            cost_did = cc_d._oleobj_.GetIDsOfNames(0, 'Cost')
+                            cost_raw = cc_d._oleobj_.InvokeTypes(cost_did, 0, 2, (9, 0), ())
+                            if cost_raw:
+                                cost_d = win32com.client.Dispatch(cost_raw)
+                                cc_cost = cost_d._oleobj_.InvokeTypes(0, 0, 2, (5, 0), ())
+                        except Exception:
+                            pass
                         cc_list.append({
                             "id": cc.ID,
                             "name": cc.Name,
+                            "cost": cc_cost,
                         })
                     except Exception:
                         continue
@@ -5418,6 +5451,71 @@ def asta_manage_resources(params: ManageResourcesInput) -> str:
             result["consumable_resources"] = cons_list
             result["cost_centres"] = cc_list
             result["success"] = True
+
+        # === ACTION: list_rates ===
+        elif params.action == "list_rates":
+            # List CostAndIncomeRates (project-level rate definitions for permanent resource costing)
+            rates_list = []
+            try:
+                rates_coll = project.CostAndIncomeRates
+                for i in range(1, rates_coll.Count + 1):
+                    try:
+                        rate = rates_coll.Item(i)
+                        rate_d = win32com.client.Dispatch(rate)
+                        # Get Amount (IAmountAndCurrency)
+                        amount = 0.0
+                        try:
+                            amt_did = rate_d._oleobj_.GetIDsOfNames(0, 'Amount')
+                            amt_raw = rate_d._oleobj_.InvokeTypes(amt_did, 0, 2, (9, 0), ())
+                            if amt_raw:
+                                amt_d = win32com.client.Dispatch(amt_raw)
+                                amount = amt_d._oleobj_.InvokeTypes(0, 0, 2, (5, 0), ())
+                        except Exception:
+                            pass
+                        # Get TimeUnit
+                        time_unit = ""
+                        try:
+                            tu_did = rate_d._oleobj_.GetIDsOfNames(0, 'TimeUnit')
+                            tu_raw = rate_d._oleobj_.InvokeTypes(tu_did, 0, 2, (9, 0), ())
+                            if tu_raw:
+                                tu_d = win32com.client.Dispatch(tu_raw)
+                                time_unit = str(tu_d.Name) if hasattr(tu_d, 'Name') else str(tu_d)
+                        except Exception:
+                            pass
+                        # Get CostCentre
+                        cost_centre = ""
+                        try:
+                            cc_did = rate_d._oleobj_.GetIDsOfNames(0, 'CostCentre')
+                            cc_raw = rate_d._oleobj_.InvokeTypes(cc_did, 0, 2, (9, 0), ())
+                            if cc_raw:
+                                cc_d = win32com.client.Dispatch(cc_raw)
+                                cost_centre = str(cc_d.Name) if hasattr(cc_d, 'Name') else str(cc_d)
+                        except Exception:
+                            pass
+                        # Get type (0=cost, 1=income)
+                        rate_type = 0
+                        try:
+                            rate_type = rate_d.type
+                        except Exception:
+                            pass
+
+                        rates_list.append({
+                            "id": rate.ID,
+                            "name": rate.Name,
+                            "amount": amount,
+                            "time_unit": time_unit,
+                            "cost_centre": cost_centre,
+                            "type": "cost" if rate_type == 0 else "income",
+                        })
+                    except Exception:
+                        continue
+            except Exception as e:
+                result["rates_error"] = str(e)
+
+            result["cost_and_income_rates"] = rates_list
+            result["success"] = True
+            result["note"] = ("Use 'rate_name' in assign action to assign a rate to a permanent "
+                              "resource allocation. Cost = effort_hours × rate_amount.")
 
         # === ACTION: create_permanent ===
         elif params.action == "create_permanent":
@@ -5456,8 +5554,16 @@ def asta_manage_resources(params: ManageResourcesInput) -> str:
                         pass
                 if params.cost_rate is not None:
                     try:
-                        # Cost is IAmountAndCurrency — try setting via token
-                        new_res.EditToken("Cost", str(params.cost_rate))
+                        # NOTE: IPermanentResource.Cost is READ-ONLY (calculated field).
+                        # There is NO StandardRate/HourlyRate/CostRate property on IPermanentResource.
+                        # Permanent resource rates can only be set via Asta UI.
+                        # The cost_rate param is stored as metadata only for now.
+                        result["cost_rate_note"] = (
+                            "Permanent resource rates cannot be set via COM. "
+                            "Cost.Amount is read-only (calculated). "
+                            "Set rates manually in Asta UI, or use cost centre allocations "
+                            "with GivenValue to assign costs to tasks."
+                        )
                     except Exception:
                         pass
                 if params.calendar_name is not None:
@@ -5520,6 +5626,19 @@ def asta_manage_resources(params: ManageResourcesInput) -> str:
                         new_res.Availability = params.availability
                     except Exception:
                         pass
+                if params.cost_rate is not None:
+                    try:
+                        # IConsumableResource.CostPerUnit is IAmountAndCurrency with GET/PUT
+                        # Access the COM object and set Amount (did=0) directly
+                        res_d = win32com.client.Dispatch(new_res)
+                        cpu_did = res_d._oleobj_.GetIDsOfNames(0, 'CostPerUnit')
+                        cpu_raw = res_d._oleobj_.InvokeTypes(cpu_did, 0, 2, (9, 0), ())
+                        if cpu_raw:
+                            cpu_obj = win32com.client.Dispatch(cpu_raw)
+                            cpu_obj._oleobj_.InvokeTypes(0, 0, 4, (24, 0), ((5, 1),), float(params.cost_rate))
+                            result["cost_per_unit_set"] = params.cost_rate
+                    except Exception as cost_e:
+                        result["cost_per_unit_warning"] = f"Could not set CostPerUnit: {cost_e}"
 
                 try:
                     _com_end_transaction(project)
@@ -5706,7 +5825,17 @@ class ResourceAssignmentInput(BaseModel):
         description="List of assignments. Each dict: "
                     "{'task_id': int, 'resource_name': str, 'resource_type': 'permanent'|'consumable'|'cost_centre', "
                     "'units': float (opt, default 1.0), 'is_demand': bool (opt, default false), "
-                    "'work_profile': str (opt: 'linear', 'front_loaded', 'back_loaded', 'bell_curve')}",
+                    "'work_profile': str (opt: 'linear', 'front_loaded', 'back_loaded', 'bell_curve'), "
+                    "'cost_value': float (opt, for cost_centre: sets GivenValue in $ on ICostAllocation, default $1), "
+                    "'rate_name': str (opt, for permanent: assigns a CostAndIncomeRate by name for cost calc), "
+                    "'effort_hours': float (opt, for permanent: sets GivenEffort in hours, converted to seconds), "
+                    "'given_work': float (opt, for permanent: sets GivenWork units), "
+                    "'given_allocation': float (opt, for permanent: sets resource allocation e.g. 1.0=100%), "
+                    "'quantity': float (opt, for consumable: sets GivenQuantity), "
+                    "'cost_per_unit': float (opt, for consumable: sets CostPerUnit on allocation), "
+                    "'consumption_rate': float (opt, for consumable: sets GivenConsumptionRate), "
+                    "'task_work_rate': float (opt, sets TaskWorkRate on the task itself), "
+                    "'task_work': float (opt, sets Work quantity on the task itself)}",
         min_length=1,
         max_length=100,
     )
@@ -5724,6 +5853,7 @@ def asta_assign_resource_model(params: ResourceAssignmentInput) -> str:
     """
     import pythoncom
     import pywintypes
+    import win32com.client
 
     com_initialized = False
     result: Dict[str, Any] = {"tool": "asta_assign_resource_model", "success": False}
@@ -5780,6 +5910,19 @@ def asta_assign_resource_model(params: ResourceAssignmentInput) -> str:
         except Exception:
             pass
 
+        # Build rate lookup cache for permanent resource rate assignment
+        rate_map = {}
+        try:
+            rates_coll = project.CostAndIncomeRates
+            for i in range(1, rates_coll.Count + 1):
+                try:
+                    rate = rates_coll.Item(i)
+                    rate_map[rate.Name.lower()] = rate
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
         bars = project.Bars
 
         try:
@@ -5830,6 +5973,50 @@ def asta_assign_resource_model(params: ResourceAssignmentInput) -> str:
                         # Fallback to generic AssignResource
                         allocation = task.AssignResource(res_obj, is_demand)
 
+                    # Set effort/work/allocation on IPermanentDemandAllocation
+                    if allocation is not None:
+                        alloc_d = win32com.client.Dispatch(allocation)
+
+                        # Assign rate for cost calculation (e.g. $25/hour)
+                        rate_name = asgn.get("rate_name")
+                        if rate_name:
+                            rate_obj = rate_map.get(rate_name.lower())
+                            if rate_obj:
+                                try:
+                                    alloc_d.AssignRate(rate_obj)
+                                    a_result["rate_assigned"] = rate_name
+                                except Exception as re:
+                                    a_result["rate_warning"] = f"Could not assign rate '{rate_name}': {re}"
+                            else:
+                                a_result["rate_warning"] = f"Rate '{rate_name}' not found. Available: {list(rate_map.keys())}"
+
+                        # Set GivenEffort (in seconds; user provides hours)
+                        effort_hours = asgn.get("effort_hours")
+                        if effort_hours is not None:
+                            try:
+                                alloc_d.GivenEffort = float(effort_hours) * 3600.0
+                                a_result["effort_hours_set"] = effort_hours
+                            except Exception as ee:
+                                a_result["effort_warning"] = f"Could not set GivenEffort: {ee}"
+
+                        # Set GivenWork
+                        given_work = asgn.get("given_work")
+                        if given_work is not None:
+                            try:
+                                alloc_d.GivenWork = float(given_work)
+                                a_result["given_work_set"] = given_work
+                            except Exception as we:
+                                a_result["work_warning"] = f"Could not set GivenWork: {we}"
+
+                        # Set GivenAllocation (resource units, 1.0 = 100%)
+                        given_allocation = asgn.get("given_allocation")
+                        if given_allocation is not None:
+                            try:
+                                alloc_d.GivenAllocation = float(given_allocation)
+                                a_result["given_allocation_set"] = given_allocation
+                            except Exception as ae:
+                                a_result["allocation_warning"] = f"Could not set GivenAllocation: {ae}"
+
                 elif res_type == "consumable":
                     res_obj = cons_map.get(res_name.lower())
                     if res_obj is None:
@@ -5841,6 +6028,41 @@ def asta_assign_resource_model(params: ResourceAssignmentInput) -> str:
                     except Exception:
                         allocation = task.AssignResource(res_obj, is_demand)
 
+                    # Set quantity, CostPerUnit, consumption rate on IConsumableDemandAllocation
+                    if allocation is not None:
+                        alloc_d = win32com.client.Dispatch(allocation)
+
+                        # Set GivenQuantity
+                        quantity = asgn.get("quantity")
+                        if quantity is not None:
+                            try:
+                                alloc_d.GivenQuantity = float(quantity)
+                                a_result["quantity_set"] = quantity
+                            except Exception as qe:
+                                a_result["quantity_warning"] = f"Could not set GivenQuantity: {qe}"
+
+                        # Set CostPerUnit (IAmountAndCurrency) on allocation
+                        cost_per_unit = asgn.get("cost_per_unit")
+                        if cost_per_unit is not None:
+                            try:
+                                cpu_did = alloc_d._oleobj_.GetIDsOfNames(0, 'CostPerUnit')
+                                cpu_raw = alloc_d._oleobj_.InvokeTypes(cpu_did, 0, 2, (9, 0), ())
+                                if cpu_raw:
+                                    cpu_obj = win32com.client.Dispatch(cpu_raw)
+                                    cpu_obj._oleobj_.InvokeTypes(0, 0, 4, (24, 0), ((5, 1),), float(cost_per_unit))
+                                    a_result["cost_per_unit_set"] = cost_per_unit
+                            except Exception as cpe:
+                                a_result["cost_per_unit_warning"] = f"Could not set CostPerUnit: {cpe}"
+
+                        # Set GivenConsumptionRate
+                        consumption_rate = asgn.get("consumption_rate")
+                        if consumption_rate is not None:
+                            try:
+                                alloc_d.GivenConsumptionRate = float(consumption_rate)
+                                a_result["consumption_rate_set"] = consumption_rate
+                            except Exception as cre:
+                                a_result["consumption_rate_warning"] = f"Could not set rate: {cre}"
+
                 elif res_type == "cost_centre":
                     cc_obj = cc_map.get(res_name.lower())
                     if cc_obj is None:
@@ -5849,12 +6071,44 @@ def asta_assign_resource_model(params: ResourceAssignmentInput) -> str:
                         continue
                     allocation = task.AssignCost(cc_obj)
 
+                    # Set GivenValue on ICostAllocation if cost_value provided
+                    # Default AssignCost creates $1 allocation — this sets actual cost
+                    cost_value = asgn.get("cost_value")
+                    if allocation is not None and cost_value is not None:
+                        try:
+                            alloc_d = win32com.client.Dispatch(allocation)
+                            gv_did = alloc_d._oleobj_.GetIDsOfNames(0, 'GivenValue')
+                            gv_raw = alloc_d._oleobj_.InvokeTypes(gv_did, 0, 2, (9, 0), ())
+                            if gv_raw:
+                                gv_obj = win32com.client.Dispatch(gv_raw)
+                                gv_obj._oleobj_.InvokeTypes(0, 0, 4, (24, 0), ((5, 1),), float(cost_value))
+                                a_result["cost_value_set"] = cost_value
+                        except Exception as cv_e:
+                            a_result["cost_value_warning"] = f"Could not set GivenValue: {cv_e}"
+
                 else:
                     a_result["error"] = f"Invalid resource_type: '{res_type}'"
                     assign_errors.append(a_result)
                     continue
 
                 a_result["assigned"] = True
+
+                # Set task-level work properties (independent of resource type)
+                task_work_rate = asgn.get("task_work_rate")
+                if task_work_rate is not None:
+                    try:
+                        task.TaskWorkRate = float(task_work_rate)
+                        a_result["task_work_rate_set"] = task_work_rate
+                    except Exception as twr_e:
+                        a_result["task_work_rate_warning"] = f"Could not set TaskWorkRate: {twr_e}"
+
+                task_work = asgn.get("task_work")
+                if task_work is not None:
+                    try:
+                        task.Work = float(task_work)
+                        a_result["task_work_set"] = task_work
+                    except Exception as tw_e:
+                        a_result["task_work_warning"] = f"Could not set Work: {tw_e}"
 
                 # Set work profile if specified and allocation was successful
                 if allocation is not None and work_profile and work_profile in WORK_PROFILES:
@@ -5914,8 +6168,11 @@ class ViewConfigInput(BaseModel):
     action: str = Field(
         ...,
         description="Action: 'get_status', 'set_display', 'set_grouping', "
-                    "'set_sorting', 'set_filter', 'toggle_histogram', 'show_hierarchy_level'."
+                    "'set_sorting', 'set_filter', 'toggle_histogram', 'show_hierarchy_level', "
+                    "'list_tables', 'apply_table', 'get_columns'."
     )
+    # Table/column management
+    table_name: Optional[str] = Field(default=None, description="Table definition name to apply (for apply_table action).")
     # Display toggles
     display_critical_path: Optional[bool] = Field(default=None, description="Toggle critical path display.")
     display_free_float: Optional[bool] = Field(default=None, description="Toggle free float display.")
@@ -5951,7 +6208,8 @@ class ViewConfigInput(BaseModel):
     @classmethod
     def validate_action(cls, v: str) -> str:
         allowed = {"get_status", "set_display", "set_grouping", "set_sorting",
-                    "set_filter", "toggle_histogram", "show_hierarchy_level"}
+                    "set_filter", "toggle_histogram", "show_hierarchy_level",
+                    "list_tables", "apply_table", "get_columns"}
         if v.lower() not in allowed:
             raise ValueError(f"action must be one of {allowed}")
         return v.lower()
@@ -6242,6 +6500,110 @@ def asta_configure_view(params: ViewConfigInput) -> str:
                 result["hierarchy_level"] = params.hierarchy_level
             except Exception as e:
                 result["error"] = f"Could not set hierarchy level: {e}"
+
+        # === ACTION: list_tables ===
+        elif params.action == "list_tables":
+            try:
+                D = win32com.client.Dispatch
+                tds = D(project.TableDefinitions)
+                tables = []
+                for i in range(1, tds.Count + 1):
+                    td = D(tds.Item(i))
+                    tables.append({"index": i, "name": td.Name})
+                result["success"] = True
+                result["table_definitions"] = tables
+                result["count"] = tds.Count
+                # Show current table
+                try:
+                    ss = D(view.SpreadSheet())
+                    result["current_table"] = ss.TableDefinition
+                except Exception:
+                    pass
+            except Exception as e:
+                result["error"] = f"Could not list table definitions: {e}"
+
+        # === ACTION: apply_table ===
+        elif params.action == "apply_table":
+            if not params.table_name:
+                result["error"] = "table_name is required. Use list_tables to see available tables."
+                return json.dumps(result, indent=2, default=str)
+
+            try:
+                D = win32com.client.Dispatch
+                tds = D(project.TableDefinitions)
+                td_obj = None
+                for i in range(1, tds.Count + 1):
+                    td = D(tds.Item(i))
+                    if td.Name.lower() == params.table_name.lower():
+                        td_obj = td
+                        break
+
+                if not td_obj:
+                    # Try partial match
+                    for i in range(1, tds.Count + 1):
+                        td = D(tds.Item(i))
+                        if params.table_name.lower() in td.Name.lower():
+                            td_obj = td
+                            break
+
+                if not td_obj:
+                    result["error"] = f"Table definition '{params.table_name}' not found. Use list_tables to see available names."
+                    return json.dumps(result, indent=2, default=str)
+
+                ss = D(view.SpreadSheet())
+                project.StartTransaction("ApplyTable")
+                ss.ApplyTableDefinition(td_obj)
+                project.EndTransaction()
+                project.WaitForNotificationProcessing()
+
+                # Read resulting columns
+                total = ss.TotalCols
+                columns = []
+                for ci in range(1, total + 1):
+                    try:
+                        ss.Col = ci
+                        columns.append({"index": ci, "token": ss.ColDataToken, "width": ss.ColWidth})
+                    except:
+                        break
+
+                try:
+                    view.Refresh()
+                except Exception:
+                    pass
+
+                result["success"] = True
+                result["applied_table"] = td_obj.Name
+                result["columns"] = columns
+                result["column_count"] = len(columns)
+            except Exception as e:
+                result["error"] = f"Could not apply table definition: {e}"
+                try:
+                    project.AbandonTransaction()
+                except Exception:
+                    pass
+
+        # === ACTION: get_columns ===
+        elif params.action == "get_columns":
+            try:
+                D = win32com.client.Dispatch
+                ss = D(view.SpreadSheet())
+                total = ss.TotalCols
+                columns = []
+                for ci in range(1, total + 1):
+                    try:
+                        ss.Col = ci
+                        columns.append({"index": ci, "token": ss.ColDataToken, "width": ss.ColWidth})
+                    except:
+                        break
+                result["success"] = True
+                result["columns"] = columns
+                result["column_count"] = len(columns)
+                try:
+                    result["current_table"] = ss.TableDefinition
+                except Exception:
+                    pass
+            except Exception as e:
+                result["error"] = f"Could not read columns: {e}"
 
         return json.dumps(result, indent=2, default=str)
 
@@ -6963,6 +7325,20 @@ async def asta_task(params: dict) -> str:
     - Create summary tasks for WBS levels (Phase > Zone > Package)
     - Every activity needs at least one predecessor and successor (except start/end milestones)
     - After adding tasks, use asta_schedule → reschedule to recalculate CPM
+
+    ⚠️ CRITICAL — BULK OPERATIONS (>10 tasks/links):
+    - NEVER call add/update one-by-one in a loop via MCP for >10 items!
+    - Instead, write a standalone Python COM script and execute it.
+    - MCP add_summary creates orphan bars with no task data when called repeatedly.
+    - Bulk script pattern: store bar IDs, re-fetch after each EndTransaction, use try/except+AbandonTransaction.
+
+    ⚠️ COM GOTCHAS:
+    - Root "Program" bar → use bar.ExpandedTask (NOT bar.Tasks(1) which fails on root!)
+    - Child bars from AddSummaryTask → bar.Tasks(1) works fine
+    - ALL COM refs become stale after EndTransaction → must re-fetch by bar ID
+    - EndTransaction errors ≠ rollback — state may/may not have changed, always verify
+    - Cleanup order: links → progress → allocations → tasks → bars (deepest first!)
+    - NEVER remove the last bar — root bar must persist
     """
     action = params.get("action", "")
     p = {k: v for k, v in params.items() if k != "action"}
@@ -7009,6 +7385,11 @@ async def asta_link(params: dict) -> str:
 
     DCMA standards: Avoid leads (negative lag), minimize lags (<5%), keep non-FS links <10%.
     If all add strategies fail, diagnostics run automatically showing available COM methods.
+
+    ⚠️ BULK LINKS (>10): Write a Python COM script using task.LinkTo(task2).
+    - link.type = 0(FS)/1(SS)/2(FF)/3(SF)
+    - link.StartLagTime = task.GetDurationFromString("10d")
+    - COM refs stale after EndTransaction — always re-fetch by bar ID.
     """
     action = params.get("action", "")
     p = {k: v for k, v in params.items() if k != "action"}
@@ -7057,6 +7438,12 @@ async def asta_progress(params: dict) -> str:
     Always set actual_start when task begins. Set actual_finish only when 100% complete.
     DCMA: No actual dates in the future. No incomplete tasks with forecast before report date.
     After progress update, reschedule (asta_schedule → reschedule) to recalculate forecast.
+
+    ⚠️ CRITICAL — PROGRESS IS A BAR PROPERTY, NOT TASK:
+    - Use bar.DurationPercentComplete (preferred) or bar.OverallPercentComplete (fallback)
+    - NEVER try task.OverallPercentComplete — it will fail with "can not be set"
+    - DurationPercentComplete = % of time elapsed; OverallPercentComplete = overall physical %
+    - For bulk progress (>10 tasks): write a Python COM script instead of MCP calls
     """
     action = params.get("action", "")
     p = {k: v for k, v in params.items() if k != "action"}
@@ -7089,6 +7476,16 @@ async def asta_resource(params: dict) -> str:
     Resource types: Permanent (labour/equipment), Consumable (materials with quantities), Cost Centres (budget categories).
     DCMA Check 10: <5% of tasks should lack resource assignments.
     Resource loading enables: leveling, S-curves, earned value analysis, histograms.
+
+    ⚠️ CRITICAL — RESOURCE ASSIGNMENT GOTCHAS:
+    - GivenAllocation=50 does NOT mean 50 headcount! Asta uses it as % or multiplier.
+    - For precise costing: use GivenEffort (in SECONDS, e.g. 8h=28800s) instead.
+    - Consumable: use GivenQuantity for amount, CostPerUnit via IAmountAndCurrency pattern.
+    - Cost allocation: use GivenValue via IAmountAndCurrency pattern.
+    - Resource curves: work_profile 'bell_curve'=3, 'back_loaded'=2 (EditToken IDs).
+      Actual Asta ResourceCurves have different IDs (Bell Shaped=105, Back Loaded Low res=97).
+    - Code assignment goes to BAR object: bar.AssignCode(entry, True), NOT task!
+    - For bulk assignments (>10): write a Python COM script instead of repeated MCP calls.
     """
     action = params.get("action", "")
     p = {k: v for k, v in params.items() if k != "action"}
@@ -7129,6 +7526,12 @@ async def asta_schedule(params: dict) -> str:
     Rescheduling calculates CPM (Critical Path Method): early/late dates, total/free float, critical path.
     Always reschedule after: adding/modifying tasks, changing links, updating progress.
     Report date defines the data date — all progress is measured relative to this date.
+
+    ⚠️ COM NOTES:
+    - project.Reschedule() works parameterless — no Chart object needed!
+    - Progress Periods: project.ProgressPeriods.Item(1).ReportDate is settable
+    - Baselines: BslnProjects.Add() does NOT work; use SaveProjectAs + OpenBaseline(path)
+    - CurrentProgressPeriod is NOT in type library — do not attempt to access
     """
     action = params.get("action", "")
     p = {k: v for k, v in params.items() if k != "action"}
@@ -7162,6 +7565,12 @@ async def asta_code(params: dict) -> str:
     Used for: filtering, grouping, reporting, WBS coding, earned value roll-ups.
     Common libraries: Phase (Enabling/Substructure/Superstructure/...), Zone (Building A/B/...),
     Trade (Concrete/Steel/MEP/...), Responsibility (Main Contractor/Sub A/Sub B/...).
+
+    ⚠️ CRITICAL COM GOTCHAS:
+    - project.CodeLibrarys (non-standard plural!) for collection access
+    - lib.Entries.Add() to add entries (NOT lib.CodeLibraryEntrys.Add()!)
+    - Code assignment: bar.AssignCode(entry, True) on BAR object, NOT task!
+    - For bulk assignments (>10): write a Python COM script.
     """
     action = params.get("action", "")
     p = {k: v for k, v in params.items() if k != "action"}
@@ -7186,13 +7595,156 @@ async def asta_code(params: dict) -> str:
 async def asta_view_consolidated(params: dict) -> str:
     """Configure the active Asta Powerproject bar chart view via COM.
 
-    Params: action (get_status/set_display/set_grouping/set_sorting/set_filter/toggle_histogram/show_hierarchy_level),
-    display_critical_path, display_free_float, display_total_float, display_progress_lines,
-    display_annotations, display_cost_allocations, display_demand_allocations, display_scheduled_allocations,
-    group_by_library, sort_field, sort_ascending, histogram_visible, histogram_type, hierarchy_level
+    Actions:
+    - get_status: Get current view configuration (display toggles, grouping, etc.)
+    - set_display: Toggle display properties. Params: display_critical_path, display_free_float, display_total_float, display_progress_lines, display_annotations, display_cost_allocations, display_demand_allocations, display_scheduled_allocations
+    - set_grouping: Group by code library. Params: group_by_library
+    - set_sorting: Sort view. Params: sort_field, sort_ascending
+    - set_filter: Apply filter. Params: filter expression
+    - toggle_histogram: Show/hide histogram. Params: histogram_visible, histogram_type (resource/cost/work)
+    - show_hierarchy_level: Expand/collapse. Params: hierarchy_level (0=collapse, 1=top, etc.)
+    - list_tables: List all 36 built-in spreadsheet table definitions (column presets)
+    - apply_table: Apply a table definition to configure columns instantly. Params: table_name
+    - get_columns: Show current spreadsheet columns (token IDs, widths)
+
+    ⚠️ COLUMN MANAGEMENT — USE apply_table (NOT individual AddCol which takes 3+ minutes per column!):
+    Key table definitions for common operations:
+    - "% Progress - with a Baseline" → progress tracking with baseline comparison (13 columns)
+    - "Name & Costs" → cost analysis view (9 columns)
+    - "Task ID, Name, Start, Duration, Finish" → standard scheduling view (6 columns)
+    - "% Progress - No Baseline" → simple progress view
+    - "Predecessors & Successors" → logic/link analysis
+    - "Task name & Resources assigned" → resource view
+    - "Float Paths" → critical path analysis
+    - "Name, Cost & Income" → financial view
+    - "Task Work Progress" → work-based progress
+
+    ⚠️ RECOMMENDED COLUMN SETUP PER OPERATION:
+    - After creating tasks/links → apply "Task ID, Name, Start, Duration, Finish"
+    - After progress update → apply "% Progress - with a Baseline"
+    - After resource/cost assignment → apply "Name & Costs"
+    - For delay analysis → apply "Float Paths" + display_critical_path=true
     """
+    action = params.get("action", "").lower()
+
+    # Handle new column/table actions directly (bypass ViewConfigInput validation)
+    if action in ("list_tables", "apply_table", "get_columns"):
+        import pythoncom
+        import win32com.client
+        com_initialized = False
+        result_dict = {"tool": "asta_view", "action": action, "success": False}
+        try:
+            pythoncom.CoInitialize()
+            com_initialized = True
+            D = win32com.client.Dispatch
+            APP_CLSID = "{A57A0000-0200-0000-B2C5-00C0DF438041}"
+            obj = pythoncom.GetActiveObject(APP_CLSID)
+            app = D(obj.QueryInterface(pythoncom.IID_IDispatch))
+            project = D(app.ActiveProject)
+            view = D(project.Views.Item(1))
+            ss = D(view.SpreadSheet())
+
+            if action == "list_tables":
+                tds = D(project.TableDefinitions)
+                tables = []
+                for i in range(1, tds.Count + 1):
+                    td = D(tds.Item(i))
+                    tables.append({"index": i, "name": td.Name})
+                result_dict["success"] = True
+                result_dict["table_definitions"] = tables
+                result_dict["count"] = tds.Count
+                try:
+                    result_dict["current_table"] = str(ss.TableDefinition)
+                except Exception:
+                    pass
+
+            elif action == "apply_table":
+                table_name = params.get("table_name", "")
+                if not table_name:
+                    result_dict["error"] = "table_name required. Use list_tables to see options."
+                    return json.dumps(result_dict, indent=2, default=str)
+
+                tds = D(project.TableDefinitions)
+                td_obj = None
+                # Exact match first
+                for i in range(1, tds.Count + 1):
+                    td = D(tds.Item(i))
+                    if td.Name.lower() == table_name.lower():
+                        td_obj = td
+                        break
+                # Partial match fallback
+                if not td_obj:
+                    for i in range(1, tds.Count + 1):
+                        td = D(tds.Item(i))
+                        if table_name.lower() in td.Name.lower():
+                            td_obj = td
+                            break
+
+                if not td_obj:
+                    result_dict["error"] = f"Table '{table_name}' not found."
+                    return json.dumps(result_dict, indent=2, default=str)
+
+                project.StartTransaction("ApplyTable")
+                try:
+                    ss.ApplyTableDefinition(td_obj)
+                    project.EndTransaction()
+                    project.WaitForNotificationProcessing()
+                except Exception as e:
+                    try:
+                        project.AbandonTransaction()
+                    except Exception:
+                        pass
+                    result_dict["error"] = f"ApplyTableDefinition failed: {e}"
+                    return json.dumps(result_dict, indent=2, default=str)
+
+                # Read resulting columns
+                total = ss.TotalCols
+                columns = []
+                for ci in range(1, total + 1):
+                    try:
+                        ss.Col = ci
+                        columns.append({"index": ci, "token": ss.ColDataToken, "width": ss.ColWidth})
+                    except:
+                        break
+                try:
+                    view.Refresh()
+                except Exception:
+                    pass
+
+                result_dict["success"] = True
+                result_dict["applied_table"] = td_obj.Name
+                result_dict["columns"] = columns
+                result_dict["column_count"] = len(columns)
+
+            elif action == "get_columns":
+                total = ss.TotalCols
+                columns = []
+                for ci in range(1, total + 1):
+                    try:
+                        ss.Col = ci
+                        columns.append({"index": ci, "token": ss.ColDataToken, "width": ss.ColWidth})
+                    except:
+                        break
+                result_dict["success"] = True
+                result_dict["columns"] = columns
+                result_dict["column_count"] = len(columns)
+                try:
+                    result_dict["current_table"] = str(ss.TableDefinition)
+                except Exception:
+                    pass
+
+        except Exception as e:
+            result_dict["error"] = f"COM error: {e}"
+        finally:
+            if com_initialized:
+                try:
+                    pythoncom.CoUninitialize()
+                except Exception:
+                    pass
+        return json.dumps(result_dict, indent=2, default=str)
+
+    # Original actions via ViewConfigInput
     try:
-        # asta_configure_view is sync
         result = asta_configure_view(ViewConfigInput(**params))
         return _truncate_response(result)
     except Exception as e:
@@ -7214,6 +7766,11 @@ async def asta_export(params: dict) -> str:
     Export formats: asta_xml (native), mspdi (MS Project XML), xer (Primavera P6), mpp (MS Project binary).
     Use 'report' for monthly programme reports, schedule health assessments, and client submissions.
     Include all flags (resources, costs, variances, critical_path) for comprehensive analysis.
+
+    ⚠️ EXPORT TIPS:
+    - Before PDF export: use asta_view → apply_table to set appropriate columns
+    - MSPDI format is best for interoperability (MS Project, Primavera, other tools)
+    - SaveAsCSVFile on view.SpreadSheet() also available for tabular data export
     """
     action = params.get("action", "")
     p = {k: v for k, v in params.items() if k != "action"}

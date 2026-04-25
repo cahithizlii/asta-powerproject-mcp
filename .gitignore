@@ -1,8 +1,103 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
 .env
+
+# Backups
 *.bak
 *.backup
 *_backup.py
+
+# Project files (binary / proprietary)
 *.pp
+*.pp-journal
+*.mpp
+*.xer
+
+# Output / scratch files
+*_output.txt
+*.log
+
+# Scratch / exploratory scripts
+check_*.py
+debug_*.py
+discover_*.py
+diag_*.py
+explore_*.py
+fix_15712_*.py
+fix_all_*.py
+fix_costs*.py
+fix_duration*.py
+fix_durations*.py
+fix_gokdelen*.py
+fix_headers*.py
+fix_mini_*.py
+fix_pp_*.py
+fix_print_*.py
+fix_resources*.py
+fix_widths*.py
+force_*.py
+verify_*.py
+cleanup_*.py
+deep_cleanup*.py
+delete_all_*.py
+delete_procurement*.py
+modify_task_*.py
+read_procurement*.py
+rebuild_gokdelen*.py
+reschedule2*.py
+reschedule_check*.py
+scan_all_tokens*.py
+set_costs*.py
+set_duration*.py
+set_effort*.py
+set_kaba_*.py
+setup_v*.py
+setup_all*.py
+setup_clean*.py
+setup_columns*.py
+setup_correct*.py
+setup_final*.py
+analyze_blocks*.py
+analyze_link_chains*.py
+boost_costs*.py
+create_baseline*.py
+create_links_log*.py
+create_mini_villa*.py
+create_missing_links*.py
+find_kaba_insaat*.py
+fix_widths*.py
+gokdelen_phase2*.py
+hospital_bar_ids*.json
+link_chain_results*.txt
+map_blocks*.py
+nuke_cleanup_*.txt
+open_baseline*.py
+procurement_milestones_links*.json
+test_apply_tabledef*.py
+transfer_milestone_links*.py
+add_pp_reschedule*.py
+
+# Generated logs / dumps
+block_analysis.txt
+block_map.txt
+gokdelen_ids*.txt
+wbs_discovery.txt
+
+# Build/sample outputs
+build_*_output.txt
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+nul
+
+# Project-specific exports
+YHT_Altyapi_Projesi.xml
+
+# Misc scratch
+explore2.py
+create_links_log.txt

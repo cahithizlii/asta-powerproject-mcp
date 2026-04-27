@@ -270,18 +270,22 @@ def _msp_calendar_update(name: str,
     cal = _find_calendar_by_name(proj, name)
     if cal is None:
         return {"status": "error", "error": f"Calendar '{name}' not found in project"}
+
+    # Pre-flight: validate ALL inputs before any mutation (no partial writes)
+    do_rename = new_name is not None and new_name != name
+    if do_rename and _find_calendar_by_name(proj, new_name) is not None:
+        return {"status": "error",
+                "error": f"Calendar '{new_name}' already exists"}
+    if weekday_off is not None and not (1 <= weekday_off <= 7):
+        return {"status": "error",
+                "error": "weekday_off must be 1-7 (1=Sunday, 7=Saturday)"}
+
     changes = []
     try:
-        if new_name is not None and new_name != name:
-            if _find_calendar_by_name(proj, new_name) is not None:
-                return {"status": "error",
-                        "error": f"Calendar '{new_name}' already exists"}
+        if do_rename:
             cal.Name = new_name
             changes.append("name")
         if weekday_off is not None:
-            if not (1 <= weekday_off <= 7):
-                return {"status": "error",
-                        "error": "weekday_off must be 1-7 (1=Sunday, 7=Saturday)"}
             wd = cal.WeekDays(weekday_off)
             wd.Working = False
             changes.append("weekday_off")

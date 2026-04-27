@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "asta_powerproject_mcp": {
+      "command": "python",
+      "args": ["C:\\Users\\CahAsus\\asta-powerproject-mcp\\asta_mcp_core.py"]
+    },
+    "asta_powerproject_file": {
+      "command": "python",
+      "args": ["C:\\Users\\CahAsus\\asta-powerproject-mcp\\asta_mcp_file.py"]
+    },
+    "msproject_mcp": {
+      "command": "python",
+      "args": ["C:\\Users\\CahAsus\\asta-powerproject-mcp\\msproject_mcp_core.py"]
+    }
+  }
+}

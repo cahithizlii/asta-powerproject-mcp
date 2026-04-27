@@ -41,7 +41,7 @@ mcp = FastMCP(
     instructions=(
         "MS Project COM-based MCP server. Connects to running MS Project (Application='MSProject.Application'). "
         "Hybrid speed: 1-5 items COM direct, 6-19 batch, 20+ MSPDI bulk import. "
-        "Tools: msproject_task, msproject_link, msproject_schedule (Phase 1)."
+        "Tools: msproject_task, msproject_link, msproject_schedule, msproject_calendar."
     ),
 )
 
@@ -1220,6 +1220,51 @@ async def msproject_schedule(params: dict) -> str:
                  "error": f"Unknown action '{action}'. Valid: reschedule/level/set_data_date/protect_actuals"}
     except Exception as e:
         logger.error(f"msproject_schedule({action}) failed: {e}")
+        r = {"status": "error", "error": str(e)}
+    return json.dumps(r, default=str, ensure_ascii=False)
+
+
+@mcp.tool(
+    name="msproject_calendar",
+    annotations={"title": "MS Project Calendar Operations", "readOnlyHint": False},
+)
+async def msproject_calendar(params: dict) -> str:
+    """Manage project calendars in active MS Project (COM-based).
+
+    Actions:
+    - create: New base calendar from existing one. Params: name, [base_calendar="Standard"]
+    - update: Rename or set weekday off. Params: name, [new_name, weekday_off=1-7]
+    - add_exception: Non-working day/range. Params: calendar_name, exception_name, start (YYYY-MM-DD), [finish, working=False]
+    - assign_to_task: Apply calendar to a task. Params: task_id, calendar_name
+    - assign_to_resource: Apply calendar to a resource. Params: resource_id, calendar_name
+    - list: List all base calendars + exception counts. Params: (none)
+    - holidays_uzbek: Bulk-add 9 Ozbekistan 2026 official holidays (idempotent, name-based dedup). Params: calendar_name, [year=2026]
+
+    Phase 2a (27 Apr 2026). Resource integration arrives in Phase 2b.
+    """
+    import json
+    action = params.get("action", "")
+    p = {k: v for k, v in params.items() if k != "action"}
+    try:
+        if action == "create":
+            r = _msp_calendar_create(**p)
+        elif action == "update":
+            r = _msp_calendar_update(**p)
+        elif action == "add_exception":
+            r = _msp_calendar_add_exception(**p)
+        elif action == "assign_to_task":
+            r = _msp_calendar_assign_to_task(**p)
+        elif action == "assign_to_resource":
+            r = _msp_calendar_assign_to_resource(**p)
+        elif action == "list":
+            r = _msp_calendar_list(**p)
+        elif action == "holidays_uzbek":
+            r = _msp_calendar_holidays_uzbek(**p)
+        else:
+            r = {"status": "error",
+                 "error": f"Unknown action '{action}'. Valid: create/update/add_exception/assign_to_task/assign_to_resource/list/holidays_uzbek"}
+    except Exception as e:
+        logger.error(f"msproject_calendar({action}) failed: {e}")
         r = {"status": "error", "error": str(e)}
     return json.dumps(r, default=str, ensure_ascii=False)
 

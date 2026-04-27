@@ -384,6 +384,34 @@ def _msp_calendar_assign_to_task(task_id: int, calendar_name: str) -> Dict[str, 
         return {"status": "error", "error": str(e)}
 
 
+def _find_resource_by_id(proj: Any, resource_id: int) -> Optional[Any]:
+    """Locate a resource by ID. Phase 2a helper; reused/expanded in Phase 2b."""
+    for i in range(1, proj.Resources.Count + 1):
+        r = proj.Resources(i)
+        if r is not None and r.ID == resource_id:
+            return r
+    return None
+
+
+def _msp_calendar_assign_to_resource(resource_id: int, calendar_name: str) -> Dict[str, Any]:
+    """Assign a base calendar to a resource."""
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    cal = _find_calendar_by_name(proj, calendar_name)
+    if cal is None:
+        return {"status": "error",
+                "error": f"Calendar '{calendar_name}' not found in project"}
+    res = _find_resource_by_id(proj, resource_id)
+    if res is None:
+        return {"status": "error", "error": f"Resource ID {resource_id} not found"}
+    try:
+        res.BaseCalendar = calendar_name
+        return {"status": "ok", "resource_id": resource_id, "calendar_name": calendar_name}
+    except Exception as e:
+        logger.error(f"_msp_calendar_assign_to_resource({resource_id},{calendar_name}) failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

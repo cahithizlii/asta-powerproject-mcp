@@ -136,6 +136,61 @@ def _restore_on_exit():
     _exit_batch_mode()
 
 
+# ---------- TASK HELPERS ----------
+
+def _parse_duration(d: str) -> int:
+    """Convert '5d' -> minutes (assuming 8h/day for MSP)."""
+    if not d:
+        return 480
+    s = d.strip()
+    unit = s[-1].lower() if s[-1].isalpha() else "d"
+    try:
+        n = float(s.rstrip("dwhmDWHM"))
+    except ValueError:
+        n = 1.0
+    return int({"d": 480, "w": 2400, "h": 60, "m": 1}.get(unit, 480) * n)
+
+
+def _msp_task_add_single(name: str, duration: str = "1d",
+                         start: Optional[str] = None,
+                         finish: Optional[str] = None,
+                         summary: bool = False,
+                         milestone: bool = False,
+                         notes: Optional[str] = None) -> Dict[str, Any]:
+    """Add a single task via COM (Path 1)."""
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    try:
+        new_task = proj.Tasks.Add(name)
+        if milestone:
+            new_task.Milestone = True
+            new_task.Duration = 0
+        elif duration:
+            new_task.Duration = _parse_duration(duration)
+        if start:
+            new_task.Start = start
+        if finish:
+            new_task.Finish = finish
+        if summary:
+            try:
+                new_task.Summary = True
+            except Exception:
+                pass  # Summary auto-set when task has children in MSP
+        if notes:
+            new_task.Notes = notes
+        return {
+            "status": "ok",
+            "task_id": new_task.ID,
+            "task_uid": new_task.UniqueID,
+            "name": new_task.Name,
+            "duration": duration,
+            "milestone": bool(milestone),
+        }
+    except Exception as e:
+        logger.error(f"_msp_task_add_single failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 # ---------- TOOL DISPATCHERS (filled in T6+) ----------
 # (Placeholder - actual @mcp.tool functions added in T14)
 

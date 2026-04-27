@@ -320,6 +320,10 @@ def _msp_calendar_add_exception(calendar_name: str, exception_name: str,
         return {"status": "error",
                 "error": f"Calendar '{calendar_name}' not found in project"}
 
+    if working:
+        return {"status": "error",
+                "error": "working=True is not yet supported (Phase 3+); only non-working exceptions are supported in Phase 2a"}
+
     # Pre-flight: validate ALL inputs before any mutation (no partial writes)
     try:
         start_d = _parse_date(start)
@@ -338,19 +342,16 @@ def _msp_calendar_add_exception(calendar_name: str, exception_name: str,
             Finish=pywintypes.Time(finish_d),
         )
         ex.Name = exception_name
-        # working=False is default for new exceptions in MSP; explicitly handle
-        if not working:
-            # Mark non-working: zero out shift starts/finishes.
-            # Each shift assignment wrapped individually — some MSP COM versions
-            # reject int 0 (want None or different). The exception itself with
-            # default Type=7 is already non-working in MSP semantics.
-            for prop in ("Shift1Start", "Shift1Finish",
-                         "Shift2Start", "Shift2Finish",
-                         "Shift3Start", "Shift3Finish"):
-                try:
-                    setattr(ex, prop, 0)
-                except Exception:
-                    pass
+        # Mark non-working: zero out all shifts (each setattr in its own try/except
+        # since some MSP versions reject int 0 — the Type=PJ_EXCEPTION_DAILY default
+        # already implies non-working but we belt-and-suspenders set shifts too)
+        for prop in ("Shift1Start", "Shift1Finish",
+                     "Shift2Start", "Shift2Finish",
+                     "Shift3Start", "Shift3Finish"):
+            try:
+                setattr(ex, prop, 0)
+            except Exception:
+                pass
         return {"status": "ok",
                 "calendar_name": calendar_name,
                 "exception_name": exception_name,

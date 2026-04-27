@@ -66,3 +66,48 @@ def test_add_exception_invalid_date_format(clean_test_project):
     )
     assert r["status"] == "error"
     assert "invalid date format" in r["error"].lower()
+
+
+def test_add_exception_actually_non_working(clean_test_project):
+    """Verify the added exception is actually marked non-working in MSP
+    (not just present). T25 holidays_uzbek depends on this contract.
+
+    Note: MSP COM exposes shift times via ex.Shift1.Start (Shift sub-object),
+    NOT ex.Shift1Start. We use both that and cal.Period(date).Working as
+    independent verifications.
+    """
+    import pywintypes
+    import datetime as _dt
+    proj = clean_test_project
+    _msp_calendar_create(name="VerifyCal-Phase2a", base_calendar="Standard")
+    r = _msp_calendar_add_exception(
+        calendar_name="VerifyCal-Phase2a",
+        exception_name="Verified Holiday",
+        start="2026-07-04",
+    )
+    assert r["status"] == "ok"
+    cal = _find_calendar_by_name(proj, "VerifyCal-Phase2a")
+    # Find our exception (last one added)
+    ex = cal.Exceptions(cal.Exceptions.Count)
+    assert ex.Name == "Verified Holiday"
+    # Non-working day check #1: Shift1.Start == 0 (no working time)
+    s1_start = float(ex.Shift1.Start)
+    assert s1_start == 0.0, f"Shift1.Start expected 0 (non-working), got {s1_start}"
+    # Non-working day check #2: cal.Period(date).Working == False
+    period = cal.Period(pywintypes.Time(_dt.date(2026, 7, 4)))
+    assert period.Working is False, (
+        f"cal.Period(2026-07-04).Working expected False, got {period.Working}"
+    )
+
+
+def test_add_exception_working_true_rejected(clean_test_project):
+    """working=True is currently rejected (Phase 3+ feature)."""
+    _msp_calendar_create(name="WorkRejectCal-Phase2a", base_calendar="Standard")
+    r = _msp_calendar_add_exception(
+        calendar_name="WorkRejectCal-Phase2a",
+        exception_name="Working Day",
+        start="2026-08-01",
+        working=True,
+    )
+    assert r["status"] == "error"
+    assert "Phase 3" in r["error"] or "not yet supported" in r["error"]

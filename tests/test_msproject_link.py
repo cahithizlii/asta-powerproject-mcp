@@ -23,8 +23,9 @@ def test_link_two_tasks(msproject_app):
     assert bt is not None
     # Predecessors string should now contain the predecessor task ID
     assert str(a["task_id"]) in (bt.Predecessors or "")
-    _msp_task_delete(task_id=a["task_id"])
+    # Delete in reverse creation order to avoid ID re-shift bug
     _msp_task_delete(task_id=b["task_id"])
+    _msp_task_delete(task_id=a["task_id"])
 
 
 def test_link_with_lag(msproject_app):
@@ -33,8 +34,8 @@ def test_link_with_lag(msproject_app):
     b = _msp_task_add_single(name="LagB", duration="3d")
     r = _msp_link_add(predecessor_id=a["task_id"], successor_id=b["task_id"], type="FS", lag="2d")
     assert r["status"] == "ok"
-    _msp_task_delete(task_id=a["task_id"])
     _msp_task_delete(task_id=b["task_id"])
+    _msp_task_delete(task_id=a["task_id"])
 
 
 def test_link_invalid_predecessor(msproject_app):
@@ -52,8 +53,8 @@ def test_link_delete(msproject_app):
     _msp_link_add(predecessor_id=a["task_id"], successor_id=b["task_id"])
     r = _msp_link_delete(predecessor_id=a["task_id"], successor_id=b["task_id"])
     assert r["status"] == "ok"
-    _msp_task_delete(task_id=a["task_id"])
     _msp_task_delete(task_id=b["task_id"])
+    _msp_task_delete(task_id=a["task_id"])
 
 
 def test_link_update_type(msproject_app):
@@ -63,8 +64,8 @@ def test_link_update_type(msproject_app):
     _msp_link_add(predecessor_id=a["task_id"], successor_id=b["task_id"], type="FS")
     r = _msp_link_update(predecessor_id=a["task_id"], successor_id=b["task_id"], new_type="SS")
     assert r["status"] == "ok"
-    _msp_task_delete(task_id=a["task_id"])
     _msp_task_delete(task_id=b["task_id"])
+    _msp_task_delete(task_id=a["task_id"])
 
 
 def test_link_bulk_add(msproject_app):
@@ -75,7 +76,8 @@ def test_link_bulk_add(msproject_app):
     r = _msp_link_bulk_add(items=items)
     assert r["status"] == "ok"
     assert r["count"] == 5
-    for t in tasks:
+    # Delete in reverse creation order
+    for t in reversed(tasks):
         _msp_task_delete(task_id=t["task_id"])
 
 
@@ -86,5 +88,6 @@ def test_link_chain(msproject_app):
     r = _msp_link_chain(task_ids=task_ids, type="FS", lag="0d")
     assert r["status"] == "ok"
     assert r["links_added"] == 3
-    for t in tasks:
+    # Delete in reverse creation order
+    for t in reversed(tasks):
         _msp_task_delete(task_id=t["task_id"])

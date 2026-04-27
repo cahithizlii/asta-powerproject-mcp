@@ -16,6 +16,7 @@ Re-runnable: overwrites the existing ``msproject_typelib.txt`` each time.
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -92,14 +93,38 @@ def main() -> int:
     with OUTPUT.open("w", encoding="utf-8") as fh:
         makepy.GenerateFromTypeLibSpec(spec, file=fh, verboseLevel=0)
 
+    # Strip timestamp/version lines so re-running this script produces a
+    # stable diff in source control (only real type-library changes remain).
+    content = OUTPUT.read_text(encoding="utf-8")
+    content = re.sub(
+        r"^# Created by makepy\.py version .*$",
+        "# Created by makepy.py",
+        content,
+        flags=re.MULTILINE,
+    )
+    content = re.sub(
+        r"^# By python version .*$",
+        "# By python version <suppressed>",
+        content,
+        flags=re.MULTILINE,
+    )
+    content = re.sub(
+        r"^# On (Mon|Tue|Wed|Thu|Fri|Sat|Sun) .*$",
+        "# On <suppressed>",
+        content,
+        flags=re.MULTILINE,
+    )
+    OUTPUT.write_text(content, encoding="utf-8")
+
     size = OUTPUT.stat().st_size
     line_count = sum(1 for _ in OUTPUT.open("r", encoding="utf-8"))
     if size < 5_000:
         print(
-            f"WARNING: generated dump is unexpectedly small ({size} bytes). "
+            f"ERROR: generated dump is unexpectedly small ({size} bytes). "
             "The type library may not have been read correctly.",
             file=sys.stderr,
         )
+        return 1
 
     print(f"Wrote {OUTPUT} ({size:,} bytes, {line_count:,} lines)")
     return 0

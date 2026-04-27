@@ -95,42 +95,47 @@ def _route_operation(op_count: int) -> str:
 
 def _enter_batch_mode():
     """Enter COM batch mode: disable screen update, manual calc, no events."""
-    global _calc_modified, _screenupdating_modified
-    app = _connect_app()
-    pj_manual = 0  # PjCalculation.pjManual
-    if app.Calculation != pj_manual:
-        app.Calculation = pj_manual
-        _calc_modified = True
-    if app.ScreenUpdating:
-        app.ScreenUpdating = False
-        _screenupdating_modified = True
-    proj = app.ActiveProject
-    try:
-        proj.EventsEnabled = False
-    except Exception:
-        pass
+    with _app_lock:
+        global _calc_modified, _screenupdating_modified
+        app = _connect_app()
+        pj_manual = 0  # PjCalculation.pjManual
+        if app.Calculation != pj_manual:
+            app.Calculation = pj_manual
+            _calc_modified = True
+        if app.ScreenUpdating:
+            app.ScreenUpdating = False
+            _screenupdating_modified = True
+        proj = app.ActiveProject
+        try:
+            proj.EventsEnabled = False
+        except Exception:
+            pass
 
 
 def _exit_batch_mode():
     """Restore screen update + auto calc + events."""
     global _calc_modified, _screenupdating_modified
-    try:
-        app = _connect_app()
-        if _calc_modified:
-            pj_auto = 1  # PjCalculation.pjAutomatic
-            app.Calculation = pj_auto
+    with _app_lock:
+        try:
+            app = _connect_app()
+            if _calc_modified:
+                pj_auto = 1  # PjCalculation.pjAutomatic
+                app.Calculation = pj_auto
+            if _screenupdating_modified:
+                app.ScreenUpdating = True
+            proj = app.ActiveProject
+            if proj:
+                try:
+                    proj.EventsEnabled = True
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(f"_exit_batch_mode error (non-fatal): {e}")
+        finally:
+            # Reset flags even if restore failed — otherwise stuck "modified"
+            # state would prevent future entries from re-applying batch mode.
             _calc_modified = False
-        if _screenupdating_modified:
-            app.ScreenUpdating = True
             _screenupdating_modified = False
-        proj = app.ActiveProject
-        if proj:
-            try:
-                proj.EventsEnabled = True
-            except Exception:
-                pass
-    except Exception as e:
-        logger.warning(f"_exit_batch_mode error (non-fatal): {e}")
 
 
 @atexit.register

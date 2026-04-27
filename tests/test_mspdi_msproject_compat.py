@@ -33,8 +33,8 @@ def test_empty_msp_xml_loads(empty_msp_xml):
     assert proj is not None
     summary = proj.get_project_summary()
     assert "project_name" in summary
-    # MSP export of an empty project may have zero or one (root summary) tasks.
-    assert summary["total_tasks"] >= 0
+    # MSP export of an empty project always has at least the root summary task.
+    assert summary["total_tasks"] >= 1
 
 
 def test_msp_xml_round_trip(empty_msp_xml, tmp_path):

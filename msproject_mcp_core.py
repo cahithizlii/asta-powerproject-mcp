@@ -548,6 +548,61 @@ def _msp_task_bulk_add(items: List[Dict[str, Any]]) -> Dict[str, Any]:
         return _msp_task_bulk_add_mspdi(items)
 
 
+# ---------- LINK HELPERS ----------
+
+PJ_LINK_TYPES = {"FF": 0, "FS": 1, "SF": 2, "SS": 3}
+PJ_LINK_REVERSE = {v: k for k, v in PJ_LINK_TYPES.items()}
+
+
+def _msp_link_add(predecessor_id: int, successor_id: int,
+                  type: str = "FS", lag: str = "0d") -> Dict[str, Any]:
+    """Add a single predecessor link via COM (Path 1).
+
+    Uses Predecessors string append: "5FS,3SS+2d" format.
+    """
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    pred = _find_task_by_id(proj, predecessor_id)
+    succ = _find_task_by_id(proj, successor_id)
+    if pred is None:
+        return {"status": "error", "error": f"Predecessor {predecessor_id} not found"}
+    if succ is None:
+        return {"status": "error", "error": f"Successor {successor_id} not found"}
+    try:
+        existing = succ.Predecessors or ""
+        # Build new token: "5FS" or "5FS+2d" or "5FS-1d"
+        type_str = type.upper() if type and type.upper() in PJ_LINK_TYPES else "FS"
+        lag_str = ""
+        if lag and lag != "0d":
+            # Convert minutes to display format
+            mins = _parse_duration(lag)
+            if mins > 0:
+                # Days if multiple of 480 mins
+                if mins % 480 == 0:
+                    lag_str = f"+{mins // 480}d"
+                elif mins % 60 == 0:
+                    lag_str = f"+{mins // 60}h"
+                else:
+                    lag_str = f"+{mins}m"
+            elif mins < 0:
+                if mins % 480 == 0:
+                    lag_str = f"-{abs(mins) // 480}d"
+                else:
+                    lag_str = f"-{abs(mins)}m"
+        new_token = f"{predecessor_id}{type_str}{lag_str}"
+        succ.Predecessors = (existing + "," + new_token).strip(",") if existing else new_token
+        return {
+            "status": "ok",
+            "predecessor_id": predecessor_id,
+            "successor_id": successor_id,
+            "type": type_str,
+            "lag": lag,
+        }
+    except Exception as e:
+        logger.error(f"_msp_link_add failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 # ---------- TOOL DISPATCHERS (filled in T6+) ----------
 # (Placeholder - actual @mcp.tool functions added in T14)
 

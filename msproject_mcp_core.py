@@ -191,6 +191,95 @@ def _msp_task_add_single(name: str, duration: str = "1d",
         return {"status": "error", "error": str(e)}
 
 
+def _find_task_by_id(proj: Any, task_id: int) -> Optional[Any]:
+    """Locate a task object by its ID. Returns None if not found."""
+    for i in range(1, proj.Tasks.Count + 1):
+        t = proj.Tasks(i)
+        if t is not None and t.ID == task_id:
+            return t
+    return None
+
+
+def _msp_task_update(task_id: int, name: Optional[str] = None,
+                     duration: Optional[str] = None,
+                     start: Optional[str] = None, finish: Optional[str] = None,
+                     percent_complete: Optional[float] = None,
+                     notes: Optional[str] = None) -> Dict[str, Any]:
+    app = _validate_active_project()
+    t = _find_task_by_id(app.ActiveProject, task_id)
+    if t is None:
+        return {"status": "error", "error": f"Task ID {task_id} not found"}
+    changes = []
+    try:
+        if name is not None:
+            t.Name = name; changes.append("name")
+        if duration is not None:
+            t.Duration = _parse_duration(duration); changes.append("duration")
+        if start is not None:
+            t.Start = start; changes.append("start")
+        if finish is not None:
+            t.Finish = finish; changes.append("finish")
+        if percent_complete is not None:
+            t.PercentComplete = percent_complete; changes.append("percent_complete")
+        if notes is not None:
+            t.Notes = notes; changes.append("notes")
+        return {"status": "ok", "task_id": task_id, "changes": changes}
+    except Exception as e:
+        logger.error(f"_msp_task_update failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+def _msp_task_delete(task_id: int) -> Dict[str, Any]:
+    app = _validate_active_project()
+    t = _find_task_by_id(app.ActiveProject, task_id)
+    if t is None:
+        return {"status": "error", "error": f"Task ID {task_id} not found"}
+    try:
+        name = t.Name
+        t.Delete()
+        return {"status": "ok", "deleted_id": task_id, "deleted_name": name}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+def _serialize_task(t: Any) -> Dict[str, Any]:
+    return {
+        "id": t.ID,
+        "uid": t.UniqueID,
+        "name": t.Name,
+        "duration": t.Duration,
+        "start": str(t.Start) if t.Start else None,
+        "finish": str(t.Finish) if t.Finish else None,
+        "percent_complete": t.PercentComplete,
+        "milestone": bool(t.Milestone),
+        "summary": bool(t.Summary),
+        "outline_level": t.OutlineLevel,
+        "notes": t.Notes or "",
+    }
+
+
+def _msp_task_get(task_id: int) -> Dict[str, Any]:
+    app = _validate_active_project()
+    t = _find_task_by_id(app.ActiveProject, task_id)
+    if t is None:
+        return {"status": "error", "error": f"Task ID {task_id} not found"}
+    return {"status": "ok", "task": _serialize_task(t)}
+
+
+def _msp_task_list(include_summary: bool = True, limit: int = 100) -> Dict[str, Any]:
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    out = []
+    for i in range(1, min(proj.Tasks.Count, limit) + 1):
+        t = proj.Tasks(i)
+        if t is None:
+            continue
+        if not include_summary and t.Summary:
+            continue
+        out.append(_serialize_task(t))
+    return {"status": "ok", "total": proj.Tasks.Count, "returned": len(out), "tasks": out}
+
+
 # ---------- TOOL DISPATCHERS (filled in T6+) ----------
 # (Placeholder - actual @mcp.tool functions added in T14)
 

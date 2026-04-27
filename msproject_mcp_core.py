@@ -603,6 +603,113 @@ def _msp_link_add(predecessor_id: int, successor_id: int,
         return {"status": "error", "error": str(e)}
 
 
+def _msp_link_delete(predecessor_id: int, successor_id: int) -> Dict[str, Any]:
+    """Remove a specific predecessor link by rebuilding Predecessors string."""
+    app = _validate_active_project()
+    succ = _find_task_by_id(app.ActiveProject, successor_id)
+    if succ is None:
+        return {"status": "error", "error": f"Successor {successor_id} not found"}
+    try:
+        existing = succ.Predecessors or ""
+        if not existing:
+            return {"status": "ok", "message": "No predecessors to remove"}
+        # Parse tokens (comma-separated): "5FS+2d", "3SS", "12FF-1d"
+        tokens = [t.strip() for t in existing.split(",") if t.strip()]
+        # Filter out matching predecessor (number prefix matches predecessor_id)
+        kept = []
+        removed_count = 0
+        for tok in tokens:
+            # Extract numeric prefix
+            num_str = ""
+            for ch in tok:
+                if ch.isdigit():
+                    num_str += ch
+                else:
+                    break
+            try:
+                tok_id = int(num_str) if num_str else -1
+            except ValueError:
+                tok_id = -1
+            if tok_id == predecessor_id:
+                removed_count += 1
+            else:
+                kept.append(tok)
+        succ.Predecessors = ",".join(kept)
+        if removed_count == 0:
+            return {"status": "ok", "message": f"No link from {predecessor_id} to {successor_id} found"}
+        return {"status": "ok", "predecessor_id": predecessor_id, "successor_id": successor_id,
+                "removed_count": removed_count}
+    except Exception as e:
+        logger.error(f"_msp_link_delete failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+def _msp_link_update(predecessor_id: int, successor_id: int,
+                     new_type: Optional[str] = None,
+                     new_lag: Optional[str] = None) -> Dict[str, Any]:
+    """Update link properties via remove+re-add."""
+    delete_result = _msp_link_delete(predecessor_id=predecessor_id, successor_id=successor_id)
+    if delete_result.get("status") != "ok":
+        return delete_result
+    add_result = _msp_link_add(
+        predecessor_id=predecessor_id,
+        successor_id=successor_id,
+        type=new_type or "FS",
+        lag=new_lag or "0d",
+    )
+    return add_result
+
+
+def _msp_link_bulk_add(items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Hybrid routing for bulk links (uses _route_operation)."""
+    if not items:
+        return {"status": "ok", "path": "noop", "count": 0}
+    path = _route_operation(len(items))
+    if path == "com_batch" or path == "mspdi_bulk":
+        _enter_batch_mode()
+    try:
+        added = 0
+        errors = []
+        for it in items:
+            r = _msp_link_add(**it)
+            if r.get("status") == "ok":
+                added += 1
+            else:
+                errors.append(r)
+        result = {"status": "ok", "path": path, "count": added}
+        if errors:
+            result["errors"] = errors[:10]  # cap to avoid huge response
+        return result
+    finally:
+        if path in ("com_batch", "mspdi_bulk"):
+            _exit_batch_mode()
+
+
+def _msp_link_chain(task_ids: List[int], type: str = "FS",
+                    lag: str = "0d") -> Dict[str, Any]:
+    """Chain N tasks: T1->T2->T3->...->TN with given link type."""
+    if len(task_ids) < 2:
+        return {"status": "error", "error": "At least 2 tasks required for chain"}
+    added = 0
+    errors = []
+    for i in range(len(task_ids) - 1):
+        r = _msp_link_add(
+            predecessor_id=task_ids[i],
+            successor_id=task_ids[i+1],
+            type=type, lag=lag,
+        )
+        if r.get("status") == "ok":
+            added += 1
+        else:
+            errors.append({"index": i, "error": r.get("error")})
+    return {
+        "status": "ok",
+        "links_added": added,
+        "chain_length": len(task_ids),
+        "errors": errors[:10] if errors else [],
+    }
+
+
 # ---------- TOOL DISPATCHERS (filled in T6+) ----------
 # (Placeholder - actual @mcp.tool functions added in T14)
 

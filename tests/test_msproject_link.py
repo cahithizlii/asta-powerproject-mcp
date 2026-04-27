@@ -3,6 +3,7 @@ import pytest
 from msproject_mcp_core import (
     _msp_task_add_single, _msp_task_delete,
     _msp_link_add,
+    _msp_link_delete, _msp_link_update, _msp_link_bulk_add, _msp_link_chain,
 )
 
 
@@ -42,3 +43,48 @@ def test_link_invalid_predecessor(msproject_app):
     r = _msp_link_add(predecessor_id=99999, successor_id=a["task_id"])
     assert r["status"] == "error"
     _msp_task_delete(task_id=a["task_id"])
+
+
+def test_link_delete(msproject_app):
+    """Removing a link clears it from Predecessors."""
+    a = _msp_task_add_single(name="DA", duration="1d")
+    b = _msp_task_add_single(name="DB", duration="2d")
+    _msp_link_add(predecessor_id=a["task_id"], successor_id=b["task_id"])
+    r = _msp_link_delete(predecessor_id=a["task_id"], successor_id=b["task_id"])
+    assert r["status"] == "ok"
+    _msp_task_delete(task_id=a["task_id"])
+    _msp_task_delete(task_id=b["task_id"])
+
+
+def test_link_update_type(msproject_app):
+    """Update link from FS to SS."""
+    a = _msp_task_add_single(name="UA", duration="1d")
+    b = _msp_task_add_single(name="UB", duration="2d")
+    _msp_link_add(predecessor_id=a["task_id"], successor_id=b["task_id"], type="FS")
+    r = _msp_link_update(predecessor_id=a["task_id"], successor_id=b["task_id"], new_type="SS")
+    assert r["status"] == "ok"
+    _msp_task_delete(task_id=a["task_id"])
+    _msp_task_delete(task_id=b["task_id"])
+
+
+def test_link_bulk_add(msproject_app):
+    """Bulk add 5 links."""
+    tasks = [_msp_task_add_single(name=f"Bulk{i}", duration="1d") for i in range(6)]
+    items = [{"predecessor_id": tasks[i]["task_id"], "successor_id": tasks[i+1]["task_id"], "type": "FS"}
+             for i in range(5)]
+    r = _msp_link_bulk_add(items=items)
+    assert r["status"] == "ok"
+    assert r["count"] == 5
+    for t in tasks:
+        _msp_task_delete(task_id=t["task_id"])
+
+
+def test_link_chain(msproject_app):
+    """Chain 4 tasks: T1->T2->T3->T4."""
+    tasks = [_msp_task_add_single(name=f"Chain{i}", duration="1d") for i in range(4)]
+    task_ids = [t["task_id"] for t in tasks]
+    r = _msp_link_chain(task_ids=task_ids, type="FS", lag="0d")
+    assert r["status"] == "ok"
+    assert r["links_added"] == 3
+    for t in tasks:
+        _msp_task_delete(task_id=t["task_id"])

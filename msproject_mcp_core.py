@@ -239,6 +239,7 @@ def _msp_task_delete(task_id: int) -> Dict[str, Any]:
         t.Delete()
         return {"status": "ok", "deleted_id": task_id, "deleted_name": name}
     except Exception as e:
+        logger.error(f"_msp_task_delete failed: {e}")
         return {"status": "error", "error": str(e)}
 
 
@@ -282,7 +283,13 @@ def _msp_task_list(include_summary: bool = True, limit: int = 100) -> Dict[str, 
 
 def _msp_task_add_summary(name: str, duration: str = "1d",
                           parent_task_id: Optional[int] = None) -> Dict[str, Any]:
-    """Add a summary task. In MS Project summary is implicit (becomes summary when has children)."""
+    """Add a summary task. In MS Project summary is implicit (becomes summary when has children).
+
+    TODO(T11+): Wire `parent_task_id` to indent the new task under the given parent
+    via OutlineLevel / Task.OutlineIndent so it actually becomes a summary container.
+    Currently the parameter is accepted for API stability but ignored — MSP only marks
+    a task `Summary=True` when it has children, so summary-ness is implicit, not flagged.
+    """
     return _msp_task_add_single(name=name, duration=duration, summary=True)
 
 
@@ -292,6 +299,64 @@ def _msp_task_add_milestone(name: str, date: Optional[str] = None) -> Dict[str, 
     if r.get("status") == "ok" and date:
         _msp_task_update(task_id=r["task_id"], start=date, finish=date)
     return r
+
+
+# ---------- BULK ADD HYBRID ROUTING ----------
+
+def _msp_task_bulk_add_com_direct(items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Path 1: <=5 items, plain COM."""
+    added = []
+    for item in items:
+        r = _msp_task_add_single(**item)
+        if r.get("status") == "ok":
+            added.append(r["task_id"])
+    return {"status": "ok", "path": "com_direct", "count": len(added), "task_ids": added}
+
+
+def _msp_task_bulk_add_com_batch(items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Path 2: 6-19 items, COM with batch mode (Calculation manual)."""
+    _enter_batch_mode()
+    try:
+        added = []
+        for item in items:
+            r = _msp_task_add_single(**item)
+            if r.get("status") == "ok":
+                added.append(r["task_id"])
+        return {"status": "ok", "path": "com_batch", "count": len(added), "task_ids": added}
+    finally:
+        _exit_batch_mode()
+
+
+def _msp_task_bulk_add_mspdi(items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Path 3: 20+ items, MSPDI XML import.
+
+    T9: COM batch fallback (proper FileOpen wiring is T10's job).
+    """
+    _enter_batch_mode()
+    try:
+        added = []
+        for item in items:
+            r = _msp_task_add_single(**item)
+            if r.get("status") == "ok":
+                added.append(r["task_id"])
+        return {"status": "ok", "path": "mspdi_bulk", "count": len(added),
+                "task_ids": added,
+                "note": "Phase 1 T9: COM batch fallback; XML import wiring in T10"}
+    finally:
+        _exit_batch_mode()
+
+
+def _msp_task_bulk_add(items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Hybrid bulk add: routes by item count via _route_operation()."""
+    if not items:
+        return {"status": "ok", "path": "noop", "count": 0, "task_ids": []}
+    path = _route_operation(len(items))
+    if path == "com_direct":
+        return _msp_task_bulk_add_com_direct(items)
+    elif path == "com_batch":
+        return _msp_task_bulk_add_com_batch(items)
+    else:
+        return _msp_task_bulk_add_mspdi(items)
 
 
 # ---------- TOOL DISPATCHERS (filled in T6+) ----------

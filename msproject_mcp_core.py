@@ -295,6 +295,75 @@ def _msp_calendar_update(name: str,
         return {"status": "error", "error": str(e)}
 
 
+def _parse_date(date_str: str) -> _dt.date:
+    """Parse 'YYYY-MM-DD' to date."""
+    return _dt.datetime.strptime(date_str, "%Y-%m-%d").date()
+
+
+# pjExceptionDaily = 7 (single fixed-date or range, non-recurring)
+PJ_EXCEPTION_DAILY = 7
+
+
+def _msp_calendar_add_exception(calendar_name: str, exception_name: str,
+                                start: str,
+                                finish: Optional[str] = None,
+                                working: bool = False) -> Dict[str, Any]:
+    """Add a non-working exception to a calendar (single date or range).
+
+    For Phase 2a: only non-recurring exceptions (Type=pjExceptionDaily=7).
+    Recurring patterns (weekly/monthly) deferred to Phase 3+.
+    """
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    cal = _find_calendar_by_name(proj, calendar_name)
+    if cal is None:
+        return {"status": "error",
+                "error": f"Calendar '{calendar_name}' not found in project"}
+
+    # Pre-flight: validate ALL inputs before any mutation (no partial writes)
+    try:
+        start_d = _parse_date(start)
+        finish_d = _parse_date(finish) if finish else start_d
+    except ValueError as e:
+        return {"status": "error",
+                "error": f"Invalid date format (expected YYYY-MM-DD): {e}"}
+    if finish_d < start_d:
+        return {"status": "error",
+                "error": "Start date must be <= finish date"}
+
+    try:
+        ex = cal.Exceptions.Add(
+            Type=PJ_EXCEPTION_DAILY,
+            Start=pywintypes.Time(start_d),
+            Finish=pywintypes.Time(finish_d),
+        )
+        ex.Name = exception_name
+        # working=False is default for new exceptions in MSP; explicitly handle
+        if not working:
+            # Mark non-working: zero out shift starts/finishes.
+            # Each shift assignment wrapped individually — some MSP COM versions
+            # reject int 0 (want None or different). The exception itself with
+            # default Type=7 is already non-working in MSP semantics.
+            for prop in ("Shift1Start", "Shift1Finish",
+                         "Shift2Start", "Shift2Finish",
+                         "Shift3Start", "Shift3Finish"):
+                try:
+                    setattr(ex, prop, 0)
+                except Exception:
+                    pass
+        return {"status": "ok",
+                "calendar_name": calendar_name,
+                "exception_name": exception_name,
+                "start": start,
+                "finish": finish or start,
+                "working": working}
+    except Exception as e:
+        logger.error(
+            f"_msp_calendar_add_exception({calendar_name},{exception_name}) failed: {e}"
+        )
+        return {"status": "error", "error": str(e)}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

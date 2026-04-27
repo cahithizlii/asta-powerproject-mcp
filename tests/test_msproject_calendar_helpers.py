@@ -9,20 +9,21 @@ def test_uzbek_holidays_count():
 
 
 def test_uzbek_holidays_structure():
-    """Each entry: (name, month, day) tuple."""
+    """Each entry: (str name, real (month, day) for 2026)."""
+    from datetime import date
     for entry in UZBEK_HOLIDAYS_2026:
         assert len(entry) == 3
         name, month, day = entry
         assert isinstance(name, str) and len(name) > 0
-        assert 1 <= month <= 12
-        assert 1 <= day <= 31
+        # Constructing the date catches invalid (month, day) like (2, 30)
+        date(2026, month, day)
 
 
 def test_uzbek_holidays_includes_navruz():
     """Navruz (March 21) must be in list."""
     found = [e for e in UZBEK_HOLIDAYS_2026 if e[1] == 3 and e[2] == 21]
     assert len(found) == 1
-    assert "Navruz" in found[0][0]
+    assert found[0][0] == "Navruz"
 
 
 def test_find_calendar_standard(clean_test_project):
@@ -38,3 +39,10 @@ def test_find_calendar_missing(clean_test_project):
     proj = clean_test_project
     cal = _find_calendar_by_name(proj, "NonExistent-XYZ")
     assert cal is None
+
+
+def test_find_calendar_case_sensitive(clean_test_project):
+    """_find_calendar_by_name is case-sensitive — locks the contract for T19+."""
+    proj = clean_test_project
+    assert _find_calendar_by_name(proj, "standard") is None
+    assert _find_calendar_by_name(proj, "Standard") is not None

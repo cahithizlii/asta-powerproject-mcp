@@ -227,13 +227,10 @@ UZBEK_HOLIDAYS_2026 = [
 
 def _find_calendar_by_name(proj: Any, name: str) -> Optional[Any]:
     """Locate a base calendar object in the project. Returns None if not found."""
-    try:
-        for i in range(1, proj.BaseCalendars.Count + 1):
-            cal = proj.BaseCalendars(i)
-            if cal is not None and cal.Name == name:
-                return cal
-    except Exception:
-        pass
+    for i in range(1, proj.BaseCalendars.Count + 1):
+        cal = proj.BaseCalendars(i)
+        if cal is not None and cal.Name == name:
+            return cal
     return None
 
 

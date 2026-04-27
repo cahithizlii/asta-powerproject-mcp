@@ -365,6 +365,25 @@ def _msp_calendar_add_exception(calendar_name: str, exception_name: str,
         return {"status": "error", "error": str(e)}
 
 
+def _msp_calendar_assign_to_task(task_id: int, calendar_name: str) -> Dict[str, Any]:
+    """Assign a base calendar to a specific task."""
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    cal = _find_calendar_by_name(proj, calendar_name)
+    if cal is None:
+        return {"status": "error",
+                "error": f"Calendar '{calendar_name}' not found in project"}
+    t = _find_task_by_id(proj, task_id)
+    if t is None:
+        return {"status": "error", "error": f"Task ID {task_id} not found"}
+    try:
+        t.Calendar = calendar_name
+        return {"status": "ok", "task_id": task_id, "calendar_name": calendar_name}
+    except Exception as e:
+        logger.error(f"_msp_calendar_assign_to_task({task_id},{calendar_name}) failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

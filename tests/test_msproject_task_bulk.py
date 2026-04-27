@@ -53,3 +53,18 @@ def test_bulk_empty_items(msproject_app):
     r = _msp_task_bulk_add(items=[])
     assert r["status"] == "ok"
     assert r["count"] == 0
+
+
+def test_bulk_200_tasks_under_5_sec(msproject_app):
+    """Performance: 200 tasks via MSPDI must finish <5 sec."""
+    _cleanup_all_tasks(msproject_app.ActiveProject)
+    items = [{"name": f"P{i:03d}", "duration": "1d"} for i in range(200)]
+    start = time.time()
+    r = _msp_task_bulk_add(items=items)
+    elapsed = time.time() - start
+    assert r["status"] == "ok"
+    assert r["count"] == 200
+    assert elapsed < 5.0, f"Bulk 200 took {elapsed:.2f}s (target: <5s)"
+    proj = msproject_app.ActiveProject
+    assert proj.Tasks.Count == 200
+    _cleanup_all_tasks(msproject_app.ActiveProject)

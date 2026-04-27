@@ -328,22 +328,211 @@ def _msp_task_bulk_add_com_batch(items: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def _msp_task_bulk_add_mspdi(items: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Path 3: 20+ items, MSPDI XML import.
+    """Path 3: 20+ items via MSPDI XML import.
 
-    T9: COM batch fallback (proper FileOpen wiring is T10's job).
+    Strategy:
+    1. Build temp MSPDI XML with all tasks via MsprojectBulkWriter
+    2. Open as new project via app.FileOpen(temp.xml) — DisplayAlerts=False
+       suppresses the Import Wizard dialog. The temp project's name is the
+       XML filename stem (NOT the <Name> element), so we control it via the
+       temp filename.
+    3. SelectAll + EditCopy in temp project
+    4. Switch back to target project, SelectTaskField row=last_count+1, EditPaste
+    5. EditPaste sometimes inserts a leading None placeholder row; remove it
+       via app.SelectRow(Row=1) + app.EditDelete (only if Tasks(1) is None)
+    6. Close temp project without saving (FileClose 0)
+    7. Cleanup temp file
+
+    Performance target: 200 tasks in <5 seconds.
+
+    On failure, falls back to COM-batch-per-task (slower but reliable).
     """
+    import tempfile
+    from msproject_bulk import MsprojectBulkWriter
+
+    app = _validate_active_project()
+    target_proj = app.ActiveProject
+    target_name = target_proj.Name
+
+    # Get current project start for new tasks (use as MSPDI StartDate)
+    try:
+        start_date_obj = target_proj.ProjectStart
+        start_date = start_date_obj.strftime("%Y-%m-%dT%H:%M:%S") if start_date_obj else None
+    except Exception:
+        start_date = None
+
+    # Use a controlled temp filename so we can find the loaded project by name
+    # (FileOpen names the project after the file's stem, not the XML <Name>).
+    tmp_dir = tempfile.gettempdir()
+    tmp_stem = f"_BULK_TEMP_{int(time.time() * 1000)}"
+    tmp_path = os.path.join(tmp_dir, f"{tmp_stem}.xml")
+
+    # Build XML
+    w = MsprojectBulkWriter(project_name=tmp_stem, start_date=start_date)
+    w.bulk_add_tasks(items)
+    w.save(tmp_path)
+
+    # Save & flip DisplayAlerts (this is what suppresses the Import Wizard dialog)
+    prev_alerts = True
+    try:
+        prev_alerts = app.DisplayAlerts
+    except Exception:
+        pass
+    try:
+        app.DisplayAlerts = False
+    except Exception:
+        pass
+
     _enter_batch_mode()
     try:
+        # Open temp XML as new project
+        app.FileOpen(tmp_path)
+
+        # The loaded project's name is the file stem
+        temp_proj = None
+        for i in range(1, app.Projects.Count + 1):
+            if app.Projects(i).Name == tmp_stem:
+                temp_proj = app.Projects(i)
+                break
+        if temp_proj is None:
+            raise RuntimeError(
+                f"FileOpen didn't load {tmp_stem} (Projects: "
+                f"{[app.Projects(i).Name for i in range(1, app.Projects.Count + 1)]})"
+            )
+
+        # Select all tasks in temp and copy
+        try:
+            app.SelectAll()
+        except Exception:
+            # Fallback: select via row range
+            app.SelectTaskField(Row=1, Column="Name", Height=temp_proj.Tasks.Count)
+        app.EditCopy()
+
+        # Switch to target project window
+        target_window_found = False
+        for i in range(1, app.Projects.Count + 1):
+            if app.Projects(i).Name == target_name:
+                try:
+                    app.WindowActivate(app.Projects(i).Windows(1).Caption)
+                    target_window_found = True
+                    break
+                except Exception:
+                    continue
+        if not target_window_found:
+            raise RuntimeError(f"Could not switch back to target project {target_name}")
+
+        target_proj = app.ActiveProject
+        last_count = target_proj.Tasks.Count
+        paste_row = last_count + 1 if last_count > 0 else 1
+        try:
+            app.SelectTaskField(Row=paste_row, Column="Name")
+        except Exception:
+            app.SelectTaskField(Row=1, Column="Name")
+        app.EditPaste()
+
+        # Cleanup leading None placeholder rows that EditPaste sometimes inserts.
+        # Use app.SelectRow(Row=1, RowRelative=False) + app.EditDelete to delete
+        # the row by position (not by Tasks(N).Delete which fails on None).
+        cleanup_safety = 50
+        while (target_proj.Tasks.Count > 0
+               and target_proj.Tasks(1) is None
+               and cleanup_safety > 0):
+            try:
+                app.SelectRow(Row=1, RowRelative=False)
+                app.EditDelete()
+            except Exception as ce:
+                logger.warning(f"None-row cleanup at row 1 failed: {ce}")
+                break
+            cleanup_safety -= 1
+
+        # Cleanup trailing None rows too (defensive)
+        cleanup_safety = 50
+        while (target_proj.Tasks.Count > 0
+               and target_proj.Tasks(target_proj.Tasks.Count) is None
+               and cleanup_safety > 0):
+            try:
+                app.SelectRow(Row=target_proj.Tasks.Count, RowRelative=False)
+                app.EditDelete()
+            except Exception:
+                break
+            cleanup_safety -= 1
+
+        # Close temp project without saving
+        for i in range(1, app.Projects.Count + 1):
+            if app.Projects(i).Name == tmp_stem:
+                try:
+                    app.WindowActivate(app.Projects(i).Windows(1).Caption)
+                    app.FileClose(0)  # 0 = pjDoNotSave
+                    break
+                except Exception:
+                    pass
+
+        # Reactivate target window
+        for i in range(1, app.Projects.Count + 1):
+            if app.Projects(i).Name == target_name:
+                try:
+                    app.WindowActivate(app.Projects(i).Windows(1).Caption)
+                    break
+                except Exception:
+                    pass
+
+        # Collect IDs of newly added tasks (everything past last_count)
+        target_proj = app.ActiveProject
+        added_task_ids = []
+        for i in range(last_count + 1, target_proj.Tasks.Count + 1):
+            t = target_proj.Tasks(i)
+            if t is not None:
+                added_task_ids.append(t.ID)
+
+        return {
+            "status": "ok",
+            "path": "mspdi_bulk",
+            "count": len(added_task_ids),
+            "task_ids": added_task_ids,
+            "method": "FileOpen + EditCopy + EditPaste",
+        }
+    except Exception as e:
+        logger.error(f"MSPDI bulk path failed: {e}; falling back to COM batch")
+        # Cleanup any orphan _BULK_TEMP_ project
+        try:
+            for i in range(1, app.Projects.Count + 1):
+                if app.Projects(i).Name == tmp_stem:
+                    app.WindowActivate(app.Projects(i).Windows(1).Caption)
+                    app.FileClose(0)
+                    break
+        except Exception:
+            pass
+        # Switch back to target
+        try:
+            for i in range(1, app.Projects.Count + 1):
+                if app.Projects(i).Name == target_name:
+                    app.WindowActivate(app.Projects(i).Windows(1).Caption)
+                    break
+        except Exception:
+            pass
+        # Fallback to COM batch
         added = []
         for item in items:
             r = _msp_task_add_single(**item)
             if r.get("status") == "ok":
                 added.append(r["task_id"])
-        return {"status": "ok", "path": "mspdi_bulk", "count": len(added),
-                "task_ids": added,
-                "note": "Phase 1 T9: COM batch fallback; XML import wiring in T10"}
+        return {
+            "status": "ok",
+            "path": "mspdi_bulk_fallback_com",
+            "count": len(added),
+            "task_ids": added,
+            "fallback_reason": str(e),
+        }
     finally:
         _exit_batch_mode()
+        try:
+            app.DisplayAlerts = prev_alerts
+        except Exception:
+            pass
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
 
 
 def _msp_task_bulk_add(items: List[Dict[str, Any]]) -> Dict[str, Any]:

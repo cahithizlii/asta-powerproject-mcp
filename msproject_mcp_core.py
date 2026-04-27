@@ -437,6 +437,42 @@ def _msp_calendar_list() -> Dict[str, Any]:
         return {"status": "error", "error": str(e)}
 
 
+def _msp_calendar_holidays_uzbek(calendar_name: str, year: int = 2026) -> Dict[str, Any]:
+    """Bulk-add 9 official Özbekistan public holidays to a calendar.
+
+    Uses UZBEK_HOLIDAYS_2026 constant. Year parameter shifts year only —
+    the (month, day) pairs are fixed (Navruz=21 March, Independence=1 Sep, etc.).
+    """
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    if _find_calendar_by_name(proj, calendar_name) is None:
+        return {"status": "error",
+                "error": f"Calendar '{calendar_name}' not found in project"}
+    added = []
+    failed = []
+    for name, month, day in UZBEK_HOLIDAYS_2026:
+        date_str = f"{year:04d}-{month:02d}-{day:02d}"
+        r = _msp_calendar_add_exception(
+            calendar_name=calendar_name,
+            exception_name=name,
+            start=date_str,
+        )
+        if r.get("status") == "ok":
+            added.append({"name": name, "date": date_str, "month": month, "day": day})
+        else:
+            failed.append({"name": name, "date": date_str, "error": r.get("error")})
+    if failed:
+        logger.warning(f"holidays_uzbek partial: {len(added)} added, {len(failed)} failed")
+    return {
+        "status": "ok" if not failed else "partial",
+        "calendar_name": calendar_name,
+        "year": year,
+        "count": len(added),
+        "holidays": added,
+        "failures": failed,
+    }
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

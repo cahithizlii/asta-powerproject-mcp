@@ -208,6 +208,35 @@ def _find_task_by_id(proj: Any, task_id: int) -> Optional[Any]:
     return None
 
 
+# ---------- CALENDAR CONSTANTS ----------
+
+UZBEK_HOLIDAYS_2026 = [
+    ("Yılbaşı", 1, 1),
+    ("Vatan Müdafaası Günü", 1, 14),
+    ("Kadınlar Günü", 3, 8),
+    ("Navruz", 3, 21),
+    ("İşçi Bayramı", 5, 1),
+    ("Hatıra ve Şeref Günü", 5, 9),
+    ("Bağımsızlık Günü", 9, 1),
+    ("Öğretmenler Günü", 10, 1),
+    ("Anayasa Günü", 12, 8),
+]
+
+
+# ---------- CALENDAR HELPERS ----------
+
+def _find_calendar_by_name(proj: Any, name: str) -> Optional[Any]:
+    """Locate a base calendar object in the project. Returns None if not found."""
+    try:
+        for i in range(1, proj.BaseCalendars.Count + 1):
+            cal = proj.BaseCalendars(i)
+            if cal is not None and cal.Name == name:
+                return cal
+    except Exception:
+        pass
+    return None
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

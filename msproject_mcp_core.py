@@ -258,6 +258,39 @@ def _msp_calendar_create(name: str, base_calendar: str = "Standard") -> Dict[str
         return {"status": "error", "error": str(e)}
 
 
+def _msp_calendar_update(name: str,
+                         new_name: Optional[str] = None,
+                         weekday_off: Optional[int] = None) -> Dict[str, Any]:
+    """Rename a calendar and/or mark a weekday as non-working.
+
+    weekday_off: 1=Sunday, 2=Monday, ..., 7=Saturday (MS Project convention).
+    """
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    cal = _find_calendar_by_name(proj, name)
+    if cal is None:
+        return {"status": "error", "error": f"Calendar '{name}' not found in project"}
+    changes = []
+    try:
+        if new_name is not None and new_name != name:
+            if _find_calendar_by_name(proj, new_name) is not None:
+                return {"status": "error",
+                        "error": f"Calendar '{new_name}' already exists"}
+            cal.Name = new_name
+            changes.append("name")
+        if weekday_off is not None:
+            if not (1 <= weekday_off <= 7):
+                return {"status": "error",
+                        "error": "weekday_off must be 1-7 (1=Sunday, 7=Saturday)"}
+            wd = cal.WeekDays(weekday_off)
+            wd.Working = False
+            changes.append("weekday_off")
+        return {"status": "ok", "calendar_name": new_name or name, "changes": changes}
+    except Exception as e:
+        logger.error(f"_msp_calendar_update({name}) failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

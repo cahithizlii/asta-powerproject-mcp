@@ -804,8 +804,126 @@ def _msp_schedule_protect_actuals(enable: bool = True) -> Dict[str, Any]:
         return {"status": "error", "error": str(e)}
 
 
-# ---------- TOOL DISPATCHERS (filled in T6+) ----------
-# (Placeholder - actual @mcp.tool functions added in T14)
+# ---------- TOOL DISPATCHERS ----------
+
+@mcp.tool(
+    name="msproject_task",
+    annotations={"title": "MS Project Task Operations", "readOnlyHint": False},
+)
+async def msproject_task(params: dict) -> str:
+    """Manage tasks in active MS Project (COM-based, hybrid speed routing).
+
+    Actions:
+    - add: Add task. Params: name, duration (e.g. "5d"), [start, finish, summary, milestone, notes]
+    - update: Update task. Params: task_id, [name, duration, start, finish, percent_complete, notes]
+    - delete: Delete task. Params: task_id
+    - add_summary: Add summary task. Params: name, duration, [parent_task_id]
+    - add_milestone: Add 0-duration milestone. Params: name, [date]
+    - get: Get task details. Params: task_id
+    - list: List tasks. Params: [include_summary=true, limit=100]
+    - bulk_add: Bulk add tasks. Params: items=[{name, duration, ...}, ...]
+                Routes: 1-5=COM direct, 6-19=COM batch, 20+=MSPDI bulk
+
+    Returns JSON-encoded result. Hybrid speed: 200 task bulk in ~3-5 sec.
+    """
+    import json
+    action = params.get("action", "")
+    p = {k: v for k, v in params.items() if k != "action"}
+    try:
+        if action == "add":
+            r = _msp_task_add_single(**p)
+        elif action == "update":
+            r = _msp_task_update(**p)
+        elif action == "delete":
+            r = _msp_task_delete(**p)
+        elif action == "add_summary":
+            r = _msp_task_add_summary(**p)
+        elif action == "add_milestone":
+            r = _msp_task_add_milestone(**p)
+        elif action == "get":
+            r = _msp_task_get(**p)
+        elif action == "list":
+            r = _msp_task_list(**p)
+        elif action == "bulk_add":
+            r = _msp_task_bulk_add(**p)
+        else:
+            r = {"status": "error",
+                 "error": f"Unknown action '{action}'. Valid: add/update/delete/add_summary/add_milestone/get/list/bulk_add"}
+    except Exception as e:
+        logger.error(f"msproject_task({action}) failed: {e}")
+        r = {"status": "error", "error": str(e)}
+    return json.dumps(r, default=str, ensure_ascii=False)
+
+
+@mcp.tool(
+    name="msproject_link",
+    annotations={"title": "MS Project Link Operations", "readOnlyHint": False},
+)
+async def msproject_link(params: dict) -> str:
+    """Manage predecessor/successor links.
+
+    Actions:
+    - add: Add link. Params: predecessor_id, successor_id, [type='FS', lag='0d']
+    - delete: Remove link. Params: predecessor_id, successor_id
+    - update: Update link (type/lag). Params: predecessor_id, successor_id, [new_type, new_lag]
+    - bulk_add: Bulk links. Params: items=[{predecessor_id, successor_id, type, lag}, ...]
+    - chain: Chain N tasks T1->T2->...->TN. Params: task_ids=[1,2,3,...], [type='FS', lag='0d']
+    """
+    import json
+    action = params.get("action", "")
+    p = {k: v for k, v in params.items() if k != "action"}
+    try:
+        if action == "add":
+            r = _msp_link_add(**p)
+        elif action == "delete":
+            r = _msp_link_delete(**p)
+        elif action == "update":
+            r = _msp_link_update(**p)
+        elif action == "bulk_add":
+            r = _msp_link_bulk_add(**p)
+        elif action == "chain":
+            r = _msp_link_chain(**p)
+        else:
+            r = {"status": "error",
+                 "error": f"Unknown action '{action}'. Valid: add/delete/update/bulk_add/chain"}
+    except Exception as e:
+        logger.error(f"msproject_link({action}) failed: {e}")
+        r = {"status": "error", "error": str(e)}
+    return json.dumps(r, default=str, ensure_ascii=False)
+
+
+@mcp.tool(
+    name="msproject_schedule",
+    annotations={"title": "MS Project Schedule Operations", "readOnlyHint": False},
+)
+async def msproject_schedule(params: dict) -> str:
+    """Schedule operations.
+
+    Actions:
+    - reschedule: Recalculate (CalculateProject). Params: [report_date='YYYY-MM-DD']
+    - level: Resource leveling (LevelNow). Params: [within_slack=False]
+    - set_data_date: Set status_date. Params: date='YYYY-MM-DD'
+    - protect_actuals: Lock actuals. Params: [enable=True]
+    """
+    import json
+    action = params.get("action", "")
+    p = {k: v for k, v in params.items() if k != "action"}
+    try:
+        if action == "reschedule":
+            r = _msp_schedule_reschedule(**p)
+        elif action == "level":
+            r = _msp_schedule_level(**p)
+        elif action == "set_data_date":
+            r = _msp_schedule_set_data_date(**p)
+        elif action == "protect_actuals":
+            r = _msp_schedule_protect_actuals(**p)
+        else:
+            r = {"status": "error",
+                 "error": f"Unknown action '{action}'. Valid: reschedule/level/set_data_date/protect_actuals"}
+    except Exception as e:
+        logger.error(f"msproject_schedule({action}) failed: {e}")
+        r = {"status": "error", "error": str(e)}
+    return json.dumps(r, default=str, ensure_ascii=False)
 
 
 def main():

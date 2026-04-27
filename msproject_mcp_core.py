@@ -15,7 +15,10 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
+import datetime as _dt
+
 import pythoncom
+import pywintypes
 import win32com.client
 from mcp.server.fastmcp import FastMCP
 
@@ -708,6 +711,97 @@ def _msp_link_chain(task_ids: List[int], type: str = "FS",
         "chain_length": len(task_ids),
         "errors": errors[:10] if errors else [],
     }
+
+
+# ---------- SCHEDULE HELPERS ----------
+
+def _to_com_date(date_str: str) -> Any:
+    """Convert ISO date string ('2026-04-30') to a pywintypes.Time COM date.
+
+    MS Project's StatusDate property requires a real VT_DATE value; passing a
+    plain string raises 'argument value is not valid'. Accepts both 'YYYY-MM-DD'
+    and 'YYYY-MM-DD HH:MM:SS'.
+    """
+    s = date_str.strip()
+    fmts = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y")
+    last_err: Optional[Exception] = None
+    for f in fmts:
+        try:
+            dt = _dt.datetime.strptime(s, f)
+            return pywintypes.Time(dt)
+        except Exception as e:
+            last_err = e
+    raise ValueError(f"Unrecognized date format: {date_str!r} ({last_err})")
+
+
+def _msp_schedule_reschedule(report_date: Optional[str] = None) -> Dict[str, Any]:
+    """Recalculate the project (CalculateProject)."""
+    app = _validate_active_project()
+    try:
+        if report_date:
+            app.ActiveProject.StatusDate = _to_com_date(report_date)
+        app.CalculateProject()
+        return {"status": "ok", "message": "Project rescheduled",
+                "report_date": report_date or "unchanged"}
+    except Exception as e:
+        logger.error(f"_msp_schedule_reschedule failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+def _msp_schedule_level(within_slack: bool = False) -> Dict[str, Any]:
+    """Level resources (Application.LevelNow)."""
+    app = _validate_active_project()
+    try:
+        # MS Project COM uses LevelNow(All=True) — no LevelAll method exists.
+        # LevelingOptions controls within_slack behavior.
+        if within_slack:
+            try:
+                app.LevelingOptions(DelayInSlack=True)
+            except Exception as e:
+                logger.warning(f"LevelingOptions(DelayInSlack=True) failed (non-fatal): {e}")
+        app.LevelNow(All=True)
+        return {"status": "ok", "message": "Resources leveled",
+                "within_slack": within_slack}
+    except Exception as e:
+        logger.error(f"_msp_schedule_level failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+def _msp_schedule_set_data_date(date: str) -> Dict[str, Any]:
+    """Set status date / data date."""
+    app = _validate_active_project()
+    try:
+        app.ActiveProject.StatusDate = _to_com_date(date)
+        return {"status": "ok", "status_date": date}
+    except Exception as e:
+        logger.error(f"_msp_schedule_set_data_date failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+def _msp_schedule_protect_actuals(enable: bool = True) -> Dict[str, Any]:
+    """Protect actuals from being recalculated.
+
+    In MS Project these are Project-level properties that govern whether the
+    scheduling engine moves end-of-completed and start-of-remaining parts when
+    rescheduling. enable=True locks them down (no move).
+
+      MoveCompleted          Move end of completed parts after status date back to status date
+      AndMoveRemaining       And move start of remaining parts back to status date
+      MoveRemaining          Move start of remaining parts before status date forward to status date
+      AndMoveCompleted       And move end of completed parts forward to status date
+    """
+    app = _validate_active_project()
+    try:
+        proj = app.ActiveProject
+        # When 'enable=True' = protect (don't move any completed/remaining parts)
+        proj.MoveCompleted = not enable
+        proj.AndMoveRemaining = not enable
+        proj.MoveRemaining = not enable
+        proj.AndMoveCompleted = not enable
+        return {"status": "ok", "actuals_protected": bool(enable)}
+    except Exception as e:
+        logger.error(f"_msp_schedule_protect_actuals failed: {e}")
+        return {"status": "error", "error": str(e)}
 
 
 # ---------- TOOL DISPATCHERS (filled in T6+) ----------

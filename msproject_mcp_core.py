@@ -412,6 +412,31 @@ def _msp_calendar_assign_to_resource(resource_id: int, calendar_name: str) -> Di
         return {"status": "error", "error": str(e)}
 
 
+def _msp_calendar_list() -> Dict[str, Any]:
+    """List all base calendars in the active project with exception counts."""
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    out = []
+    try:
+        for i in range(1, proj.BaseCalendars.Count + 1):
+            cal = proj.BaseCalendars(i)
+            if cal is None:
+                continue
+            try:
+                ex_count = cal.Exceptions.Count
+            except Exception:
+                ex_count = 0
+            out.append({
+                "uid": cal.Guid,
+                "name": cal.Name,
+                "exception_count": ex_count,
+            })
+        return {"status": "ok", "count": len(out), "calendars": out}
+    except Exception as e:
+        logger.error(f"_msp_calendar_list failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

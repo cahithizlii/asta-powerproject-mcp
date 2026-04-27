@@ -280,6 +280,20 @@ def _msp_task_list(include_summary: bool = True, limit: int = 100) -> Dict[str, 
     return {"status": "ok", "total": proj.Tasks.Count, "returned": len(out), "tasks": out}
 
 
+def _msp_task_add_summary(name: str, duration: str = "1d",
+                          parent_task_id: Optional[int] = None) -> Dict[str, Any]:
+    """Add a summary task. In MS Project summary is implicit (becomes summary when has children)."""
+    return _msp_task_add_single(name=name, duration=duration, summary=True)
+
+
+def _msp_task_add_milestone(name: str, date: Optional[str] = None) -> Dict[str, Any]:
+    """Add a 0-duration milestone."""
+    r = _msp_task_add_single(name=name, duration="0d", milestone=True)
+    if r.get("status") == "ok" and date:
+        _msp_task_update(task_id=r["task_id"], start=date, finish=date)
+    return r
+
+
 # ---------- TOOL DISPATCHERS (filled in T6+) ----------
 # (Placeholder - actual @mcp.tool functions added in T14)
 

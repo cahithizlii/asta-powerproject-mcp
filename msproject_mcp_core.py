@@ -234,6 +234,30 @@ def _find_calendar_by_name(proj: Any, name: str) -> Optional[Any]:
     return None
 
 
+def _msp_calendar_create(name: str, base_calendar: str = "Standard") -> Dict[str, Any]:
+    """Create a new project-scoped base calendar copied from an existing one."""
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    # Pre-flight: name conflict
+    if _find_calendar_by_name(proj, name) is not None:
+        return {"status": "error", "error": f"Calendar '{name}' already exists"}
+    # Pre-flight: base must exist
+    if _find_calendar_by_name(proj, base_calendar) is None:
+        return {"status": "error",
+                "error": f"Base calendar '{base_calendar}' not found in project"}
+    try:
+        # app.BaseCalendarCreate creates a project-scoped base calendar
+        app.BaseCalendarCreate(Name=name, FromName=base_calendar)
+        cal = _find_calendar_by_name(proj, name)
+        if cal is None:
+            return {"status": "error",
+                    "error": f"BaseCalendarCreate succeeded but '{name}' not found"}
+        return {"status": "ok", "calendar_uid": cal.Guid, "name": name}
+    except Exception as e:
+        logger.error(f"_msp_calendar_create({name}) failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

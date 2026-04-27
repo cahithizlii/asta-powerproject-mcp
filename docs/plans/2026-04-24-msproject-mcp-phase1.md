@@ -442,7 +442,7 @@ class MsprojectBulkWriter:
 
     @staticmethod
     def _link_type(t: str) -> str:
-        """FS=1, FF=2, SS=3, SF=0 per MSPDI spec."""
+        """FF=0, FS=1, SF=2, SS=3 per MSPDI spec."""
         return {"FF": "0", "FS": "1", "SF": "2", "SS": "3"}.get(t.upper(), "1")
 ```
 

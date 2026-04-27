@@ -24,6 +24,14 @@ ET.register_namespace("", MSPDI_NS)
 class MsprojectBulkWriter:
     """Generates MSPDI XML compatible with MS Project FileOpen import."""
 
+    # Resource Type codes per MSPDI spec — accept string names or int codes.
+    # 0 = Material, 1 = Work, 2 = Cost
+    RES_TYPE_MAP = {
+        "Material": 0, "Work": 1, "Cost": 2,
+        "material": 0, "work": 1, "cost": 2,
+        0: 0, 1: 1, 2: 2,
+    }
+
     def __init__(self, project_name: str = "Bulk Project",
                  start_date: Optional[str] = None):
         self.project_name = project_name
@@ -32,8 +40,11 @@ class MsprojectBulkWriter:
         self.links: List[Dict[str, Any]] = []
         self.resources: List[Dict[str, Any]] = []
         self.assignments: List[Dict[str, Any]] = []
-        self._next_uid = 1
-        self._next_id = 0
+        # Separate UID/ID counters per element type (MSPDI convention —
+        # Tasks and Resources have independent UID spaces, each from 1).
+        self._next_task_uid = 1
+        self._next_task_id = 1
+        self._next_res_uid = 1
 
     def bulk_add_tasks(self, items: List[Dict[str, Any]]) -> List[int]:
         """Add a batch of tasks. Returns list of assigned UIDs.
@@ -43,13 +54,14 @@ class MsprojectBulkWriter:
         """
         uids = []
         for item in items:
-            uid = self._next_uid
-            self._next_uid += 1
-            self._next_id += 1
+            uid = self._next_task_uid
+            self._next_task_uid += 1
+            tid = self._next_task_id
+            self._next_task_id += 1
             t = {
                 "UID": uid,
-                "ID": self._next_id,
-                "Name": item.get("name", f"Task {self._next_id}"),
+                "ID": tid,
+                "Name": item.get("name", f"Task {tid}"),
                 "Duration": self._duration_to_iso(item.get("duration", "1d")),
                 "Summary": "1" if item.get("summary") else "0",
                 "Milestone": "1" if item.get("milestone") else "0",
@@ -77,15 +89,23 @@ class MsprojectBulkWriter:
         return count
 
     def bulk_add_resources(self, items: List[Dict[str, Any]]) -> List[int]:
-        """Add resources. Each: {name, type='Work'}."""
+        """Add resources. Each: {name, type='Work' or 'Material' or 'Cost' or int}.
+
+        Type accepts string names ('Work', 'Material', 'Cost' — case-insensitive)
+        or int codes (0=Material, 1=Work, 2=Cost) per MSPDI spec.
+        Unknown values fall back to 1 (Work).
+        """
         uids = []
         for item in items:
-            uid = self._next_uid
-            self._next_uid += 1
+            uid = self._next_res_uid
+            self._next_res_uid += 1
+            type_in = item.get("type", "Work")
+            type_int = self.RES_TYPE_MAP.get(type_in, 1)
             self.resources.append({
                 "UID": uid,
+                "ID": uid,  # MSPDI Resources also carry an ID
                 "Name": item["name"],
-                "Type": item.get("type", "Work"),
+                "Type": type_int,
             })
             uids.append(uid)
         return uids
@@ -146,11 +166,18 @@ class MsprojectBulkWriter:
 
     @staticmethod
     def _duration_to_iso(d: str) -> str:
-        """Convert '5d' → 'PT40H0M0S' (assuming 8h/day)."""
+        """Convert '5d' → 'PT40H0M0S', '30m' → 'PT0H30M0S' (8h/day, 5d/week).
+
+        Computes in minutes to avoid sub-hour values truncating to zero.
+        """
+        if not d:
+            return "PT8H0M0S"
         n = float(d.rstrip("dwhmDWHM") or "1")
         unit = (d[-1] if d and d[-1].isalpha() else "d").lower()
-        hours = {"d": 8, "w": 40, "h": 1, "m": 1 / 60}.get(unit, 8) * n
-        return f"PT{int(hours)}H0M0S"
+        minutes_per_unit = {"d": 480, "w": 2400, "h": 60, "m": 1}.get(unit, 480)
+        total_minutes = int(round(minutes_per_unit * n))
+        h, m = divmod(total_minutes, 60)
+        return f"PT{h}H{m}M0S"
 
     @staticmethod
     def _lag_to_minutes(lag: str) -> str:

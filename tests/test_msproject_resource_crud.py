@@ -51,3 +51,36 @@ def test_list_includes_assignment_count(clean_test_project):
     target = next(rr for rr in r["resources"] if rr["name"] == "UnassignedRes-T35")
     assert "assignment_count" in target
     assert target["assignment_count"] == 0
+
+
+def test_delete_resource_with_assignments_reports_cascade(clean_test_project):
+    """Deleting a resource with N active assignments returns assignments_removed=N."""
+    proj = clean_test_project
+    # Add resource + 2 tasks + assign to both
+    res_r = _msp_resource_add(name="CascadeRes-T35", type="Work")
+    res_id = res_r["resource_id"]
+    # Use raw COM to assign (T36 _msp_resource_assign not available yet)
+    # Add tasks via raw COM
+    proj.Tasks.Add("CascadeT1-T35")
+    proj.Tasks.Add("CascadeT2-T35")
+    t1 = proj.Tasks(proj.Tasks.Count - 1)
+    t2 = proj.Tasks(proj.Tasks.Count)
+    # MS Project: assignments are created via task.Assignments.Add(TaskID, ResourceID)
+    t1.Assignments.Add(t1.ID, res_id)
+    t2.Assignments.Add(t2.ID, res_id)
+    res_obj = _find_resource_by_id(proj, res_id)
+    assert res_obj.Assignments.Count == 2
+
+    r = _msp_resource_delete(resource_id=res_id)
+    assert r["status"] == "ok"
+    assert r["assignments_removed"] == 2
+    # Verify cascade: resource is gone (its assignments removed silently by MS Project)
+    assert _find_resource_by_id(proj, res_id) is None
+
+
+def test_delete_resource_with_zero_assignments(clean_test_project):
+    """assignments_removed = 0 for unassigned resource (sanity)."""
+    r1 = _msp_resource_add(name="UnassRes-T35", type="Work")
+    r = _msp_resource_delete(resource_id=r1["resource_id"])
+    assert r["status"] == "ok"
+    assert r["assignments_removed"] == 0

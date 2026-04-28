@@ -761,15 +761,23 @@ def _msp_resource_update(resource_id: int,
 
 
 def _msp_resource_delete(resource_id: int) -> Dict[str, Any]:
-    """Delete a resource by ID."""
+    """Delete a resource by ID. Cascades: any assignments to this resource
+    are silently removed by MS Project; the count is returned in the response.
+    """
     app = _validate_active_project()
     res = _find_resource_by_id(app.ActiveProject, resource_id)
     if res is None:
         return {"status": "error", "error": f"Resource ID {resource_id} not found"}
     try:
         name = res.Name
+        # Capture cascade-affected assignment count BEFORE delete
+        try:
+            assignments_removed = int(res.Assignments.Count)
+        except Exception:
+            assignments_removed = 0
         res.Delete()
-        return {"status": "ok", "deleted_id": resource_id, "deleted_name": name}
+        return {"status": "ok", "deleted_id": resource_id,
+                "deleted_name": name, "assignments_removed": assignments_removed}
     except Exception as e:
         logger.error(f"_msp_resource_delete({resource_id}) failed: {e}")
         return {"status": "error", "error": _format_com_error(e)}

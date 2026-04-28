@@ -41,7 +41,7 @@ mcp = FastMCP(
     instructions=(
         "MS Project COM-based MCP server. Connects to running MS Project (Application='MSProject.Application'). "
         "Hybrid speed: 1-5 items COM direct, 6-19 batch, 20+ MSPDI bulk import. "
-        "Tools: msproject_task, msproject_link, msproject_schedule, msproject_calendar."
+        "Tools: msproject_task, msproject_link, msproject_schedule, msproject_calendar, msproject_resource."
     ),
 )
 
@@ -1794,6 +1794,52 @@ async def msproject_calendar(params: dict) -> str:
                  "error": f"Unknown action '{action}'. Valid: create/update/add_exception/assign_to_task/assign_to_resource/list/holidays_uzbek"}
     except Exception as e:
         logger.error(f"msproject_calendar({action}) failed: {e}")
+        r = {"status": "error", "error": _format_com_error(e)}
+    return json.dumps(r, default=str, ensure_ascii=False)
+
+
+@mcp.tool(
+    name="msproject_resource",
+    annotations={"title": "MS Project Resource Operations", "readOnlyHint": False},
+)
+async def msproject_resource(params: dict) -> str:
+    """Manage resources + assignments in active MS Project (COM-based, hybrid bulk).
+
+    Actions:
+    - add: Add resource. Params: name, type=Work|Material|Cost, [max_units, standard_rate, overtime_rate, material_label]
+    - update: Update. Params: resource_id, [name, max_units, standard_rate, overtime_rate, material_label]
+    - delete: Params: resource_id
+    - list: List all resources + types + assignment counts
+    - assign: Single. Params: task_id, resource_id, [units=100, work_hours]
+    - unassign: Params: task_id, resource_id
+    - bulk_assign: Hybrid (1-5 COM, 6-19 batch, 20+ MSPDI fallback). Params: items=[{task_id, resource_id, [units]}, ...]
+
+    Phase 2b (28 Apr 2026). Note: bulk_assign perf is ~10ms/call due to MS Project
+    COM intrinsic limit; true MSPDI assignment merge is Phase 3+.
+    """
+    import json
+    action = params.get("action", "")
+    p = {k: v for k, v in params.items() if k != "action"}
+    try:
+        if action == "add":
+            r = _msp_resource_add(**p)
+        elif action == "update":
+            r = _msp_resource_update(**p)
+        elif action == "delete":
+            r = _msp_resource_delete(**p)
+        elif action == "list":
+            r = _msp_resource_list(**p)
+        elif action == "assign":
+            r = _msp_resource_assign(**p)
+        elif action == "unassign":
+            r = _msp_resource_unassign(**p)
+        elif action == "bulk_assign":
+            r = _msp_resource_bulk_assign(**p)
+        else:
+            r = {"status": "error",
+                 "error": f"Unknown action '{action}'. Valid: add/update/delete/list/assign/unassign/bulk_assign"}
+    except Exception as e:
+        logger.error(f"msproject_resource({action}) failed: {e}")
         r = {"status": "error", "error": _format_com_error(e)}
     return json.dumps(r, default=str, ensure_ascii=False)
 

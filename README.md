@@ -9,7 +9,7 @@ Asta Powerproject and Microsoft Project.
 |---|---|---|
 | `asta_powerproject_mcp` | `asta_mcp_core.py` | Live COM control of Asta Powerproject (8 tools): tasks, links, progress, resources, schedule, codes, views, exports. |
 | `asta_powerproject_file` | `asta_mcp_file.py` | File-based read access via MPXJ/MSPDI for Asta `.pp/.xer/.xml` (4 tools): query, resources, calendar, edit. |
-| `msproject_mcp` | `msproject_mcp_core.py` | Microsoft Project COM with hybrid bulk routing (4 tools, 24 actions): `msproject_task`, `msproject_link`, `msproject_schedule`, `msproject_calendar`. |
+| `msproject_mcp` | `msproject_mcp_core.py` | Microsoft Project COM with hybrid bulk routing (5 tools, ~31 actions): `msproject_task`, `msproject_link`, `msproject_schedule`, `msproject_calendar`, `msproject_resource`. |
 
 ## Phase 1 Status — MS Project MCP
 
@@ -39,6 +39,30 @@ builds a Uzbekistan-2026 calendar end-to-end (create + 9 holidays + Sunday off
 + task assignment) in <5 sec, isolated from the user's active project.
 
 Full pytest coverage: **83/83 passing** (43 Phase 1 + 40 Phase 2a).
+
+## Phase 2b Status — Resource Management (28 Apr 2026)
+
+`msproject_resource` tool with 7 actions:
+
+- `add` — Add resource (Work / Material / Cost types, type-discriminated property surface)
+- `update` — Rename, set rates, units, material label
+- `delete` — Remove resource (cascade-aware: returns assignments_removed count)
+- `list` — All resources with type, properties, assignment counts
+- `assign` — Single assignment via task.Assignments.Add API
+- `unassign` — Remove specific assignment by task+resource
+- `bulk_assign` — Hybrid routing (1-5 COM direct, 6-19 batch, 20+ MSPDI bulk)
+
+Acceptance: [`samples/build_villa_resources.py`](samples/build_villa_resources.py)
+builds 14 CAU resources + 50 villa tasks + 700 assignments end-to-end (~13s
+total, ~16ms/assignment via MS Project COM).
+
+**Performance note:** True MSPDI assignment bulk merge for 2800+ assignments
+in <5s is Phase 3+ scope. Pure-COM `Assignments.Add` is intrinsically
+~10-16ms/call regardless of routing path; the hero target (`14 × 200 = 2800`
+in <5s) is xfail until Phase 3+ implements native MSPDI assignment merge.
+
+Full pytest coverage: **156/156 + 1 xfail** (83 Phase 1+2a + 73 Phase 2b).
+Tool count after Phase 2b: **5 tools, ~31 actions**.
 
 ## Quick Start
 

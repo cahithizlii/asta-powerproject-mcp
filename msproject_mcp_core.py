@@ -631,9 +631,13 @@ def _msp_resource_add(name: str, type: str = "Work",
                      material_label: Optional[str] = None) -> Dict[str, Any]:
     """Add a resource. Type: 'Work' (default) | 'Material' | 'Cost'.
 
-    max_units in % (100 = 1 person, 500 = 5-person crew). Stored in COM as fraction.
+    max_units in % (100 = 1 person, 500 = 5-person crew). Stored in COM as
+    fraction. MSP's documented ceiling is 6000% (60.0 fraction).
     standard_rate / overtime_rate in $/hour (Work) or $/unit (Material).
     material_label e.g. 'kg', 'm³', 'ton'.
+
+    Atomic: if any post-Add property set fails, the orphan resource is
+    deleted before returning error.
     """
     app = _validate_active_project()
     proj = app.ActiveProject
@@ -643,8 +647,20 @@ def _msp_resource_add(name: str, type: str = "Work",
                 "error": f"Invalid type '{type}'. Valid: Work/Material/Cost"}
     if _find_resource_by_name(proj, name) is not None:
         return {"status": "error", "error": f"Resource '{name}' already exists"}
+    # Pre-flight value validation (Fix 2)
+    if max_units is not None and max_units < 0:
+        return {"status": "error", "error": "max_units must be >= 0"}
+    if standard_rate is not None and standard_rate < 0:
+        return {"status": "error", "error": "standard_rate must be >= 0"}
+    if overtime_rate is not None and overtime_rate < 0:
+        return {"status": "error", "error": "overtime_rate must be >= 0"}
     try:
         res = proj.Resources.Add(name)
+    except Exception as e:
+        logger.error(f"_msp_resource_add({name},{type}) Resources.Add failed: {e}")
+        return {"status": "error", "error": _format_com_error(e)}
+    # Post-Add: any failure here must rollback the orphan
+    try:
         res.Type = RESOURCE_TYPES[type]
         if type == "Work":
             res.MaxUnits = (max_units / 100.0) if max_units is not None else 1.0
@@ -663,7 +679,11 @@ def _msp_resource_add(name: str, type: str = "Work",
         return {"status": "ok", "resource_id": res.ID, "resource_uid": res.UniqueID,
                 "name": name, "type": type}
     except Exception as e:
-        logger.error(f"_msp_resource_add({name},{type}) failed: {e}")
+        logger.error(f"_msp_resource_add({name},{type}) property-set failed (rolling back): {e}")
+        try:
+            res.Delete()
+        except Exception as del_err:
+            logger.warning(f"_msp_resource_add rollback delete failed: {del_err}")
         return {"status": "error", "error": _format_com_error(e)}
 
 

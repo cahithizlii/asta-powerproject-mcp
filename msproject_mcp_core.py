@@ -242,6 +242,16 @@ UZBEK_HOLIDAYS_2026 = [
     ("Anayasa Günü", 12, 8),
 ]
 
+# Calendar dispatcher: actions that natively use 'calendar_name' and accept
+# 'name' as alias.
+_CALENDAR_NAME_ALIAS_ACTIONS = frozenset({
+    "add_exception", "assign_to_task", "assign_to_resource",
+    "list", "holidays_uzbek",
+})
+# Calendar dispatcher: actions that natively use 'name' and accept
+# 'calendar_name' as alias.
+_CALENDAR_NAME_NATIVE_ACTIONS = frozenset({"create", "update"})
+
 
 # ---------- CALENDAR HELPERS ----------
 
@@ -1260,13 +1270,18 @@ async def msproject_calendar(params: dict) -> str:
     import json
     action = params.get("action", "")
     p = {k: v for k, v in params.items() if k != "action"}
-    # Alias: accept 'name' / 'calendar_name' interchangeably across actions
-    NAME_ALIAS_ACTIONS = {"add_exception", "assign_to_task", "assign_to_resource",
-                          "list", "holidays_uzbek"}
-    NAME_NATIVE_ACTIONS = {"create", "update"}
-    if action in NAME_ALIAS_ACTIONS and "name" in p and "calendar_name" not in p:
+    # Alias: accept 'name' / 'calendar_name' interchangeably across actions.
+    # Reject ambiguous calls where both keys are provided rather than silently
+    # dropping one — surfaces caller bugs instead of hiding them.
+    if "name" in p and "calendar_name" in p:
+        return json.dumps(
+            {"status": "error",
+             "error": "Specify either 'name' or 'calendar_name', not both"},
+            default=str, ensure_ascii=False,
+        )
+    if action in _CALENDAR_NAME_ALIAS_ACTIONS and "name" in p and "calendar_name" not in p:
         p["calendar_name"] = p.pop("name")
-    elif action in NAME_NATIVE_ACTIONS and "calendar_name" in p and "name" not in p:
+    elif action in _CALENDAR_NAME_NATIVE_ACTIONS and "calendar_name" in p and "name" not in p:
         p["name"] = p.pop("calendar_name")
     try:
         if action == "create":
@@ -1288,7 +1303,7 @@ async def msproject_calendar(params: dict) -> str:
                  "error": f"Unknown action '{action}'. Valid: create/update/add_exception/assign_to_task/assign_to_resource/list/holidays_uzbek"}
     except Exception as e:
         logger.error(f"msproject_calendar({action}) failed: {e}")
-        r = {"status": "error", "error": str(e)}
+        r = {"status": "error", "error": _format_com_error(e)}
     return json.dumps(r, default=str, ensure_ascii=False)
 
 

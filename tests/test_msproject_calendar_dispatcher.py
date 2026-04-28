@@ -95,3 +95,27 @@ def test_dispatcher_calendar_name_alias_reverse(clean_test_project):
     }))
     parsed = json.loads(r)
     assert parsed["status"] == "ok"
+
+
+def test_dispatcher_does_not_rewrite_unrelated_keys(clean_test_project):
+    """Alias logic must NOT touch keys for actions outside the alias set."""
+    # 'invalid_action' is not in either alias set — 'name' must NOT be rewritten
+    r = _run(msproject_calendar({
+        "action": "invalid_action",
+        "name": "ShouldStayName",
+    }))
+    parsed = json.loads(r)
+    assert parsed["status"] == "error"
+    assert "Unknown action" in parsed["error"]
+
+
+def test_dispatcher_both_name_and_calendar_name_errors(clean_test_project):
+    """Specifying both 'name' AND 'calendar_name' returns error (no silent drop)."""
+    r = _run(msproject_calendar({
+        "action": "list",
+        "name": "X",
+        "calendar_name": "Y",
+    }))
+    parsed = json.loads(r)
+    assert parsed["status"] == "error"
+    assert "either" in parsed["error"].lower() or "not both" in parsed["error"].lower()

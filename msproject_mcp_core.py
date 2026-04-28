@@ -93,6 +93,26 @@ def _route_operation(op_count: int) -> str:
     return "mspdi_bulk"
 
 
+def _format_com_error(e: Exception) -> str:
+    """Extract a human-readable message from pywintypes.com_error or fallback to str(e).
+
+    pywintypes.com_error.args = (hresult, msg, excepinfo, argerr) where
+    excepinfo = (wCode, source, description, helpFile, helpContext, scode).
+    Description (excepinfo[2]) is the user-friendly message; fall back to
+    msg (args[1]) or str(e) if unavailable.
+    """
+    try:
+        if hasattr(e, "args") and len(e.args) >= 3 and isinstance(e.args[2], tuple):
+            excepinfo = e.args[2]
+            if len(excepinfo) >= 3 and excepinfo[2]:
+                return str(excepinfo[2]).strip()
+            if len(e.args) >= 2 and e.args[1]:
+                return str(e.args[1]).strip()
+    except Exception:
+        pass
+    return str(e)
+
+
 def _enter_batch_mode():
     """Enter COM batch mode: disable screen update, manual calc, no events."""
     with _app_lock:
@@ -255,7 +275,7 @@ def _msp_calendar_create(name: str, base_calendar: str = "Standard") -> Dict[str
         return {"status": "ok", "calendar_uid": cal.Guid, "name": name}
     except Exception as e:
         logger.error(f"_msp_calendar_create({name}) failed: {e}")
-        return {"status": "error", "error": str(e)}
+        return {"status": "error", "error": _format_com_error(e)}
 
 
 def _msp_calendar_update(name: str,
@@ -292,7 +312,7 @@ def _msp_calendar_update(name: str,
         return {"status": "ok", "calendar_name": new_name or name, "changes": changes}
     except Exception as e:
         logger.error(f"_msp_calendar_update({name}) failed: {e}")
-        return {"status": "error", "error": str(e)}
+        return {"status": "error", "error": _format_com_error(e)}
 
 
 def _parse_date(date_str: str) -> _dt.date:
@@ -357,7 +377,7 @@ def _msp_calendar_add_exception(calendar_name: str, exception_name: str,
         logger.error(
             f"_msp_calendar_add_exception({calendar_name},{exception_name}) failed: {e}"
         )
-        return {"status": "error", "error": str(e)}
+        return {"status": "error", "error": _format_com_error(e)}
 
 
 def _msp_calendar_assign_to_task(task_id: int, calendar_name: str) -> Dict[str, Any]:
@@ -376,7 +396,7 @@ def _msp_calendar_assign_to_task(task_id: int, calendar_name: str) -> Dict[str, 
         return {"status": "ok", "task_id": task_id, "calendar_name": calendar_name}
     except Exception as e:
         logger.error(f"_msp_calendar_assign_to_task({task_id},{calendar_name}) failed: {e}")
-        return {"status": "error", "error": str(e)}
+        return {"status": "error", "error": _format_com_error(e)}
 
 
 def _find_resource_by_id(proj: Any, resource_id: int) -> Optional[Any]:
@@ -404,7 +424,7 @@ def _msp_calendar_assign_to_resource(resource_id: int, calendar_name: str) -> Di
         return {"status": "ok", "resource_id": resource_id, "calendar_name": calendar_name}
     except Exception as e:
         logger.error(f"_msp_calendar_assign_to_resource({resource_id},{calendar_name}) failed: {e}")
-        return {"status": "error", "error": str(e)}
+        return {"status": "error", "error": _format_com_error(e)}
 
 
 def _msp_calendar_list() -> Dict[str, Any]:
@@ -429,7 +449,7 @@ def _msp_calendar_list() -> Dict[str, Any]:
         return {"status": "ok", "count": len(out), "calendars": out}
     except Exception as e:
         logger.error(f"_msp_calendar_list failed: {e}")
-        return {"status": "error", "error": str(e)}
+        return {"status": "error", "error": _format_com_error(e)}
 
 
 def _msp_calendar_holidays_uzbek(calendar_name: str, year: int = 2026) -> Dict[str, Any]:
@@ -1240,6 +1260,14 @@ async def msproject_calendar(params: dict) -> str:
     import json
     action = params.get("action", "")
     p = {k: v for k, v in params.items() if k != "action"}
+    # Alias: accept 'name' / 'calendar_name' interchangeably across actions
+    NAME_ALIAS_ACTIONS = {"add_exception", "assign_to_task", "assign_to_resource",
+                          "list", "holidays_uzbek"}
+    NAME_NATIVE_ACTIONS = {"create", "update"}
+    if action in NAME_ALIAS_ACTIONS and "name" in p and "calendar_name" not in p:
+        p["calendar_name"] = p.pop("name")
+    elif action in NAME_NATIVE_ACTIONS and "calendar_name" in p and "name" not in p:
+        p["name"] = p.pop("calendar_name")
     try:
         if action == "create":
             r = _msp_calendar_create(**p)

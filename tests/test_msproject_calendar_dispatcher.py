@@ -47,3 +47,51 @@ def test_dispatcher_invalid_action(clean_test_project):
     parsed = json.loads(r)
     assert parsed["status"] == "error"
     assert "Unknown action" in parsed["error"]
+
+
+def test_dispatcher_calendar_name_alias_for_add_exception(clean_test_project):
+    """Dispatcher accepts 'name' as alias for 'calendar_name' on actions
+    that natively expect calendar_name."""
+    _run(msproject_calendar({
+        "action": "create",
+        "name": "AliasCal-T29",
+        "base_calendar": "Standard",
+    }))
+    # Now use 'name' instead of 'calendar_name' for add_exception
+    r = _run(msproject_calendar({
+        "action": "add_exception",
+        "name": "AliasCal-T29",
+        "exception_name": "Aliased Holiday",
+        "start": "2026-06-15",
+    }))
+    parsed = json.loads(r)
+    assert parsed["status"] == "ok"
+    assert parsed["calendar_name"] == "AliasCal-T29"
+
+
+def test_dispatcher_name_alias_for_holidays_uzbek(clean_test_project):
+    """holidays_uzbek accepts 'name' instead of 'calendar_name'."""
+    _run(msproject_calendar({
+        "action": "create",
+        "name": "AliasUzbek-T29",
+        "base_calendar": "Standard",
+    }))
+    r = _run(msproject_calendar({
+        "action": "holidays_uzbek",
+        "name": "AliasUzbek-T29",
+        "year": 2026,
+    }))
+    parsed = json.loads(r)
+    assert parsed["status"] in ("ok", "partial")
+    assert parsed["count"] == 9
+
+
+def test_dispatcher_calendar_name_alias_reverse(clean_test_project):
+    """Reverse: 'create' accepts 'calendar_name' as alias for 'name'."""
+    r = _run(msproject_calendar({
+        "action": "create",
+        "calendar_name": "ReverseAlias-T29",
+        "base_calendar": "Standard",
+    }))
+    parsed = json.loads(r)
+    assert parsed["status"] == "ok"

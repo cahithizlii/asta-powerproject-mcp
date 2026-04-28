@@ -43,3 +43,31 @@ def test_save_negative_baseline_number_errors(clean_test_project):
     r = _msp_baseline_save(baseline_number=-1)
     assert r["status"] == "error"
     assert "baseline_number" in r["error"].lower()
+
+
+def test_save_scope_selected(clean_test_project):
+    """scope='selected' saves only currently-selected tasks. Use SelectAll for coverage."""
+    proj = clean_test_project
+    import pythoncom, win32com.client
+    pythoncom.CoInitialize()
+    app = win32com.client.GetActiveObject('MSProject.Application')
+    for i in range(3):
+        _msp_task_add_single(name=f"SelT{i}-T40", duration="1d")
+    # Select all tasks via app COM (no UI)
+    try:
+        app.SelectAll()
+    except Exception:
+        pytest.skip("SelectAll not exposed — scope='selected' coverage deferred")
+    r = _msp_baseline_save(baseline_number=2, scope="selected")
+    assert r["status"] == "ok"
+    assert r["baseline_number"] == 2
+    # Saved date should be present (assuming SelectAll worked)
+    if "warning" not in r:
+        assert _baseline_saved_date(proj, 2) is not None
+
+
+def test_save_invalid_scope_errors(clean_test_project):
+    """scope='bogus' returns error pre-mutation."""
+    r = _msp_baseline_save(baseline_number=0, scope="bogus")
+    assert r["status"] == "error"
+    assert "scope" in r["error"].lower()

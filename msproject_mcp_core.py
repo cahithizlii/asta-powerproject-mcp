@@ -1114,38 +1114,48 @@ def _msp_baseline_save(baseline_number: int = 0,
                 "error": f"scope must be 'all' or 'selected', got '{scope}'"}
     app = _validate_active_project()
     proj = app.ActiveProject
+
+    # Phase 1: COM mutation (atomic — abort with error on failure)
     try:
-        # PjSaveBaselineFrom.pjCopyCurrent = 0
-        copy_from = 0
+        copy_from = 0  # PjSaveBaselineFrom.pjCopyCurrent
         into = _baseline_into_code(baseline_number)
         # All=True (whole project) or False (selected); MSP COM expects bool
         all_param = (scope == "all")
         app.BaselineSave(All=all_param, Copy=copy_from, Into=into,
                         RollupToSummaryTasks=roll_up_to_summary)
-        # Read-back metadata
+    except Exception as e:
+        logger.error(f"_msp_baseline_save({baseline_number}) BaselineSave failed: {e}")
+        return {"status": "error", "error": _format_com_error(e)}
+
+    # Phase 2: metadata read-back (best-effort — save already succeeded)
+    result: Dict[str, Any] = {"status": "ok",
+                              "baseline_number": baseline_number,
+                              "name": name}
+    try:
         saved_date = _baseline_saved_date(proj, baseline_number)
         task_count = proj.Tasks.Count
-        # Aggregate baseline totals
+        # Aggregate baseline totals (skip summary tasks)
         total_dur_min, total_work_min, total_cost = 0.0, 0.0, 0.0
         for i in range(1, task_count + 1):
             t = proj.Tasks(i)
-            if t is None or t.Summary:  # skip summary tasks for totals
+            if t is None or t.Summary:
                 continue
             data = _read_task_baseline(t, baseline_number)
-            total_dur_min += data["duration_h"] * 60 if data["duration_h"] else 0
-            total_work_min += data["work_h"] * 60 if data["work_h"] else 0
+            total_dur_min += (data["duration_h"] * 60) if data["duration_h"] else 0
+            total_work_min += (data["work_h"] * 60) if data["work_h"] else 0
             total_cost += data["cost"] if data["cost"] else 0
-        return {"status": "ok",
-                "baseline_number": baseline_number,
-                "name": name,
-                "saved_date": str(saved_date) if saved_date else None,
-                "task_count": task_count,
-                "total_duration_days": round(total_dur_min / 60 / 8, 2),  # 8h/day
-                "total_work_hours": round(total_work_min / 60, 2),
-                "total_cost": total_cost}
+        # 8h/day default — TODO: read from project calendar HoursPerDay (Phase 3b parity for CAU 9h/day)
+        result.update({
+            "saved_date": str(saved_date) if saved_date else None,
+            "task_count": task_count,
+            "total_duration_days": round(total_dur_min / 60 / 8, 2),
+            "total_work_hours": round(total_work_min / 60, 2),
+            "total_cost": round(total_cost, 2),  # Fix 3: rounded for caller-contract symmetry
+        })
     except Exception as e:
-        logger.error(f"_msp_baseline_save({baseline_number}) failed: {e}")
-        return {"status": "error", "error": _format_com_error(e)}
+        logger.warning(f"_msp_baseline_save({baseline_number}) metadata read-back failed (save itself succeeded): {e}")
+        result["warning"] = f"metadata read failed: {_format_com_error(e)}"
+    return result
 
 
 def _msp_task_update(task_id: int, name: Optional[str] = None,

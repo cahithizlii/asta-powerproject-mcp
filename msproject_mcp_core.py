@@ -1248,6 +1248,27 @@ def _msp_baseline_list() -> Dict[str, Any]:
         return {"status": "error", "error": _format_com_error(e)}
 
 
+def _msp_baseline_get_task_baseline(task_id: int, baseline_number: int = 0) -> Dict[str, Any]:
+    """Read a single task's baseline values without computing variance."""
+    if baseline_number not in BASELINE_NUMBERS:
+        return {"status": "error",
+                "error": f"baseline_number must be 0-10, got {baseline_number}"}
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    t = _find_task_by_id(proj, task_id)
+    if t is None:
+        return {"status": "error", "error": f"Task ID {task_id} not found"}
+    try:
+        data = _read_task_baseline(t, baseline_number)
+        return {"status": "ok",
+                "task_id": task_id,
+                "baseline_number": baseline_number,
+                "baseline": data}
+    except Exception as e:
+        logger.error(f"_msp_baseline_get_task_baseline({task_id},{baseline_number}) failed: {e}")
+        return {"status": "error", "error": _format_com_error(e)}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

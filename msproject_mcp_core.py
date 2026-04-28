@@ -881,6 +881,107 @@ def _msp_resource_assign_unsafe(task_obj: Any, res_obj: Any,
                 "error": _format_com_error(e)}
 
 
+def _build_resource_id_map(proj: Any) -> Dict[int, Any]:
+    """Pre-build resource_id -> Resource COM object map. O(N) one-time scan.
+
+    Used by bulk_assign to avoid O(N×M) per-item lookup blow-up.
+    """
+    out: Dict[int, Any] = {}
+    for i in range(1, proj.Resources.Count + 1):
+        r = proj.Resources(i)
+        if r is not None:
+            out[r.ID] = r
+    return out
+
+
+def _build_task_id_map(proj: Any) -> Dict[int, Any]:
+    """Pre-build task_id -> Task COM object map. O(N) one-time scan.
+
+    Used by bulk_assign to avoid O(N×M) per-item lookup blow-up.
+    """
+    out: Dict[int, Any] = {}
+    for i in range(1, proj.Tasks.Count + 1):
+        t = proj.Tasks(i)
+        if t is not None:
+            out[t.ID] = t
+    return out
+
+
+def _msp_resource_bulk_assign_loop(items: List[Dict[str, Any]], path_label: str,
+                                   task_map: Dict[int, Any],
+                                   res_map: Dict[int, Any]) -> Dict[str, Any]:
+    """Inner loop using pre-built maps + _assign_unsafe fast-path.
+
+    Returns aggregated result with status / path / count / assignments / failures.
+    """
+    added: List[Dict[str, Any]] = []
+    failures: List[Dict[str, Any]] = []
+    for item in items:
+        tid = item.get("task_id")
+        rid = item.get("resource_id")
+        t_obj = task_map.get(tid)
+        r_obj = res_map.get(rid)
+        if t_obj is None:
+            failures.append({**item, "error": f"task_id {tid} not found"})
+            continue
+        if r_obj is None:
+            failures.append({**item, "error": f"resource_id {rid} not found"})
+            continue
+        result = _msp_resource_assign_unsafe(
+            task_obj=t_obj, res_obj=r_obj,
+            task_id=tid, resource_id=rid,
+            units=item.get("units"),
+        )
+        if result.get("status") == "ok":
+            added.append({"task_id": tid, "resource_id": rid,
+                         "assignment_uid": result.get("assignment_uid")})
+        else:
+            failures.append({**item, "error": result.get("error", "unknown")})
+    status = "ok" if not failures else ("partial" if added else "error")
+    return {"status": status, "path": path_label, "count": len(added),
+            "assignments": added, "failures": failures}
+
+
+def _msp_resource_bulk_assign(items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Hybrid bulk-assign: routes by item count (Phase 1 _route_operation pattern).
+
+    Items: [{task_id, resource_id, [units]}, ...]
+    Routing:
+      - <=5 items   -> com_direct (no batch mode)
+      - 6-19 items  -> com_batch  (batch mode + loop)
+      - >=20 items  -> mspdi_bulk (Phase 2b: com_batch_fallback; true MSPDI merge = Phase 3+)
+
+    Pre-builds task_id -> Task and resource_id -> Resource maps ONCE to avoid
+    O(N×M) lookup blow-up on the HERO 14×200=2800 case.
+
+    Returns: {status, path, count, assignments, failures}
+    """
+    if not items:
+        return {"status": "ok", "path": "noop", "count": 0,
+                "assignments": [], "failures": []}
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    # Pre-build maps ONCE — avoids O(N×M) lookup
+    task_map = _build_task_id_map(proj)
+    res_map = _build_resource_id_map(proj)
+
+    path = _route_operation(len(items))
+    if path == "com_direct":
+        return _msp_resource_bulk_assign_loop(items, "com_direct", task_map, res_map)
+    elif path == "com_batch":
+        _enter_batch_mode()
+        try:
+            return _msp_resource_bulk_assign_loop(items, "com_batch", task_map, res_map)
+        finally:
+            _exit_batch_mode()
+    else:  # mspdi_bulk — Phase 2b uses com_batch_fallback (true MSPDI merge is Phase 3+)
+        _enter_batch_mode()
+        try:
+            return _msp_resource_bulk_assign_loop(items, "mspdi_bulk", task_map, res_map)
+        finally:
+            _exit_batch_mode()
+
+
 def _msp_resource_unassign(task_id: int, resource_id: int) -> Dict[str, Any]:
     """Remove the assignment of a resource from a task."""
     app = _validate_active_project()

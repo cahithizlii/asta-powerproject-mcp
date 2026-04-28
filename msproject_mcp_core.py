@@ -624,6 +624,49 @@ def _serialize_resource(res: Any) -> Dict[str, Any]:
     return out
 
 
+def _msp_resource_add(name: str, type: str = "Work",
+                     max_units: Optional[float] = None,
+                     standard_rate: Optional[float] = None,
+                     overtime_rate: Optional[float] = None,
+                     material_label: Optional[str] = None) -> Dict[str, Any]:
+    """Add a resource. Type: 'Work' (default) | 'Material' | 'Cost'.
+
+    max_units in % (100 = 1 person, 500 = 5-person crew). Stored in COM as fraction.
+    standard_rate / overtime_rate in $/hour (Work) or $/unit (Material).
+    material_label e.g. 'kg', 'm³', 'ton'.
+    """
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    # Pre-flight validation
+    if type not in RESOURCE_TYPES:
+        return {"status": "error",
+                "error": f"Invalid type '{type}'. Valid: Work/Material/Cost"}
+    if _find_resource_by_name(proj, name) is not None:
+        return {"status": "error", "error": f"Resource '{name}' already exists"}
+    try:
+        res = proj.Resources.Add(name)
+        res.Type = RESOURCE_TYPES[type]
+        if type == "Work":
+            res.MaxUnits = (max_units / 100.0) if max_units is not None else 1.0
+            if standard_rate is not None:
+                res.StandardRate = standard_rate
+            if overtime_rate is not None:
+                res.OvertimeRate = overtime_rate
+        elif type == "Material":
+            if material_label is not None:
+                res.MaterialLabel = material_label
+            if standard_rate is not None:
+                res.StandardRate = standard_rate
+        elif type == "Cost":
+            if standard_rate is not None:
+                res.StandardRate = standard_rate
+        return {"status": "ok", "resource_id": res.ID, "resource_uid": res.UniqueID,
+                "name": name, "type": type}
+    except Exception as e:
+        logger.error(f"_msp_resource_add({name},{type}) failed: {e}")
+        return {"status": "error", "error": _format_com_error(e)}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

@@ -834,20 +834,51 @@ def _msp_resource_assign(task_id: int, resource_id: int,
         # task.Assignments.Add(TaskID, ResourceID, Units) — Units as fraction (1.0=100%)
         alloc = t.Assignments.Add(TaskID=task_id, ResourceID=resource_id,
                                  Units=applied_units / 100.0)
+        warnings = []
         if work_hours is not None:
             try:
                 # COM Work property accepts minutes
                 alloc.Work = work_hours * 60.0
-            except Exception:
-                pass  # work_hours is best-effort; assignment itself succeeded
+            except Exception as wh_err:
+                warnings.append(f"work_hours not applied: {_format_com_error(wh_err)}")
+        result = {"status": "ok",
+                  "assignment_uid": alloc.UniqueID if alloc else None,
+                  "task_id": task_id,
+                  "resource_id": resource_id,
+                  "units": applied_units}
+        if warnings:
+            result["warnings"] = warnings
+        return result
+    except Exception as e:
+        logger.error(f"_msp_resource_assign({task_id},{resource_id}) failed: {e}")
+        return {"status": "error", "error": _format_com_error(e)}
+
+
+def _msp_resource_assign_unsafe(task_obj: Any, res_obj: Any,
+                               task_id: int, resource_id: int,
+                               units: Optional[float] = None) -> Dict[str, Any]:
+    """Internal fast-path for bulk: caller pre-resolved task_obj + res_obj.
+
+    Skips _validate_active_project + _find_task_by_id + _find_resource_by_id —
+    only safe when caller has just pre-built ID->object maps. NOT for public use.
+    """
+    try:
+        applied_units = units if units is not None else 100.0
+        if applied_units < 0:
+            return {"status": "error", "error": "units must be >= 0",
+                    "task_id": task_id, "resource_id": resource_id}
+        alloc = task_obj.Assignments.Add(TaskID=task_id, ResourceID=resource_id,
+                                         Units=applied_units / 100.0)
         return {"status": "ok",
                 "assignment_uid": alloc.UniqueID if alloc else None,
                 "task_id": task_id,
                 "resource_id": resource_id,
                 "units": applied_units}
     except Exception as e:
-        logger.error(f"_msp_resource_assign({task_id},{resource_id}) failed: {e}")
-        return {"status": "error", "error": _format_com_error(e)}
+        # Don't log per-call in bulk path — caller aggregates
+        return {"status": "error",
+                "task_id": task_id, "resource_id": resource_id,
+                "error": _format_com_error(e)}
 
 
 def _msp_resource_unassign(task_id: int, resource_id: int) -> Dict[str, Any]:

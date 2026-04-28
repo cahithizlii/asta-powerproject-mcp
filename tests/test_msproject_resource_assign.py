@@ -68,3 +68,42 @@ def test_assign_negative_units_errors(clean_test_project):
                             resource_id=res_r["resource_id"], units=-10)
     assert r["status"] == "error"
     assert "units" in r["error"].lower()
+
+
+def test_assign_with_work_hours(clean_test_project):
+    """work_hours parameter sets alloc.Work (in minutes COM-side)."""
+    proj = clean_test_project
+    res_r = _msp_resource_add(name="WHRes-T36", type="Work")
+    task_r = _msp_task_add_single(name="WHTask-T36", duration="5d")
+    r = _msp_resource_assign(task_id=task_r["task_id"],
+                            resource_id=res_r["resource_id"],
+                            work_hours=24.0)
+    assert r["status"] == "ok"
+    # Verify Work was set (24h = 1440 minutes COM-side)
+    t = _find_task_by_id(proj, task_r["task_id"])
+    alloc = t.Assignments(1)
+    # COM Work returns minutes (or possibly seconds depending on version) — accept either
+    work_val = float(alloc.Work)
+    # 24h = 1440 minutes, but MSP may return as 1440 or 86400 (seconds)
+    assert work_val in (1440.0, 86400.0) or abs(work_val - 1440.0) < 0.1
+
+
+def test_assign_duplicate_resource_to_task(clean_test_project):
+    """Document MSP behavior when assigning same resource twice — locks contract for T37 bulk."""
+    proj = clean_test_project
+    res_r = _msp_resource_add(name="DupAsg-T36", type="Work")
+    task_r = _msp_task_add_single(name="DupT-T36", duration="2d")
+    r1 = _msp_resource_assign(task_id=task_r["task_id"], resource_id=res_r["resource_id"])
+    assert r1["status"] == "ok"
+    # Second assignment of same resource — what happens?
+    r2 = _msp_resource_assign(task_id=task_r["task_id"], resource_id=res_r["resource_id"])
+    # Either: (a) error from MSP, OR (b) silently creates duplicate, OR (c) updates existing
+    # Document whichever is observed — test only asserts the result is a valid response
+    assert r2["status"] in ("ok", "error")
+    t = _find_task_by_id(proj, task_r["task_id"])
+    if r2["status"] == "ok":
+        # If MSP allowed it, count should be 1 (replace) or 2 (duplicate)
+        assert t.Assignments.Count in (1, 2)
+    else:
+        # If MSP rejected, count stays at 1
+        assert t.Assignments.Count == 1

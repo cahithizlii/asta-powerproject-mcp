@@ -2,6 +2,7 @@
 import pytest
 from msproject_mcp_core import (
     RESOURCE_TYPES, _find_resource_by_name, _find_resource_by_id, _serialize_resource,
+    _parse_rate,
 )
 
 
@@ -46,3 +47,23 @@ def test_serialize_resource_work(clean_test_project):
     assert d["max_units"] == 100.0  # serialized as %
     assert d["standard_rate"] == 50.0
     assert "id" in d and "uid" in d
+
+
+@pytest.mark.parametrize("raw,expected", [
+    (None, 0.0),
+    ("", 0.0),
+    (50.0, 50.0),                  # float passthrough
+    (50, 50.0),                    # int passthrough
+    ("50.0", 50.0),                # plain US
+    ("50,00", 50.0),               # plain TR (comma decimal)
+    ("$50.00/hr", 50.0),           # US currency + suffix
+    ("₺50,00/sa", 50.0),      # TR lira + Turkish suffix
+    ("1.234,56", 1234.56),         # EU thousands-with-period + decimal-comma
+    ("1,234.56", 1234.56),         # US thousands-with-comma + decimal-period
+    ("abc", 0.0),                  # garbage
+    ("   80,50   ", 80.50),        # whitespace
+])
+def test_parse_rate_edge_cases(raw, expected):
+    """Lock _parse_rate contract for downstream T33-T38 reuse."""
+    result = _parse_rate(raw)
+    assert abs(result - expected) < 0.001, f"_parse_rate({raw!r}) = {result}, expected {expected}"

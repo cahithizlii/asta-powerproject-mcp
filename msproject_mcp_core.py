@@ -588,8 +588,18 @@ def _parse_rate(raw: Any) -> float:
 def _serialize_resource(res: Any) -> Dict[str, Any]:
     """Type-aware serialization. MaxUnits is COM-stored as fraction (1.0 = 100%);
     we expose as percentage for symmetry with assignment Units. Rates are
-    locale-formatted strings from COM and are parsed to float via _parse_rate."""
-    type_code = int(res.Type) if res.Type is not None else 0
+    locale-formatted strings from COM and are parsed to float via _parse_rate.
+
+    Per-field reads are guarded so one bad COM value (corrupt/stale row) does
+    not kill list iteration in callers like T35 resource_list. id/uid/name are
+    intentionally unguarded — failure there means the resource is genuinely
+    broken and the caller should know.
+    """
+    type_code = 0
+    try:
+        type_code = int(res.Type) if res.Type is not None else 0
+    except Exception:
+        pass
     type_name = RESOURCE_TYPE_NAMES.get(type_code, "Work")
     out: Dict[str, Any] = {
         "id": res.ID,
@@ -597,16 +607,20 @@ def _serialize_resource(res: Any) -> Dict[str, Any]:
         "name": res.Name,
         "type": type_name,
     }
-    # Type-specific properties
-    if type_name == "Work":
-        out["max_units"] = float(res.MaxUnits) * 100.0  # 1.0 -> 100%
-        out["standard_rate"] = _parse_rate(res.StandardRate)
-        out["overtime_rate"] = _parse_rate(res.OvertimeRate)
-    elif type_name == "Material":
-        out["material_label"] = res.MaterialLabel or ""
-        out["standard_rate"] = _parse_rate(res.StandardRate)
-    elif type_name == "Cost":
-        out["standard_rate"] = _parse_rate(res.StandardRate)
+    # Type-specific properties — guarded so a single bad field doesn't break list iteration
+    try:
+        if type_name == "Work":
+            out["max_units"] = float(res.MaxUnits) * 100.0  # 1.0 -> 100%
+            out["standard_rate"] = _parse_rate(res.StandardRate)
+            out["overtime_rate"] = _parse_rate(res.OvertimeRate)
+        elif type_name == "Material":
+            out["material_label"] = res.MaterialLabel or ""
+            out["standard_rate"] = _parse_rate(res.StandardRate)
+        elif type_name == "Cost":
+            out["standard_rate"] = _parse_rate(res.StandardRate)
+    except Exception:
+        # Field read failed — return what we have (id/uid/name/type)
+        pass
     return out
 
 

@@ -808,6 +808,76 @@ def _msp_resource_list() -> Dict[str, Any]:
         return {"status": "error", "error": _format_com_error(e)}
 
 
+def _msp_resource_assign(task_id: int, resource_id: int,
+                        units: Optional[float] = None,
+                        work_hours: Optional[float] = None) -> Dict[str, Any]:
+    """Assign a resource to a task. Units in % (100 = full-time, default).
+
+    Uses MS Project's `task.Assignments.Add(TaskID, ResourceID, [Units])`.
+    work_hours overrides the auto-calculated work duration.
+    """
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    # Pre-flight validation
+    t = _find_task_by_id(proj, task_id)
+    if t is None:
+        return {"status": "error", "error": f"Task ID {task_id} not found"}
+    res = _find_resource_by_id(proj, resource_id)
+    if res is None:
+        return {"status": "error", "error": f"Resource ID {resource_id} not found"}
+    if units is not None and units < 0:
+        return {"status": "error", "error": "units must be >= 0"}
+    if work_hours is not None and work_hours < 0:
+        return {"status": "error", "error": "work_hours must be >= 0"}
+    try:
+        applied_units = units if units is not None else 100.0
+        # task.Assignments.Add(TaskID, ResourceID, Units) — Units as fraction (1.0=100%)
+        alloc = t.Assignments.Add(TaskID=task_id, ResourceID=resource_id,
+                                 Units=applied_units / 100.0)
+        if work_hours is not None:
+            try:
+                # COM Work property accepts minutes
+                alloc.Work = work_hours * 60.0
+            except Exception:
+                pass  # work_hours is best-effort; assignment itself succeeded
+        return {"status": "ok",
+                "assignment_uid": alloc.UniqueID if alloc else None,
+                "task_id": task_id,
+                "resource_id": resource_id,
+                "units": applied_units}
+    except Exception as e:
+        logger.error(f"_msp_resource_assign({task_id},{resource_id}) failed: {e}")
+        return {"status": "error", "error": _format_com_error(e)}
+
+
+def _msp_resource_unassign(task_id: int, resource_id: int) -> Dict[str, Any]:
+    """Remove the assignment of a resource from a task."""
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    t = _find_task_by_id(proj, task_id)
+    if t is None:
+        return {"status": "error", "error": f"Task ID {task_id} not found"}
+    # Find the matching assignment by ResourceID
+    target_assignment = None
+    try:
+        for i in range(1, t.Assignments.Count + 1):
+            a = t.Assignments(i)
+            if a is not None and a.ResourceID == resource_id:
+                target_assignment = a
+                break
+    except Exception:
+        pass
+    if target_assignment is None:
+        return {"status": "error",
+                "error": f"Resource {resource_id} not assigned to task {task_id}"}
+    try:
+        target_assignment.Delete()
+        return {"status": "ok", "task_id": task_id, "resource_id": resource_id}
+    except Exception as e:
+        logger.error(f"_msp_resource_unassign({task_id},{resource_id}) failed: {e}")
+        return {"status": "error", "error": _format_com_error(e)}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

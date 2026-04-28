@@ -1208,6 +1208,46 @@ def _msp_baseline_clear_all() -> Dict[str, Any]:
             "failures": failures}
 
 
+def _msp_baseline_list() -> Dict[str, Any]:
+    """List all 11 baseline slots; return only those currently saved with metadata.
+
+    Iterates all 11 slots, checks saved date, includes task count + total stats
+    only for saved ones. Returns sorted by baseline number (BASELINE_NUMBERS order).
+    """
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    out = []
+    try:
+        task_ct = proj.Tasks.Count
+        for n in BASELINE_NUMBERS:
+            saved = _baseline_saved_date(proj, n)
+            if saved is None:
+                continue
+            # Aggregate per-task baseline totals (skip summaries)
+            total_dur_min, total_work_min, total_cost = 0.0, 0.0, 0.0
+            for i in range(1, task_ct + 1):
+                t = proj.Tasks(i)
+                if t is None or t.Summary:
+                    continue
+                data = _read_task_baseline(t, n)
+                total_dur_min += (data["duration_h"] * 60) if data["duration_h"] else 0
+                total_work_min += (data["work_h"] * 60) if data["work_h"] else 0
+                total_cost += data["cost"] if data["cost"] else 0
+            out.append({
+                "number": n,
+                "name": None,  # MSP doesn't store baseline names natively
+                "saved_date": str(saved),
+                "task_count": task_ct,
+                "total_duration_days": round(total_dur_min / 60 / 8, 2),
+                "total_work_hours": round(total_work_min / 60, 2),
+                "total_cost": round(total_cost, 2),
+            })
+        return {"status": "ok", "count_saved": len(out), "baselines": out}
+    except Exception as e:
+        logger.error(f"_msp_baseline_list failed: {e}")
+        return {"status": "error", "error": _format_com_error(e)}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

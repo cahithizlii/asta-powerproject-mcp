@@ -1158,6 +1158,56 @@ def _msp_baseline_save(baseline_number: int = 0,
     return result
 
 
+def _msp_baseline_clear(baseline_number: int = 0) -> Dict[str, Any]:
+    """Clear a single baseline (0-10). Idempotent: no-op if already empty.
+
+    NOTE: BaselineClear's `From` parameter uses the PjSaveBaselineTo offset
+    enum (same as BaselineSave's `Into`), NOT the direct 0-10 number.
+    Empirically verified on MS Project 16.0 — passing 2 only clears baseline 0.
+    Map via _baseline_into_code (B0=0, B1=11, ..., B10=20).
+    """
+    if baseline_number not in BASELINE_NUMBERS:
+        return {"status": "error",
+                "error": f"baseline_number must be 0-10, got {baseline_number}"}
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    was_saved = _baseline_saved_date(proj, baseline_number)
+    try:
+        from_code = _baseline_into_code(baseline_number)
+        app.BaselineClear(All=True, From=from_code)
+        return {"status": "ok",
+                "baseline_number": baseline_number,
+                "was_saved_date": str(was_saved) if was_saved else None}
+    except Exception as e:
+        logger.error(f"_msp_baseline_clear({baseline_number}) failed: {e}")
+        return {"status": "error", "error": _format_com_error(e)}
+
+
+def _msp_baseline_clear_all() -> Dict[str, Any]:
+    """Clear all 11 baselines that are currently saved. Returns list of cleared numbers.
+
+    Uses the PjSaveBaselineTo offset enum for `From` (see _msp_baseline_clear note).
+    Skips already-unsaved baselines (loop optimization, fewer COM calls).
+    """
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    cleared = []
+    failures = []
+    for n in BASELINE_NUMBERS:
+        if _baseline_saved_date(proj, n) is None:
+            continue
+        try:
+            from_code = _baseline_into_code(n)
+            app.BaselineClear(All=True, From=from_code)
+            cleared.append(n)
+        except Exception as e:
+            failures.append({"baseline_number": n, "error": _format_com_error(e)})
+    return {"status": "ok" if not failures else "partial",
+            "cleared": cleared,
+            "count": len(cleared),
+            "failures": failures}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

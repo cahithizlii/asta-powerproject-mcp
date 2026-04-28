@@ -1017,6 +1017,83 @@ def _msp_resource_unassign(task_id: int, resource_id: int) -> Dict[str, Any]:
         return {"status": "error", "error": _format_com_error(e)}
 
 
+# ---------- BASELINE CONSTANTS ----------
+
+# MSP supports 11 baseline slots: Baseline + Baseline1..Baseline10
+BASELINE_NUMBERS = list(range(11))  # [0, 1, ..., 10]
+
+# CRITICAL: app.BaselineSave's `Into` parameter uses OFFSET enum, not direct number.
+# Baseline 0 → Into=0 (pjIntoBaseline); Baseline N (1-10) → Into=10+N (pjIntoBaselineN).
+# (Verified from msproject_typelib.txt enum PjSaveBaselineTo.)
+INTO_BASELINE_MAP = {n: (0 if n == 0 else 10 + n) for n in BASELINE_NUMBERS}
+
+
+# ---------- BASELINE HELPERS ----------
+
+def _baseline_property_name(field: str, baseline_number: int) -> str:
+    """Map (field='Start', N=0) → 'BaselineStart'; (field='Start', N=3) → 'Baseline3Start'.
+
+    Used to dynamically read task baseline properties for any of the 11 slots.
+    """
+    suffix = "" if baseline_number == 0 else str(baseline_number)
+    return f"Baseline{suffix}{field}"
+
+
+def _baseline_into_code(baseline_number: int) -> int:
+    """Convert baseline_number (0-10) to pjIntoBaseline enum code for BaselineSave."""
+    return INTO_BASELINE_MAP[baseline_number]
+
+
+def _baseline_saved_date(proj: Any, baseline_number: int) -> Optional[Any]:
+    """Return saved date of given baseline, or None if not saved.
+
+    MSP returns various sentinels for unsaved baselines — normalize to Python None:
+      - 0, None, "" (falsy)
+      - "NA" string (MS Project 16.0 verified — most common case)
+      - datetime with year < 1980 (some COM versions)
+    """
+    try:
+        result = proj.BaselineSavedDate(Baseline=baseline_number)
+        # MSP returns various falsy values for unsaved (0, datetime(year=0), None, "")
+        if not result:
+            return None
+        # MS Project 16.0 returns the literal string "NA" for unsaved baselines
+        if isinstance(result, str) and result.strip().upper() in ("NA", "N/A", ""):
+            return None
+        # Some COM versions return a datetime with year 1; treat year < 1980 as unsaved
+        try:
+            if hasattr(result, "year") and result.year < 1980:
+                return None
+        except Exception:
+            pass
+        return result
+    except Exception:
+        return None
+
+
+def _read_task_baseline(task: Any, baseline_number: int) -> Dict[str, Any]:
+    """Read a task's baseline values for the given baseline slot.
+
+    Returns dict with start, finish, duration_h, work_h, cost.
+    Unsaved baseline yields None/0 fallbacks. Each property read is guarded
+    so a single bad COM read doesn't kill compare iteration.
+    """
+    out: Dict[str, Any] = {}
+    for field, key, transform in [
+        ("Start", "start", lambda v: str(v) if v else None),
+        ("Finish", "finish", lambda v: str(v) if v else None),
+        ("Duration", "duration_h", lambda v: float(v) / 60.0 if v else 0.0),
+        ("Work", "work_h", lambda v: float(v) / 60.0 if v else 0.0),
+        ("Cost", "cost", lambda v: _parse_rate(v)),
+    ]:
+        try:
+            raw = getattr(task, _baseline_property_name(field, baseline_number))
+            out[key] = transform(raw)
+        except Exception:
+            out[key] = None if field in ("Start", "Finish") else 0.0
+    return out
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

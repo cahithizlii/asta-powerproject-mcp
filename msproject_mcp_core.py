@@ -342,22 +342,15 @@ def _msp_calendar_add_exception(calendar_name: str, exception_name: str,
             Finish=pywintypes.Time(finish_d),
         )
         ex.Name = exception_name
-        # Mark non-working: zero out all shifts (each setattr in its own try/except
-        # since some MSP versions reject int 0 — the Type=PJ_EXCEPTION_DAILY default
-        # already implies non-working but we belt-and-suspenders set shifts too)
-        for prop in ("Shift1Start", "Shift1Finish",
-                     "Shift2Start", "Shift2Finish",
-                     "Shift3Start", "Shift3Finish"):
-            try:
-                setattr(ex, prop, 0)
-            except Exception:
-                pass
+        # Type=PJ_EXCEPTION_DAILY=7 already implies non-working in MSP semantics;
+        # MSP 16.0 exposes shift times via ex.Shift1.Start sub-objects (not flat
+        # ShiftNStart props), so any zeroing is best handled if/when working=True
+        # support arrives in Phase 3+.
         return {"status": "ok",
                 "calendar_name": calendar_name,
                 "exception_name": exception_name,
                 "start": start,
-                "finish": finish or start,
-                "working": working}
+                "finish": finish or start}
     except Exception as e:
         logger.error(
             f"_msp_calendar_add_exception({calendar_name},{exception_name}) failed: {e}"
@@ -427,7 +420,7 @@ def _msp_calendar_list() -> Dict[str, Any]:
             except Exception:
                 ex_count = 0
             out.append({
-                "uid": cal.Guid,
+                "calendar_uid": cal.Guid,
                 "name": cal.Name,
                 "exception_count": ex_count,
             })

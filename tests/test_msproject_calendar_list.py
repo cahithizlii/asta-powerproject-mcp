@@ -9,6 +9,9 @@ def test_list_includes_standard(clean_test_project):
     assert r["status"] == "ok"
     names = [c["name"] for c in r["calendars"]]
     assert "Standard" in names
+    assert r["count"] == len(r["calendars"]) >= 1
+    # Verify new key name (renamed from "uid" in T28)
+    assert all("calendar_uid" in c for c in r["calendars"])
 
 
 def test_list_includes_custom(clean_test_project):

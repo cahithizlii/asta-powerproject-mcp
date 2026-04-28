@@ -438,7 +438,12 @@ def _msp_calendar_assign_to_resource(resource_id: int, calendar_name: str) -> Di
 
 
 def _msp_calendar_list() -> Dict[str, Any]:
-    """List all base calendars in the active project with exception counts."""
+    """List all base calendars in the active project with exception counts.
+
+    Order: matches `proj.BaseCalendars` enumeration (typically insertion
+    order, not sorted). If callers need lexicographic ordering, sort
+    client-side on the `name` field.
+    """
     app = _validate_active_project()
     proj = app.ActiveProject
     out = []
@@ -482,8 +487,8 @@ def _msp_calendar_holidays_uzbek(calendar_name: str, year: int = 2026) -> Dict[s
             ex = cal.Exceptions(i)
             if ex is not None and ex.Name:
                 existing_names.add(ex.Name)
-    except Exception:
-        pass  # if we can't read exceptions, treat as none-existing
+    except Exception as e:
+        logger.debug(f"holidays_uzbek pre-scan failed (treating calendar as empty): {_format_com_error(e)}")
 
     added = []
     skipped = []

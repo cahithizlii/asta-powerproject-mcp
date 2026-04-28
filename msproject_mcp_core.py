@@ -687,6 +687,52 @@ def _msp_resource_add(name: str, type: str = "Work",
         return {"status": "error", "error": _format_com_error(e)}
 
 
+def _msp_resource_update(resource_id: int,
+                        name: Optional[str] = None,
+                        max_units: Optional[float] = None,
+                        standard_rate: Optional[float] = None,
+                        overtime_rate: Optional[float] = None,
+                        material_label: Optional[str] = None) -> Dict[str, Any]:
+    """Update a resource. Pre-flight validates ALL inputs before mutation
+    (no partial writes — T20 lesson).
+
+    max_units in % (100 = 1 person). standard_rate / overtime_rate in $/unit.
+    """
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    res = _find_resource_by_id(proj, resource_id)
+    if res is None:
+        return {"status": "error", "error": f"Resource ID {resource_id} not found"}
+
+    # Pre-flight: validate ALL inputs before any mutation
+    do_rename = name is not None and name != res.Name
+    if do_rename and _find_resource_by_name(proj, name) is not None:
+        return {"status": "error", "error": f"Resource '{name}' already exists"}
+    if max_units is not None and max_units < 0:
+        return {"status": "error", "error": "max_units must be >= 0"}
+    if standard_rate is not None and standard_rate < 0:
+        return {"status": "error", "error": "standard_rate must be >= 0"}
+    if overtime_rate is not None and overtime_rate < 0:
+        return {"status": "error", "error": "overtime_rate must be >= 0"}
+
+    changes = []
+    try:
+        if do_rename:
+            res.Name = name; changes.append("name")
+        if max_units is not None:
+            res.MaxUnits = max_units / 100.0; changes.append("max_units")
+        if standard_rate is not None:
+            res.StandardRate = standard_rate; changes.append("standard_rate")
+        if overtime_rate is not None:
+            res.OvertimeRate = overtime_rate; changes.append("overtime_rate")
+        if material_label is not None:
+            res.MaterialLabel = material_label; changes.append("material_label")
+        return {"status": "ok", "resource_id": resource_id, "changes": changes}
+    except Exception as e:
+        logger.error(f"_msp_resource_update({resource_id}) failed: {e}")
+        return {"status": "error", "error": _format_com_error(e)}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

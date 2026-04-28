@@ -531,6 +531,85 @@ def _msp_calendar_holidays_uzbek(calendar_name: str, year: int = 2026) -> Dict[s
     }
 
 
+# ---------- RESOURCE CONSTANTS ----------
+
+# COM PjResourceType enum: Work=0, Material=1, Cost=2
+RESOURCE_TYPES = {"Work": 0, "Material": 1, "Cost": 2}
+RESOURCE_TYPE_NAMES = {v: k for k, v in RESOURCE_TYPES.items()}
+
+
+# ---------- RESOURCE HELPERS ----------
+
+def _find_resource_by_name(proj: Any, name: str) -> Optional[Any]:
+    """Locate a resource by name. Returns None if not found."""
+    for i in range(1, proj.Resources.Count + 1):
+        r = proj.Resources(i)
+        if r is not None and r.Name == name:
+            return r
+    return None
+
+
+def _parse_rate(raw: Any) -> float:
+    """Parse a MS Project rate value to float.
+
+    MS Project COM returns rates as locale-formatted strings (e.g. '$50.00/h',
+    '₺50,00/hr', '50,00 €/sa'). Strip currency symbols + per-unit suffix and
+    normalize decimal separator. Returns 0.0 for empty/unparseable values.
+    """
+    if raw is None or raw == "":
+        return 0.0
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    s = str(raw).strip()
+    if not s:
+        return 0.0
+    # Drop per-unit suffix after '/' (e.g. '/h', '/hr', '/sa', '/saat')
+    if "/" in s:
+        s = s.split("/", 1)[0]
+    # Strip everything except digits, separators, and minus sign
+    cleaned = "".join(ch for ch in s if ch.isdigit() or ch in ".,-")
+    if not cleaned or cleaned in ("-", ".", ","):
+        return 0.0
+    # Locale-aware decimal separator: if both present, last one wins as decimal
+    if "," in cleaned and "." in cleaned:
+        if cleaned.rfind(",") > cleaned.rfind("."):
+            cleaned = cleaned.replace(".", "").replace(",", ".")
+        else:
+            cleaned = cleaned.replace(",", "")
+    elif "," in cleaned:
+        # Comma-only: treat as decimal separator (TR, EU locales)
+        cleaned = cleaned.replace(",", ".")
+    try:
+        return float(cleaned)
+    except ValueError:
+        return 0.0
+
+
+def _serialize_resource(res: Any) -> Dict[str, Any]:
+    """Type-aware serialization. MaxUnits is COM-stored as fraction (1.0 = 100%);
+    we expose as percentage for symmetry with assignment Units. Rates are
+    locale-formatted strings from COM and are parsed to float via _parse_rate."""
+    type_code = int(res.Type) if res.Type is not None else 0
+    type_name = RESOURCE_TYPE_NAMES.get(type_code, "Work")
+    out: Dict[str, Any] = {
+        "id": res.ID,
+        "uid": res.UniqueID,
+        "name": res.Name,
+        "type": type_name,
+    }
+    # Type-specific properties
+    if type_name == "Work":
+        out["max_units"] = float(res.MaxUnits) * 100.0  # 1.0 -> 100%
+        out["standard_rate"] = _parse_rate(res.StandardRate)
+        out["overtime_rate"] = _parse_rate(res.OvertimeRate)
+    elif type_name == "Material":
+        out["material_label"] = res.MaterialLabel or ""
+        out["standard_rate"] = _parse_rate(res.StandardRate)
+    elif type_name == "Cost":
+        out["standard_rate"] = _parse_rate(res.StandardRate)
+    return out
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

@@ -867,6 +867,9 @@ def _msp_resource_assign_unsafe(task_obj: Any, res_obj: Any,
         if applied_units < 0:
             return {"status": "error", "error": "units must be >= 0",
                     "task_id": task_id, "resource_id": resource_id}
+        # task.Assignments.Add is the only available API — proj.Assignments
+        # does not exist on _IProjectDoc (probed 2026-04-28: AttributeError).
+        # Measured ~9.6ms/call; not improvable via project-scoped collection.
         alloc = task_obj.Assignments.Add(TaskID=task_id, ResourceID=resource_id,
                                          Units=applied_units / 100.0)
         return {"status": "ok",
@@ -953,6 +956,10 @@ def _msp_resource_bulk_assign(items: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     Pre-builds task_id -> Task and resource_id -> Resource maps ONCE to avoid
     O(N×M) lookup blow-up on the HERO 14×200=2800 case.
+
+    NOTE: ID->object maps are built fresh per call. Do not cache them across
+    operations that mutate Tasks or Resources collections (add/delete) —
+    map will be stale.
 
     Returns: {status, path, count, assignments, failures}
     """

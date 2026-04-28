@@ -346,6 +346,8 @@ def _msp_calendar_add_exception(calendar_name: str, exception_name: str,
         # MSP 16.0 exposes shift times via ex.Shift1.Start sub-objects (not flat
         # ShiftNStart props), so any zeroing is best handled if/when working=True
         # support arrives in Phase 3+.
+        # NOTE: 'working' input intentionally not echoed — always False post-T21
+        # guard (working=True returns error early in pre-flight).
         return {"status": "ok",
                 "calendar_name": calendar_name,
                 "exception_name": exception_name,

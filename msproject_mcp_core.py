@@ -1094,6 +1094,60 @@ def _read_task_baseline(task: Any, baseline_number: int) -> Dict[str, Any]:
     return out
 
 
+def _msp_baseline_save(baseline_number: int = 0,
+                      name: Optional[str] = None,
+                      scope: str = "all",
+                      roll_up_to_summary: bool = True) -> Dict[str, Any]:
+    """Save current state as the specified baseline (0-10).
+
+    scope: "all" (default — all tasks) or "selected" (currently-selected only)
+    roll_up_to_summary: roll up to summary tasks (MSP default behavior)
+    name: optional descriptive label (returned in metadata; MSP doesn't
+          store baseline names natively in pre-2016 versions, captured here
+          for caller's tracking)
+    """
+    if baseline_number not in BASELINE_NUMBERS:
+        return {"status": "error",
+                "error": f"baseline_number must be 0-10, got {baseline_number}"}
+    if scope not in ("all", "selected"):
+        return {"status": "error",
+                "error": f"scope must be 'all' or 'selected', got '{scope}'"}
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    try:
+        # PjSaveBaselineFrom.pjCopyCurrent = 0
+        copy_from = 0
+        into = _baseline_into_code(baseline_number)
+        # All=True (whole project) or False (selected); MSP COM expects bool
+        all_param = (scope == "all")
+        app.BaselineSave(All=all_param, Copy=copy_from, Into=into,
+                        RollupToSummaryTasks=roll_up_to_summary)
+        # Read-back metadata
+        saved_date = _baseline_saved_date(proj, baseline_number)
+        task_count = proj.Tasks.Count
+        # Aggregate baseline totals
+        total_dur_min, total_work_min, total_cost = 0.0, 0.0, 0.0
+        for i in range(1, task_count + 1):
+            t = proj.Tasks(i)
+            if t is None or t.Summary:  # skip summary tasks for totals
+                continue
+            data = _read_task_baseline(t, baseline_number)
+            total_dur_min += data["duration_h"] * 60 if data["duration_h"] else 0
+            total_work_min += data["work_h"] * 60 if data["work_h"] else 0
+            total_cost += data["cost"] if data["cost"] else 0
+        return {"status": "ok",
+                "baseline_number": baseline_number,
+                "name": name,
+                "saved_date": str(saved_date) if saved_date else None,
+                "task_count": task_count,
+                "total_duration_days": round(total_dur_min / 60 / 8, 2),  # 8h/day
+                "total_work_hours": round(total_work_min / 60, 2),
+                "total_cost": total_cost}
+    except Exception as e:
+        logger.error(f"_msp_baseline_save({baseline_number}) failed: {e}")
+        return {"status": "error", "error": _format_com_error(e)}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

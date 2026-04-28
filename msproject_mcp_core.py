@@ -760,6 +760,46 @@ def _msp_resource_update(resource_id: int,
         return {"status": "error", "error": _format_com_error(e)}
 
 
+def _msp_resource_delete(resource_id: int) -> Dict[str, Any]:
+    """Delete a resource by ID."""
+    app = _validate_active_project()
+    res = _find_resource_by_id(app.ActiveProject, resource_id)
+    if res is None:
+        return {"status": "error", "error": f"Resource ID {resource_id} not found"}
+    try:
+        name = res.Name
+        res.Delete()
+        return {"status": "ok", "deleted_id": resource_id, "deleted_name": name}
+    except Exception as e:
+        logger.error(f"_msp_resource_delete({resource_id}) failed: {e}")
+        return {"status": "error", "error": _format_com_error(e)}
+
+
+def _msp_resource_list() -> Dict[str, Any]:
+    """List all resources in the active project with type-aware properties + assignment counts.
+
+    Order: matches `proj.Resources` enumeration (typically insertion order, not sorted).
+    """
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    out = []
+    try:
+        for i in range(1, proj.Resources.Count + 1):
+            res = proj.Resources(i)
+            if res is None:
+                continue
+            entry = _serialize_resource(res)
+            try:
+                entry["assignment_count"] = res.Assignments.Count
+            except Exception:
+                entry["assignment_count"] = 0
+            out.append(entry)
+        return {"status": "ok", "count": len(out), "resources": out}
+    except Exception as e:
+        logger.error(f"_msp_resource_list failed: {e}")
+        return {"status": "error", "error": _format_com_error(e)}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

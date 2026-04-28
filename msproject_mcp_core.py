@@ -715,6 +715,33 @@ def _msp_resource_update(resource_id: int,
     if overtime_rate is not None and overtime_rate < 0:
         return {"status": "error", "error": "overtime_rate must be >= 0"}
 
+    # Type-aware property validation: each property must match the resource's type
+    res_type_code = int(res.Type) if res.Type is not None else 0
+    res_type = RESOURCE_TYPE_NAMES.get(res_type_code, "Work")
+    if res_type == "Work":
+        if material_label is not None:
+            return {"status": "error",
+                    "error": f"material_label not applicable to Work resource (type={res_type})"}
+    elif res_type == "Material":
+        if max_units is not None:
+            return {"status": "error",
+                    "error": f"max_units not applicable to Material resource (type={res_type})"}
+        if overtime_rate is not None:
+            return {"status": "error",
+                    "error": f"overtime_rate not applicable to Material resource (type={res_type})"}
+    elif res_type == "Cost":
+        if max_units is not None:
+            return {"status": "error",
+                    "error": f"max_units not applicable to Cost resource (type={res_type})"}
+        if overtime_rate is not None:
+            return {"status": "error",
+                    "error": f"overtime_rate not applicable to Cost resource (type={res_type})"}
+        if material_label is not None:
+            return {"status": "error",
+                    "error": f"material_label not applicable to Cost resource (type={res_type})"}
+
+    # Empty-changes no-op intentionally returns ok (mirrors T20 calendar update);
+    # caller can detect via empty `changes` list.
     changes = []
     try:
         if do_rename:

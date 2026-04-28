@@ -79,3 +79,35 @@ def test_update_combined_partial_write_protection(clean_test_project):
     res = _find_resource_by_id(proj, r1["resource_id"])
     # Original name preserved (no partial mutation)
     assert res.Name == "ProtectOld-T34"
+
+
+def test_update_no_op_returns_ok_empty_changes(clean_test_project):
+    """All-None update is a no-op — returns ok with empty changes (T20 parity)."""
+    r1 = _msp_resource_add(name="NoOp-T34", type="Work")
+    r = _msp_resource_update(resource_id=r1["resource_id"])
+    assert r["status"] == "ok"
+    assert r["changes"] == []
+
+
+def test_update_material_label_on_work_errors(clean_test_project):
+    """material_label not applicable to Work resource."""
+    r1 = _msp_resource_add(name="WorkX-T34", type="Work")
+    r = _msp_resource_update(resource_id=r1["resource_id"], material_label="kg")
+    assert r["status"] == "error"
+    assert "material_label" in r["error"].lower()
+
+
+def test_update_max_units_on_material_errors(clean_test_project):
+    """max_units not applicable to Material resource."""
+    r1 = _msp_resource_add(name="MatX-T34", type="Material", material_label="kg")
+    r = _msp_resource_update(resource_id=r1["resource_id"], max_units=200)
+    assert r["status"] == "error"
+    assert "max_units" in r["error"].lower()
+
+
+def test_update_overtime_rate_on_cost_errors(clean_test_project):
+    """overtime_rate not applicable to Cost resource."""
+    r1 = _msp_resource_add(name="CostX-T34", type="Cost")
+    r = _msp_resource_update(resource_id=r1["resource_id"], overtime_rate=10)
+    assert r["status"] == "error"
+    assert "overtime_rate" in r["error"].lower()

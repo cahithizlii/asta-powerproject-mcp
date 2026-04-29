@@ -1978,6 +1978,26 @@ def _msp_progress_set_task(task_id: int,
             "readback": readback}
 
 
+def _msp_progress_get_task(task_id: int) -> Dict[str, Any]:
+    """Read all progress fields from a task → structured dict.
+
+    Returns {status, task_id, progress: {percent_complete, percent_work_complete,
+    actual_start, actual_finish, actual_duration_h, actual_work_h,
+    remaining_work_h, remaining_duration_h, physical_pct, stop, resume}}.
+    """
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    t = _find_task_by_id(proj, task_id)
+    if t is None:
+        return {"status": "error", "error": f"Task ID {task_id} not found"}
+    try:
+        progress = _read_task_progress_dict(t)
+        return {"status": "ok", "task_id": task_id, "progress": progress}
+    except Exception as e:
+        logger.error(f"_msp_progress_get_task({task_id}) failed: {e}")
+        return {"status": "error", "error": _format_com_error(e)}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

@@ -1894,6 +1894,90 @@ def _msp_task_set_progress_field(task: Any, field: str, value: Any) -> None:
         raise ValueError(f"Unknown progress field: {field}")
 
 
+def _msp_progress_set_task(task_id: int,
+                           percent_complete: Optional[float] = None,
+                           percent_work_complete: Optional[float] = None,
+                           actual_start: Optional[str] = None,
+                           actual_finish: Optional[str] = None,
+                           actual_duration_h: Optional[float] = None,
+                           actual_work_h: Optional[float] = None,
+                           remaining_work_h: Optional[float] = None,
+                           remaining_duration_h: Optional[float] = None,
+                           physical_pct: Optional[float] = None,
+                           stop: Optional[str] = None,
+                           resume: Optional[str] = None) -> Dict[str, Any]:
+    """Set one or more progress fields on a task.
+
+    Dual-mode: caller can pass `percent_complete` (duration-based) OR explicit
+    actual_*/remaining_* values. Both modes coexist; MSP rebalances internally.
+
+    Phase 3b — see design doc Section 6 Q1 (dual-track) and Q4 (PhysicalPercentComplete).
+    Returns {status, task_id, changes: [field], readback: dict}.
+    """
+    # Build candidate field map; filter out None
+    candidates = {
+        "percent_complete": percent_complete,
+        "percent_work_complete": percent_work_complete,
+        "actual_start": actual_start,
+        "actual_finish": actual_finish,
+        "actual_duration_h": actual_duration_h,
+        "actual_work_h": actual_work_h,
+        "remaining_work_h": remaining_work_h,
+        "remaining_duration_h": remaining_duration_h,
+        "physical_pct": physical_pct,
+        "stop": stop,
+        "resume": resume,
+    }
+    fields_to_set = {k: v for k, v in candidates.items() if v is not None}
+    if not fields_to_set:
+        return {"status": "error", "error": "no progress fields provided"}
+
+    # Pre-validate pct fields and date order
+    for f in _PROGRESS_PCT_FIELDS:
+        if f in fields_to_set:
+            try:
+                fields_to_set[f] = _normalize_progress_pct(fields_to_set[f])
+            except ValueError as e:
+                return {"status": "error", "error": str(e)}
+    err = _validate_actual_dates(fields_to_set.get("actual_start"),
+                                 fields_to_set.get("actual_finish"))
+    if err:
+        return {"status": "error", "error": err}
+    err = _validate_actual_dates(fields_to_set.get("stop"),
+                                 fields_to_set.get("resume"))
+    if err:
+        return {"status": "error", "error": "stop/resume order: " + err}
+
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    t = _find_task_by_id(proj, task_id)
+    if t is None:
+        return {"status": "error", "error": f"Task ID {task_id} not found"}
+
+    changes: List[str] = []
+    failures: List[Dict[str, str]] = []
+    for field, value in fields_to_set.items():
+        try:
+            _msp_task_set_progress_field(t, field, value)
+            changes.append(field)
+        except Exception as e:
+            failures.append({"field": field, "error": _format_com_error(e)})
+            logger.debug(f"set_task_progress({task_id}, {field}={value}) failed: {e}")
+
+    try:
+        readback = _read_task_progress_dict(t)
+    except Exception:
+        readback = None
+
+    if not changes and failures:
+        return {"status": "error", "task_id": task_id,
+                "error": "all field writes failed", "failures": failures}
+    status = "ok" if not failures else "partial"
+    return {"status": status, "task_id": task_id,
+            "changes": changes, "failures": failures,
+            "readback": readback}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

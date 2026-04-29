@@ -2228,6 +2228,78 @@ def _msp_progress_set_status_date(status_date: str) -> Dict[str, Any]:
         return {"status": "error", "error": _format_com_error(e)}
 
 
+def _msp_progress_clear(task_id: int) -> Dict[str, Any]:
+    """Reset a single task's progress to 0/None across all progress fields.
+
+    Idempotent: tasks that are already at 0% return ok with cleared_fields=[].
+    """
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    t = _find_task_by_id(proj, task_id)
+    if t is None:
+        return {"status": "error", "error": f"Task ID {task_id} not found"}
+    cleared: List[str] = []
+    try:
+        # Setting PercentComplete = 0 cascades to ActualStart/Finish/Work clearing
+        # in MSP, but we explicitly reset each for safety.
+        if t.PercentComplete and t.PercentComplete > 0:
+            t.PercentComplete = 0
+            cleared.append("percent_complete")
+        if t.ActualWork and t.ActualWork > 0:
+            t.ActualWork = 0
+            cleared.append("actual_work")
+        # ActualStart / ActualFinish: write "NA" sentinel to clear (MSP convention)
+        try:
+            t.ActualStart = "NA"
+            cleared.append("actual_start")
+        except Exception:
+            pass
+        try:
+            t.ActualFinish = "NA"
+            cleared.append("actual_finish")
+        except Exception:
+            pass
+        return {"status": "ok", "task_id": task_id, "cleared_fields": cleared}
+    except Exception as e:
+        logger.error(f"_msp_progress_clear({task_id}) failed: {e}")
+        return {"status": "error", "error": _format_com_error(e)}
+
+
+def _msp_progress_clear_all() -> Dict[str, Any]:
+    """Clear progress on every non-summary task in the project.
+
+    Used to reset a project to "as-planned" state.
+    """
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    cleared_count = 0
+    failures: List[Dict[str, Any]] = []
+    try:
+        _enter_batch_mode()
+        try:
+            for i in range(1, proj.Tasks.Count + 1):
+                try:
+                    t = proj.Tasks(i)
+                    if t is None or t.Summary:
+                        continue
+                    if t.PercentComplete and t.PercentComplete > 0:
+                        t.PercentComplete = 0
+                        cleared_count += 1
+                    elif t.ActualWork and t.ActualWork > 0:
+                        t.ActualWork = 0
+                        cleared_count += 1
+                except Exception as e:
+                    failures.append({"index": i, "error": _format_com_error(e)})
+        finally:
+            _exit_batch_mode()
+        return {"status": "ok" if not failures else "partial",
+                "cleared_count": cleared_count,
+                "failures": failures}
+    except Exception as e:
+        logger.error(f"_msp_progress_clear_all failed: {e}")
+        return {"status": "error", "error": _format_com_error(e)}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

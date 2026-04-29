@@ -2551,6 +2551,75 @@ def _msp_progress_bulk_update(items: List[Dict[str, Any]]) -> Dict[str, Any]:
             _exit_batch_mode()
 
 
+def _msp_progress_summary() -> Dict[str, Any]:
+    """Project-level progress aggregate (EVM foundation).
+
+    Phase 3b — used as input to Phase 5 EVM tool. Returns hours (CLAUDE.md
+    RULE 4: BAC = sum(target_qty); for cost-loaded projects RULE 3 applies
+    and Phase 5 EVM tool replaces hours with $).
+
+    Returns {status, project: {bac_h, acwp_h, total_actual_work_h,
+    total_remaining_work_h, project_percent_complete, status_date,
+    task_count, in_progress_count, completed_count, not_started_count}}.
+    """
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    bac_min = 0.0
+    acwp_min = 0.0
+    rem_min = 0.0
+    task_count = 0
+    in_progress = 0
+    completed = 0
+    not_started = 0
+    try:
+        for i in range(1, proj.Tasks.Count + 1):
+            try:
+                t = proj.Tasks(i)
+                if t is None or t.Summary:
+                    continue
+                task_count += 1
+                bac_min += float(t.Work or 0)
+                acwp_min += float(t.ActualWork or 0)
+                rem_min += float(t.RemainingWork or 0)
+                pct = float(t.PercentComplete or 0)
+                if pct >= 100:
+                    completed += 1
+                elif pct > 0:
+                    in_progress += 1
+                else:
+                    not_started += 1
+            except Exception as e:
+                logger.debug(f"_msp_progress_summary task {i} skip: {e}")
+                continue
+        # Project-level pct
+        try:
+            pct = float(proj.PercentComplete or 0)
+        except Exception:
+            pct = (acwp_min / bac_min * 100.0) if bac_min > 0 else 0.0
+        try:
+            status_date = _msp_dt_or_none(proj.StatusDate)
+        except Exception:
+            status_date = None
+        return {
+            "status": "ok",
+            "project": {
+                "bac_h": round(_minutes_to_hours(bac_min), 2),
+                "acwp_h": round(_minutes_to_hours(acwp_min), 2),
+                "total_actual_work_h": round(_minutes_to_hours(acwp_min), 2),
+                "total_remaining_work_h": round(_minutes_to_hours(rem_min), 2),
+                "project_percent_complete": round(pct, 2),
+                "status_date": status_date,
+                "task_count": task_count,
+                "in_progress_count": in_progress,
+                "completed_count": completed,
+                "not_started_count": not_started,
+            },
+        }
+    except Exception as e:
+        logger.error(f"_msp_progress_summary failed: {e}")
+        return {"status": "error", "error": _format_com_error(e)}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

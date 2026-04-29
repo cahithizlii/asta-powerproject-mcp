@@ -7,6 +7,9 @@ mcp>=1.0.0
 # Input validation
 pydantic>=2.0.0
 
+# Date/time parsing (used by msproject_mcp_core baseline variance helpers)
+python-dateutil>=2.8.0
+
 # Project file reading (supports .pp, .mpp, .xml, .xer)
 mpxj>=1.0.0
 

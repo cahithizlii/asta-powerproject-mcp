@@ -1071,6 +1071,25 @@ def _baseline_saved_date(proj: Any, baseline_number: int) -> Optional[Any]:
         return None
 
 
+def _msp_dt_or_none(v: Any) -> Optional[str]:
+    """Normalize MSP baseline date sentinels ('NA', 'N/A', empty) to None.
+
+    Tasks added AFTER a baseline was saved return the literal string 'NA' for
+    BaselineNStart / BaselineNFinish. 'NA' is truthy → naive ``str(v) if v``
+    leaks the sentinel downstream where date math silently yields 0 drift.
+
+    pywintypes.datetime instances become ISO strings via ``str()``.
+    """
+    if not v:
+        return None
+    if isinstance(v, str):
+        s = v.strip().upper()
+        if s in ("NA", "N/A", ""):
+            return None
+        return v  # Already a string from MSP, return as-is
+    return str(v)  # pywintypes.datetime → ISO string
+
+
 def _read_task_baseline(task: Any, baseline_number: int) -> Dict[str, Any]:
     """Read a task's baseline values for the given baseline slot.
 
@@ -1080,8 +1099,8 @@ def _read_task_baseline(task: Any, baseline_number: int) -> Dict[str, Any]:
     """
     out: Dict[str, Any] = {}
     for field, key, transform in [
-        ("Start", "start", lambda v: str(v) if v else None),
-        ("Finish", "finish", lambda v: str(v) if v else None),
+        ("Start", "start", _msp_dt_or_none),
+        ("Finish", "finish", _msp_dt_or_none),
         ("Duration", "duration_h", lambda v: float(v) / 60.0 if v else 0.0),
         ("Work", "work_h", lambda v: float(v) / 60.0 if v else 0.0),
         ("Cost", "cost", lambda v: _parse_rate(v)),

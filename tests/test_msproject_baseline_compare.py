@@ -79,3 +79,35 @@ def test_compare_perf_50_tasks_under_2s(clean_test_project):
     assert r["status"] == "ok"
     assert r["summary"]["on_time_count"] == 50
     assert elapsed < 2.0, f"compare 50 tasks took {elapsed:.2f}s (target <2s)"
+
+
+def test_compare_task_added_after_baseline_save_no_silent_on_time(clean_test_project):
+    """Task added AFTER baseline save → its baseline start/finish should be None,
+    not classified silently as on_time. The compare result should still succeed
+    (no exception), but the task should NOT be misclassified as 'on_time' with
+    fake zero variance.
+
+    Regression test for T44 review issue I1: 'NA' sentinel leak in
+    _read_task_baseline. Before fix, MSP returned literal 'NA' for the new
+    task's BaselineNStart/Finish; 'NA' is truthy → str('NA') → leaks downstream
+    where _datetime_diff_days silently returned 0.0 (parsing failure swallow).
+
+    With _msp_dt_or_none in place, baseline start/finish are properly None for
+    post-baseline tasks. duration_var_h is the load-bearing signal: cur_dur_h
+    is non-zero (task has a real duration) but bd['duration_h'] is 0 → variance
+    surfaces, no_change is False, and the task appears in the tasks list.
+    """
+    pre_r = _msp_task_add_single(name="PreT-T44I1", duration="2d")
+    _msp_baseline_save(baseline_number=0)
+    # Add a task AFTER baseline save
+    post_r = _msp_task_add_single(name="PostT-T44I1", duration="3d")
+    r = _msp_baseline_compare(baseline_number=0, include_unchanged=True)
+    assert r["status"] == "ok"
+    # The pre-baseline task is on_time (no change)
+    pre_entry = next(t for t in r["tasks"] if t["id"] == pre_r["task_id"])
+    assert pre_entry["status"] == "on_time"
+    # The post-baseline task: duration_var_h must be > 0 because cur_dur_h=24
+    # (3d × 8h) and bd["duration_h"]=0 (no baseline saved for this task).
+    post_entry = next(t for t in r["tasks"] if t["id"] == post_r["task_id"])
+    assert post_entry is not None
+    assert post_entry["duration_var_h"] > 0  # Real signal that it has no baseline

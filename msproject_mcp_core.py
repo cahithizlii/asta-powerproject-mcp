@@ -13,7 +13,7 @@ import logging
 import os
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import datetime as _dt
 
@@ -1308,6 +1308,122 @@ def _datetime_diff_days(current_str: Optional[str], baseline_str: Optional[str])
             return 0.0
 
 
+# Module-level constant for floating-point comparison (TAIL #4)
+_VARIANCE_EPSILON = 1e-9  # ~picoseconds in days, ~picohours, ~picocents
+
+
+def _read_task_current_state(task: Any) -> Dict[str, Any]:
+    """Read live task fields in the same shape as `_read_task_baseline`.
+
+    Adapter so `_compute_variance_set` can treat current state and baseline
+    state uniformly. Uses `_msp_dt_or_none` for Start/Finish so 'NA' sentinels
+    (impossible on live tasks but cheap defensive guard) become None.
+    """
+    return {
+        "start": _msp_dt_or_none(task.Start) if task.Start else None,
+        "finish": _msp_dt_or_none(task.Finish) if task.Finish else None,
+        "duration_h": float(task.Duration) / 60.0 if task.Duration else 0.0,
+        "work_h": float(task.Work) / 60.0 if task.Work else 0.0,
+        "cost": _parse_rate(task.Cost) if task.Cost else 0.0,
+    }
+
+
+def _compute_variance_set(
+    proj: Any,
+    get_a: Callable[[Any], Dict[str, Any]],
+    get_b: Callable[[Any], Dict[str, Any]],
+    include_unchanged: bool,
+    variance_threshold_days: float,
+) -> Dict[str, Any]:
+    """Compute per-task variance summary + list given two side-readers.
+
+    Variance direction: `b - a` (positive = side B exceeds side A).
+    For `_msp_baseline_compare`: a = saved baseline, b = current state →
+    positive finish_var = slipped.
+    For `_msp_baseline_compare_two`: a = baseline_a (e.g. Original),
+    b = baseline_b (e.g. Revised) → positive finish_var = slip between
+    revisions.
+
+    Pre-builds the non-summary task list once (TAIL #1 perf) and uses
+    EPSILON-based no_change check (TAIL #4 robustness).
+
+    Returns {"summary": {...8 keys...}, "tasks": [...]}; caller wraps with
+    status/baseline_number etc.
+    """
+    # Pre-build task cache ONCE (TAIL #1) — cuts ~50% COM dispatches on Summary check
+    real_tasks: List[Any] = []
+    for i in range(1, proj.Tasks.Count + 1):
+        t = proj.Tasks(i)
+        if t is not None and not t.Summary:
+            real_tasks.append(t)
+
+    tasks_var: List[Dict[str, Any]] = []
+    slipped_ct = ahead_ct = on_time_ct = 0
+    total_start_drift = total_finish_drift = 0.0
+    total_dur_var_h = total_work_var_h = 0.0
+    total_cost_var = 0.0
+
+    for t in real_tasks:
+        a = get_a(t)
+        b = get_b(t)
+        start_var = _datetime_diff_days(b["start"], a["start"])
+        finish_var = _datetime_diff_days(b["finish"], a["finish"])
+        dur_var = (b["duration_h"] or 0) - (a["duration_h"] or 0)
+        work_var = (b["work_h"] or 0) - (a["work_h"] or 0)
+        cost_var = (b["cost"] or 0) - (a["cost"] or 0)
+
+        if finish_var > variance_threshold_days:
+            status = "slipped"
+            slipped_ct += 1
+        elif finish_var < -variance_threshold_days:
+            status = "ahead"
+            ahead_ct += 1
+        else:
+            status = "on_time"
+            on_time_ct += 1
+
+        total_start_drift += start_var
+        total_finish_drift += finish_var
+        total_dur_var_h += dur_var
+        total_work_var_h += work_var
+        total_cost_var += cost_var
+
+        # EPSILON-based no_change (TAIL #4) — robust to float residue
+        no_change = (
+            abs(start_var) < _VARIANCE_EPSILON
+            and abs(finish_var) < _VARIANCE_EPSILON
+            and abs(dur_var) < _VARIANCE_EPSILON
+            and abs(work_var) < _VARIANCE_EPSILON
+            and abs(cost_var) < _VARIANCE_EPSILON
+        )
+        if not include_unchanged and no_change:
+            continue
+        tasks_var.append({
+            "id": t.ID,
+            "name": t.Name,
+            "start_var_days": round(start_var, 2),
+            "finish_var_days": round(finish_var, 2),
+            "duration_var_h": round(dur_var, 2),
+            "work_var_h": round(work_var, 2),
+            "cost_var": round(cost_var, 2),
+            "status": status,
+        })
+
+    return {
+        "summary": {
+            "slipped_count": slipped_ct,
+            "ahead_count": ahead_ct,
+            "on_time_count": on_time_ct,
+            "total_start_drift_days": round(total_start_drift, 2),
+            "total_finish_drift_days": round(total_finish_drift, 2),
+            "total_duration_var_h": round(total_dur_var_h, 2),
+            "total_work_var_h": round(total_work_var_h, 2),
+            "total_cost_var": round(total_cost_var, 2),
+        },
+        "tasks": tasks_var,
+    }
+
+
 def _msp_baseline_compare(baseline_number: int = 0,
                          include_unchanged: bool = False,
                          variance_threshold_days: float = 0.0) -> Dict[str, Any]:
@@ -1324,75 +1440,18 @@ def _msp_baseline_compare(baseline_number: int = 0,
     if _baseline_saved_date(proj, baseline_number) is None:
         return {"status": "error",
                 "error": f"Baseline {baseline_number} not saved (no baseline data to compare against)"}
-    tasks_var = []
-    slipped_ct = ahead_ct = on_time_ct = 0
-    total_start_drift = total_finish_drift = 0.0
-    total_dur_var_h = total_work_var_h = 0.0
-    total_cost_var = 0.0
     try:
-        for i in range(1, proj.Tasks.Count + 1):
-            t = proj.Tasks(i)
-            if t is None or t.Summary:
-                continue
-            bd = _read_task_baseline(t, baseline_number)
-            cur_start = str(t.Start) if t.Start else None
-            cur_finish = str(t.Finish) if t.Finish else None
-            cur_dur_h = float(t.Duration) / 60.0 if t.Duration else 0.0
-            cur_work_h = float(t.Work) / 60.0 if t.Work else 0.0
-            cur_cost = _parse_rate(t.Cost) if t.Cost else 0.0
-
-            start_var = _datetime_diff_days(cur_start, bd["start"])
-            finish_var = _datetime_diff_days(cur_finish, bd["finish"])
-            dur_var = cur_dur_h - (bd["duration_h"] or 0)
-            work_var = cur_work_h - (bd["work_h"] or 0)
-            cost_var = cur_cost - (bd["cost"] or 0)
-
-            # Status by finish variance + threshold
-            if finish_var > variance_threshold_days:
-                status = "slipped"
-                slipped_ct += 1
-            elif finish_var < -variance_threshold_days:
-                status = "ahead"
-                ahead_ct += 1
-            else:
-                status = "on_time"
-                on_time_ct += 1
-
-            total_start_drift += start_var
-            total_finish_drift += finish_var
-            total_dur_var_h += dur_var
-            total_work_var_h += work_var
-            total_cost_var += cost_var
-
-            # Filter list per include_unchanged
-            no_change = (start_var == 0 and finish_var == 0 and
-                        dur_var == 0 and work_var == 0 and cost_var == 0)
-            if not include_unchanged and no_change:
-                continue
-            tasks_var.append({
-                "id": t.ID,
-                "name": t.Name,
-                "start_var_days": round(start_var, 2),
-                "finish_var_days": round(finish_var, 2),
-                "duration_var_h": round(dur_var, 2),
-                "work_var_h": round(work_var, 2),
-                "cost_var": round(cost_var, 2),
-                "status": status,
-            })
+        result = _compute_variance_set(
+            proj,
+            get_a=lambda t: _read_task_baseline(t, baseline_number),
+            get_b=_read_task_current_state,
+            include_unchanged=include_unchanged,
+            variance_threshold_days=variance_threshold_days,
+        )
         return {
             "status": "ok",
             "baseline_number": baseline_number,
-            "summary": {
-                "slipped_count": slipped_ct,
-                "ahead_count": ahead_ct,
-                "on_time_count": on_time_ct,
-                "total_start_drift_days": round(total_start_drift, 2),
-                "total_finish_drift_days": round(total_finish_drift, 2),
-                "total_duration_var_h": round(total_dur_var_h, 2),
-                "total_work_var_h": round(total_work_var_h, 2),
-                "total_cost_var": round(total_cost_var, 2),
-            },
-            "tasks": tasks_var,
+            **result,
         }
     except Exception as e:
         logger.error(f"_msp_baseline_compare({baseline_number}) failed: {e}")
@@ -1433,71 +1492,19 @@ def _msp_baseline_compare_two(baseline_a: int,
     if _baseline_saved_date(proj, baseline_b) is None:
         return {"status": "error",
                 "error": f"baseline_b ({baseline_b}) is not saved"}
-    tasks_var = []
-    slipped_ct = ahead_ct = on_time_ct = 0
-    total_start_drift = total_finish_drift = 0.0
-    total_dur_var_h = total_work_var_h = 0.0
-    total_cost_var = 0.0
     try:
-        for i in range(1, proj.Tasks.Count + 1):
-            t = proj.Tasks(i)
-            if t is None or t.Summary:
-                continue
-            a_data = _read_task_baseline(t, baseline_a)
-            b_data = _read_task_baseline(t, baseline_b)
-            # var = b - a (delta FROM baseline_a TO baseline_b)
-            start_var = _datetime_diff_days(b_data["start"], a_data["start"])
-            finish_var = _datetime_diff_days(b_data["finish"], a_data["finish"])
-            dur_var = (b_data["duration_h"] or 0) - (a_data["duration_h"] or 0)
-            work_var = (b_data["work_h"] or 0) - (a_data["work_h"] or 0)
-            cost_var = (b_data["cost"] or 0) - (a_data["cost"] or 0)
-
-            # Status by finish variance + threshold
-            if finish_var > variance_threshold_days:
-                status = "slipped"
-                slipped_ct += 1
-            elif finish_var < -variance_threshold_days:
-                status = "ahead"
-                ahead_ct += 1
-            else:
-                status = "on_time"
-                on_time_ct += 1
-
-            total_start_drift += start_var
-            total_finish_drift += finish_var
-            total_dur_var_h += dur_var
-            total_work_var_h += work_var
-            total_cost_var += cost_var
-
-            no_change = (start_var == 0 and finish_var == 0 and
-                         dur_var == 0 and work_var == 0 and cost_var == 0)
-            if not include_unchanged and no_change:
-                continue
-            tasks_var.append({
-                "id": t.ID,
-                "name": t.Name,
-                "start_var_days": round(start_var, 2),
-                "finish_var_days": round(finish_var, 2),
-                "duration_var_h": round(dur_var, 2),
-                "work_var_h": round(work_var, 2),
-                "cost_var": round(cost_var, 2),
-                "status": status,
-            })
+        result = _compute_variance_set(
+            proj,
+            get_a=lambda t: _read_task_baseline(t, baseline_a),
+            get_b=lambda t: _read_task_baseline(t, baseline_b),
+            include_unchanged=include_unchanged,
+            variance_threshold_days=variance_threshold_days,
+        )
         return {
             "status": "ok",
             "baseline_a": baseline_a,
             "baseline_b": baseline_b,
-            "summary": {
-                "slipped_count": slipped_ct,
-                "ahead_count": ahead_ct,
-                "on_time_count": on_time_ct,
-                "total_start_drift_days": round(total_start_drift, 2),
-                "total_finish_drift_days": round(total_finish_drift, 2),
-                "total_duration_var_h": round(total_dur_var_h, 2),
-                "total_work_var_h": round(total_work_var_h, 2),
-                "total_cost_var": round(total_cost_var, 2),
-            },
-            "tasks": tasks_var,
+            **result,
         }
     except Exception as e:
         logger.error(f"_msp_baseline_compare_two({baseline_a},{baseline_b}) failed: {e}")

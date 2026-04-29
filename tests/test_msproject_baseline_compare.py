@@ -111,3 +111,22 @@ def test_compare_task_added_after_baseline_save_no_silent_on_time(clean_test_pro
     post_entry = next(t for t in r["tasks"] if t["id"] == post_r["task_id"])
     assert post_entry is not None
     assert post_entry["duration_var_h"] > 0  # Real signal that it has no baseline
+
+
+def test_compare_perf_100_tasks_under_3s(clean_test_project):
+    """Stretch perf: 100 tasks <3s with shared helper + pre-build cache (TAIL #1).
+
+    Phase 3a T49 stretches the perf bound from 50 (T44) to 100 tasks.
+    The pre-build `real_tasks` cache in _compute_variance_set cuts ~50% of
+    the COM dispatches on `t.Summary` checks vs the per-call proj.Tasks(i)
+    pattern.
+    """
+    for i in range(100):
+        _msp_task_add_single(name=f"Perf100T{i:03d}-T49", duration="1d")
+    _msp_baseline_save(baseline_number=0)
+    start = time.time()
+    r = _msp_baseline_compare(baseline_number=0)
+    elapsed = time.time() - start
+    assert r["status"] == "ok"
+    assert r["summary"]["on_time_count"] == 100
+    assert elapsed < 3.0, f"compare 100 tasks took {elapsed:.2f}s (target <3s)"

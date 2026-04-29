@@ -2792,6 +2792,17 @@ def _msp_task_bulk_add_mspdi(items: List[Dict[str, Any]]) -> Dict[str, Any]:
     w.bulk_add_tasks(items)
     w.save(tmp_path)
 
+    # Pre-compute expected Duration per item (in MSP minutes) for post-paste
+    # fix-up. MSP 16.0 silently drops <Duration> from MSPDI FileOpen imports
+    # (Phase 2b TAIL — verified by probe across multiple XML variants:
+    # adding <Manual>0</Manual>, full Calendar with WorkingTimes,
+    # <MinutesPerDay>/<MinutesPerWeek> project settings, <Start>/<Finish>
+    # — none restore Duration). Workaround: post-paste, re-set t.Duration
+    # via COM in batch mode (~5 ms/task, ≈1s for 200 tasks).
+    _expected_durations_min = [
+        _parse_duration(item.get("duration", "1d")) for item in items
+    ]
+
     # Save & flip DisplayAlerts (this is what suppresses the Import Wizard dialog)
     prev_alerts = True
     try:
@@ -2896,20 +2907,37 @@ def _msp_task_bulk_add_mspdi(items: List[Dict[str, Any]]) -> Dict[str, Any]:
                 except Exception:
                     pass
 
-        # Collect IDs of newly added tasks (everything past last_count)
+        # Collect IDs of newly added tasks AND restore Duration (MSPDI import
+        # drops it — see workaround note above). The collection loop iterates
+        # only valid (non-None) rows, in items order, so duration_idx maps
+        # 1:1 to items[].
         target_proj = app.ActiveProject
         added_task_ids = []
+        duration_set_failures = 0
+        duration_idx = 0
         for i in range(last_count + 1, target_proj.Tasks.Count + 1):
             t = target_proj.Tasks(i)
-            if t is not None:
-                added_task_ids.append(t.ID)
+            if t is None:
+                continue
+            if duration_idx < len(_expected_durations_min):
+                try:
+                    t.Duration = _expected_durations_min[duration_idx]
+                except Exception as e:
+                    duration_set_failures += 1
+                    logger.debug(
+                        f"post-paste Duration set failed at row {i} "
+                        f"(idx={duration_idx}): {e}"
+                    )
+            added_task_ids.append(t.ID)
+            duration_idx += 1
 
         return {
             "status": "ok",
             "path": "mspdi_bulk",
             "count": len(added_task_ids),
             "task_ids": added_task_ids,
-            "method": "FileOpen + EditCopy + EditPaste",
+            "method": "FileOpen + EditCopy + EditPaste + post-paste Duration set",
+            "duration_set_failures": duration_set_failures,
         }
     except Exception as e:
         logger.error(f"MSPDI bulk path failed: {e}; falling back to COM batch")

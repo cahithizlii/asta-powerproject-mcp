@@ -2354,15 +2354,38 @@ def _msp_progress_time_phased_write(task_id: int,
                                  "error": "no time slots in range (assignment "
                                           "may not span this date)"})
                 continue
-            # Distribute hours across all slots evenly
+            # Filter slots to those that fall WITHIN the requested period —
+            # MSP returns boundary slots (e.g. the day before a 1-day query)
+            # that should be skipped to honor caller intent.
+            target_indices: List[int] = []
+            for i in range(1, tsv.Count + 1):
+                try:
+                    item = tsv.Item(i)
+                    item_start = item.StartDate
+                    # Compare naive vs tz-aware safely by stripping tz
+                    if hasattr(item_start, "tzinfo") and item_start.tzinfo is not None:
+                        item_start_cmp = item_start.replace(tzinfo=None)
+                    else:
+                        item_start_cmp = item_start
+                    ps_cmp = ps.replace(tzinfo=None) if ps.tzinfo else ps
+                    pe_cmp = pe.replace(tzinfo=None) if pe.tzinfo else pe
+                    if item_start_cmp >= ps_cmp and item_start_cmp < pe_cmp:
+                        target_indices.append(i)
+                except Exception:
+                    continue
+            # Fallback: if filter excluded everything, write to all slots so
+            # something lands (out-of-range edge case).
+            if not target_indices:
+                target_indices = list(range(1, tsv.Count + 1))
+            # Distribute hours across selected slots evenly
             minutes_total = _hours_to_minutes(hours)
-            slot_count = tsv.Count
+            slot_count = len(target_indices)
             per_slot = minutes_total // slot_count
             remainder = minutes_total - (per_slot * slot_count)
             slot_failures = 0
-            for i in range(1, slot_count + 1):
+            for n, i in enumerate(target_indices, start=1):
                 try:
-                    val = per_slot + (remainder if i == slot_count else 0)
+                    val = per_slot + (remainder if n == slot_count else 0)
                     tsv.Item(i).Value = val
                 except Exception as e:
                     slot_failures += 1
@@ -2379,6 +2402,66 @@ def _msp_progress_time_phased_write(task_id: int,
             "task_id": task_id, "resource_id": resource_id,
             "unit": unit,
             "written_count": written, "failures": failures}
+
+
+def _msp_progress_time_phased_read(task_id: int,
+                                   resource_id: int,
+                                   start_date: str,
+                                   end_date: str,
+                                   unit: str = "day") -> Dict[str, Any]:
+    """Read per-period actual_work from an assignment via TimeScaleData.
+
+    Phase 3b T61. Returns {status, periods: [{period_start, period_end,
+    actual_work_h}]}. Empty/blank slot values (no actual yet) return as 0.0
+    hours, not omitted. COM signature uses positional args (StartDate,
+    EndDate, Type, TimeScaleUnit) per probe-confirmed signature on MSP 2024.
+    """
+    if unit not in _TIMESCALE_UNIT_MAP:
+        return {"status": "error",
+                "error": f"unit must be 'day' or 'week', got '{unit}'"}
+    unit_code = _TIMESCALE_UNIT_MAP[unit]
+
+    try:
+        from dateutil import parser
+        ds = parser.parse(str(start_date))
+        de = parser.parse(str(end_date))
+    except Exception as e:
+        return {"status": "error",
+                "error": f"could not parse date range: {e}"}
+
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    t = _find_task_by_id(proj, task_id)
+    if t is None:
+        return {"status": "error", "error": f"Task ID {task_id} not found"}
+    asg = _get_assignment_by_resource_id(t, resource_id)
+    if asg is None:
+        return {"status": "error",
+                "error": f"No assignment for resource_id {resource_id} on task {task_id}"}
+
+    out: List[Dict[str, Any]] = []
+    try:
+        # Positional call: (StartDate, EndDate, Type, TimeScaleUnit)
+        tsv = asg.TimeScaleData(ds, de,
+                                _PJ_TIMESCALED_ACTUAL_WORK,
+                                unit_code)
+        for i in range(1, tsv.Count + 1):
+            try:
+                item = tsv.Item(i)
+                out.append({
+                    "period_start": _msp_dt_or_none(item.StartDate),
+                    "period_end": _msp_dt_or_none(item.EndDate),
+                    "actual_work_h": _minutes_to_hours(item.Value),
+                })
+            except Exception as e:
+                logger.debug(f"_msp_progress_time_phased_read item {i} failed: {e}")
+                continue
+        return {"status": "ok",
+                "task_id": task_id, "resource_id": resource_id,
+                "unit": unit, "periods": out}
+    except Exception as e:
+        logger.error(f"_msp_progress_time_phased_read failed: {e}")
+        return {"status": "error", "error": _format_com_error(e)}
 
 
 def _msp_task_update(task_id: int, name: Optional[str] = None,

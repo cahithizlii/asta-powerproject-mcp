@@ -2080,6 +2080,49 @@ def _msp_progress_set_assignment(task_id: int,
             "changes": changes, "failures": failures}
 
 
+def _msp_progress_get_assignments(task_id: int) -> Dict[str, Any]:
+    """List all per-resource progress on a task.
+
+    Returns {status, task_id, assignments: [{resource_id, resource_name,
+    actual_work_h, percent_work_complete, remaining_work_h, units,
+    actual_start, actual_finish}, ...]}.
+    """
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    t = _find_task_by_id(proj, task_id)
+    if t is None:
+        return {"status": "error", "error": f"Task ID {task_id} not found"}
+    out: List[Dict[str, Any]] = []
+    try:
+        for i in range(1, t.Assignments.Count + 1):
+            try:
+                asg = t.Assignments(i)
+                if asg is None:
+                    continue
+                try:
+                    res = asg.Resource
+                    res_name = res.Name if res is not None else None
+                except Exception:
+                    res_name = None
+                out.append({
+                    "resource_id": int(asg.ResourceID),
+                    "resource_name": res_name,
+                    "actual_work_h": _minutes_to_hours(asg.ActualWork),
+                    "actual_start": _msp_dt_or_none(asg.ActualStart),
+                    "actual_finish": _msp_dt_or_none(asg.ActualFinish),
+                    "percent_work_complete": float(asg.PercentWorkComplete or 0),
+                    "remaining_work_h": _minutes_to_hours(asg.RemainingWork),
+                    "units": float(asg.Units or 0),
+                })
+            except Exception as e:
+                logger.debug(f"_msp_progress_get_assignments row {i} failed: {e}")
+                continue
+        return {"status": "ok", "task_id": task_id, "assignments": out}
+    except Exception as e:
+        logger.error(f"_msp_progress_get_assignments({task_id}) failed: {e}")
+        return {"status": "error", "error": _format_com_error(e)}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

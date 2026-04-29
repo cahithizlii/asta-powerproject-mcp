@@ -2464,6 +2464,93 @@ def _msp_progress_time_phased_read(task_id: int,
         return {"status": "error", "error": _format_com_error(e)}
 
 
+def _msp_progress_bulk_update_loop(items: List[Dict[str, Any]],
+                                   path_label: str,
+                                   task_map: Dict[int, Any]) -> Dict[str, Any]:
+    """Inner loop using pre-built task map + per-item field application.
+
+    Items: [{task_id, percent_complete?, actual_work_h?, percent_work_complete?,
+             actual_start?, actual_finish?, remaining_work_h?, physical_pct?}, ...]
+    """
+    updated: List[Dict[str, Any]] = []
+    failures: List[Dict[str, Any]] = []
+    progress_field_keys = (_PROGRESS_PCT_FIELDS | _PROGRESS_WORK_FIELDS
+                           | _PROGRESS_DURATION_FIELDS | _PROGRESS_DATE_FIELDS)
+    for item in items:
+        tid = item.get("task_id")
+        t = task_map.get(tid) if tid is not None else None
+        if t is None:
+            failures.append({**item, "error": f"task_id {tid} not found"})
+            continue
+        # Apply each progress field present on this item
+        applied: List[str] = []
+        item_failures: List[str] = []
+        # Pre-validate pct
+        for pf in _PROGRESS_PCT_FIELDS:
+            if pf in item and item[pf] is not None:
+                try:
+                    item[pf] = _normalize_progress_pct(item[pf])
+                except ValueError as e:
+                    item_failures.append(f"{pf}: {e}")
+                    continue
+        if item_failures:
+            failures.append({"task_id": tid, "error": "; ".join(item_failures)})
+            continue
+        for field in progress_field_keys:
+            if field in item and item[field] is not None:
+                try:
+                    _msp_task_set_progress_field(t, field, item[field])
+                    applied.append(field)
+                except Exception as e:
+                    item_failures.append(f"{field}: {_format_com_error(e)}")
+        if applied:
+            updated.append({"task_id": tid, "applied": applied})
+        if item_failures:
+            failures.append({"task_id": tid, "error": "; ".join(item_failures),
+                            "applied": applied})
+    status = "ok" if not failures else ("partial" if updated else "error")
+    return {"status": status, "path": path_label,
+            "count": len(updated),
+            "updated": updated, "failures": failures}
+
+
+def _msp_progress_bulk_update(items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Hybrid bulk progress update: routes by item count (Phase 1 _route_operation).
+
+    Mirrors Phase 2b T37 _msp_resource_bulk_assign:
+      - <=5 items   -> com_direct (no batch mode)
+      - 6-19 items  -> com_batch  (batch mode + loop)
+      - >=20 items  -> mspdi_bulk (Phase 3b: com_batch_fallback;
+                       true MSPDI progress merge = Phase 4+)
+
+    Pre-builds task_id -> Task map ONCE to avoid O(N×M) lookup blow-up.
+
+    Returns: {status, path, count, updated, failures}
+    """
+    if not items:
+        return {"status": "ok", "path": "noop", "count": 0,
+                "updated": [], "failures": []}
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    task_map = _build_task_id_map(proj)
+
+    path = _route_operation(len(items))
+    if path == "com_direct":
+        return _msp_progress_bulk_update_loop(items, "com_direct", task_map)
+    elif path == "com_batch":
+        _enter_batch_mode()
+        try:
+            return _msp_progress_bulk_update_loop(items, "com_batch", task_map)
+        finally:
+            _exit_batch_mode()
+    else:
+        _enter_batch_mode()
+        try:
+            return _msp_progress_bulk_update_loop(items, "mspdi_bulk", task_map)
+        finally:
+            _exit_batch_mode()
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

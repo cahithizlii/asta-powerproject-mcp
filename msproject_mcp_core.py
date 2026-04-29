@@ -1612,6 +1612,203 @@ def _msp_baseline_set_active(baseline_number: int) -> Dict[str, Any]:
                      "baseline_number parameter — they don't require setting an active baseline.")}
 
 
+# ==================== PHASE 3b — PROGRESS MANAGEMENT ====================
+# Tool: msproject_progress (12 actions). Insertion point: between Phase 3a
+# baseline section and Phase 1 _msp_task_update.
+# Builds on: _validate_active_project, _format_com_error, _parse_rate,
+# _find_task_by_id, _find_resource_by_id, _msp_dt_or_none, _route_operation,
+# _enter_batch_mode, _exit_batch_mode, _build_task_id_map.
+
+# ---------- PROGRESS CONSTANTS ----------
+
+_PROGRESS_PCT_FIELDS = frozenset({
+    "percent_complete",
+    "percent_work_complete",
+    "physical_pct",
+})
+
+_PROGRESS_WORK_FIELDS = frozenset({
+    "actual_work_h",
+    "remaining_work_h",
+})
+
+_PROGRESS_DURATION_FIELDS = frozenset({
+    "actual_duration_h",
+    "remaining_duration_h",
+})
+
+_PROGRESS_DATE_FIELDS = frozenset({
+    "actual_start",
+    "actual_finish",
+    "stop",
+    "resume",
+})
+
+# Probe-confirmed (msproject_typelib.txt + MSP 16.0 round-trip):
+_TIMESCALE_UNIT_MAP = {
+    "day": 8,    # pjTimescaleDays
+    "week": 6,   # pjTimescaleWeeks
+}
+
+_PJ_TIMESCALED_ACTUAL_WORK = 24  # pjAssignmentTimescaledActualWork
+
+
+# ---------- PROGRESS HELPERS ----------
+
+def _normalize_progress_pct(v: Any) -> float:
+    """Validate + normalize a percentage value (0-100).
+
+    Accepts int / float / str ('50', '50.5', '50%'). Raises ValueError on
+    out-of-range or non-numeric input. Returns float rounded to 2 decimals.
+    """
+    if v is None:
+        raise ValueError("progress percentage cannot be None")
+    if isinstance(v, str):
+        s = v.strip().rstrip("%").strip()
+        try:
+            f = float(s)
+        except Exception:
+            raise ValueError(f"progress percentage not numeric: {v!r}")
+    else:
+        try:
+            f = float(v)
+        except Exception:
+            raise ValueError(f"progress percentage not numeric: {v!r}")
+    if f < 0 or f > 100:
+        raise ValueError(f"progress percentage must be 0-100, got {f}")
+    return round(f, 2)
+
+
+def _hours_to_minutes(h: float) -> int:
+    """Convert public-API hours to MSP COM minutes (rounded int)."""
+    return int(round(float(h) * 60))
+
+
+def _minutes_to_hours(m: Any) -> float:
+    """Convert MSP COM minutes to public-API hours (float, 2 decimals)."""
+    if m is None:
+        return 0.0
+    try:
+        return round(float(m) / 60.0, 2)
+    except Exception:
+        return 0.0
+
+
+def _validate_actual_dates(start: Optional[str],
+                          finish: Optional[str]) -> Optional[str]:
+    """Verify actual_start <= actual_finish if both provided.
+
+    Returns None if valid, or an error message string if invalid.
+    Tolerant of ISO 8601, pywintypes datetime str, and dateutil-parseable input.
+    """
+    if start is None or finish is None:
+        return None
+    try:
+        from dateutil import parser
+        s = parser.parse(str(start))
+        f = parser.parse(str(finish))
+    except Exception as e:
+        return f"could not parse dates ({start!r}, {finish!r}): {e}"
+    if s > f:
+        return (f"actual_start ({start}) must be <= actual_finish ({finish})")
+    return None
+
+
+def _get_assignment_by_resource_id(task: Any, resource_id: int) -> Optional[Any]:
+    """Find an assignment on the task matching the given resource_id.
+
+    Iterates task.Assignments (1-indexed COM collection). Returns Assignment
+    object or None.
+    """
+    try:
+        for i in range(1, task.Assignments.Count + 1):
+            try:
+                asg = task.Assignments(i)
+                if asg is None:
+                    continue
+                if int(asg.ResourceID) == int(resource_id):
+                    return asg
+            except Exception:
+                continue
+    except Exception as e:
+        logger.debug(f"_get_assignment_by_resource_id iter failed: {e}")
+    return None
+
+
+def _read_task_progress_dict(task: Any) -> Dict[str, Any]:
+    """Read all progress fields from a task → dict shaped for get_task_progress.
+
+    Each property is guarded; failure on one field yields safe default.
+    """
+    out: Dict[str, Any] = {}
+    pct_pairs = [
+        ("PercentComplete", "percent_complete", 0),
+        ("PercentWorkComplete", "percent_work_complete", 0),
+        ("PhysicalPercentComplete", "physical_pct", 0),
+    ]
+    for prop, key, default in pct_pairs:
+        try:
+            v = getattr(task, prop)
+            out[key] = float(v) if v is not None else default
+        except Exception:
+            out[key] = default
+    date_pairs = [
+        ("ActualStart", "actual_start"),
+        ("ActualFinish", "actual_finish"),
+        ("Stop", "stop"),
+        ("Resume", "resume"),
+    ]
+    for prop, key in date_pairs:
+        try:
+            out[key] = _msp_dt_or_none(getattr(task, prop))
+        except Exception:
+            out[key] = None
+    work_pairs = [
+        ("ActualWork", "actual_work_h"),
+        ("RemainingWork", "remaining_work_h"),
+        ("ActualDuration", "actual_duration_h"),
+        ("RemainingDuration", "remaining_duration_h"),
+    ]
+    for prop, key in work_pairs:
+        try:
+            out[key] = _minutes_to_hours(getattr(task, prop))
+        except Exception:
+            out[key] = 0.0
+    return out
+
+
+def _msp_task_set_progress_field(task: Any, field: str, value: Any) -> None:
+    """Low-level setter that maps public field names → MSP COM properties.
+
+    Raises on COM error; caller wraps in try/except per-field for partial-failure
+    aggregation.
+    """
+    if field == "percent_complete":
+        task.PercentComplete = _normalize_progress_pct(value)
+    elif field == "percent_work_complete":
+        task.PercentWorkComplete = _normalize_progress_pct(value)
+    elif field == "physical_pct":
+        task.PhysicalPercentComplete = _normalize_progress_pct(value)
+    elif field == "actual_start":
+        task.ActualStart = value
+    elif field == "actual_finish":
+        task.ActualFinish = value
+    elif field == "actual_duration_h":
+        task.ActualDuration = _hours_to_minutes(value)
+    elif field == "actual_work_h":
+        task.ActualWork = _hours_to_minutes(value)
+    elif field == "remaining_work_h":
+        task.RemainingWork = _hours_to_minutes(value)
+    elif field == "remaining_duration_h":
+        task.RemainingDuration = _hours_to_minutes(value)
+    elif field == "stop":
+        task.Stop = value
+    elif field == "resume":
+        task.Resume = value
+    else:
+        raise ValueError(f"Unknown progress field: {field}")
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

@@ -38,3 +38,21 @@ def test_list_three_saved(clean_test_project):
     assert r["count_saved"] == 3
     numbers = [b["number"] for b in r["baselines"]]
     assert numbers == [0, 3, 7]  # sorted ascending
+
+
+def test_list_returns_user_provided_name(clean_test_project):
+    """Save with name='Original' -> list shows the name (TAIL #3)."""
+    _msp_task_add_single(name="NamedT-T50", duration="2d")
+    _msp_baseline_save(baseline_number=0, name="Original")
+    r = _msp_baseline_list()
+    assert r["status"] == "ok"
+    assert r["count_saved"] == 1
+    assert r["baselines"][0]["name"] == "Original"
+
+
+def test_list_returns_none_when_no_name_provided(clean_test_project):
+    """Save without name -> list shows name=None (no false retention)."""
+    _msp_task_add_single(name="UnnamedT-T50", duration="2d")
+    _msp_baseline_save(baseline_number=0)
+    r = _msp_baseline_list()
+    assert r["baselines"][0]["name"] is None

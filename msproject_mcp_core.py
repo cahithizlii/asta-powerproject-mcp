@@ -13,7 +13,7 @@ import logging
 import os
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import datetime as _dt
 
@@ -1027,6 +1027,14 @@ BASELINE_NUMBERS = list(range(11))  # [0, 1, ..., 10]
 # (Verified from msproject_typelib.txt enum PjSaveBaselineTo.)
 INTO_BASELINE_MAP = {n: (0 if n == 0 else 10 + n) for n in BASELINE_NUMBERS}
 
+# Module-level session-level baseline name retention (TAIL #3).
+# MSP COM doesn't natively persist baseline names, so we track them in-process
+# for the save->list round-trip. Keys: (project_name, baseline_number).
+# Values: name strings provided to _msp_baseline_save. Cleared on baseline
+# clear / clear_all. Lost on Python process restart (best-effort metadata,
+# matches the pattern established in T40).
+_BASELINE_NAMES: Dict[Tuple[str, int], str] = {}
+
 
 # ---------- BASELINE HELPERS ----------
 
@@ -1146,6 +1154,15 @@ def _msp_baseline_save(baseline_number: int = 0,
         logger.error(f"_msp_baseline_save({baseline_number}) BaselineSave failed: {e}")
         return {"status": "error", "error": _format_com_error(e)}
 
+    # TAIL #3: retain user-provided name for session-level list lookup.
+    # If `name` is None, leave any prior retention untouched (re-saving the
+    # same slot without a new name preserves the previous label — cheap memo).
+    if name:
+        try:
+            _BASELINE_NAMES[(proj.Name, baseline_number)] = name
+        except Exception:
+            pass  # proj.Name read failure shouldn't fail save
+
     # Phase 2: metadata read-back (best-effort — save already succeeded)
     result: Dict[str, Any] = {"status": "ok",
                               "baseline_number": baseline_number,
@@ -1194,6 +1211,11 @@ def _msp_baseline_clear(baseline_number: int = 0) -> Dict[str, Any]:
     try:
         from_code = _baseline_into_code(baseline_number)
         app.BaselineClear(All=True, From=from_code)
+        # TAIL #3: evict retained name (if any) for this slot.
+        try:
+            _BASELINE_NAMES.pop((proj.Name, baseline_number), None)
+        except Exception:
+            pass
         return {"status": "ok",
                 "baseline_number": baseline_number,
                 "was_saved_date": str(was_saved) if was_saved else None}
@@ -1221,6 +1243,13 @@ def _msp_baseline_clear_all() -> Dict[str, Any]:
             cleared.append(n)
         except Exception as e:
             failures.append({"baseline_number": n, "error": _format_com_error(e)})
+    # TAIL #3: evict retained names for ALL slots of this project.
+    try:
+        proj_name = proj.Name
+        for key in [k for k in _BASELINE_NAMES if k[0] == proj_name]:
+            _BASELINE_NAMES.pop(key, None)
+    except Exception:
+        pass
     return {"status": "ok" if not failures else "partial",
             "cleared": cleared,
             "count": len(cleared),
@@ -1254,7 +1283,10 @@ def _msp_baseline_list() -> Dict[str, Any]:
                 total_cost += data["cost"] if data["cost"] else 0
             out.append({
                 "number": n,
-                "name": None,  # MSP doesn't store baseline names natively
+                # TAIL #3: session-level retention from _msp_baseline_save's
+                # `name` arg. None when no name was ever supplied (or after
+                # clear/clear_all/process restart).
+                "name": _BASELINE_NAMES.get((proj.Name, n)),
                 "saved_date": str(saved),
                 "task_count": task_ct,
                 "total_duration_days": round(total_dur_min / 60 / 8, 2),

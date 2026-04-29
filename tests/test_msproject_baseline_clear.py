@@ -2,7 +2,7 @@
 import pytest
 from msproject_mcp_core import (
     _msp_baseline_save, _msp_baseline_clear, _msp_baseline_clear_all,
-    _msp_task_add_single, _baseline_saved_date,
+    _msp_baseline_list, _msp_task_add_single, _baseline_saved_date,
 )
 
 
@@ -55,3 +55,18 @@ def test_clear_all_when_none_saved(clean_test_project):
     assert r["status"] == "ok"
     assert r["cleared"] == []
     assert r["count"] == 0
+
+
+def test_clear_evicts_retained_name(clean_test_project):
+    """Clear baseline -> its retained name is evicted (TAIL #3)."""
+    _msp_task_add_single(name="NamedClearT-T50", duration="2d")
+    _msp_baseline_save(baseline_number=0, name="ToBeCleared")
+    # Verify name is retained
+    r = _msp_baseline_list()
+    assert r["baselines"][0]["name"] == "ToBeCleared"
+    # Clear
+    _msp_baseline_clear(baseline_number=0)
+    # Re-save without name -> name should NOT be the old "ToBeCleared"
+    _msp_baseline_save(baseline_number=0)
+    r2 = _msp_baseline_list()
+    assert r2["baselines"][0]["name"] is None

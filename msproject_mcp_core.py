@@ -2123,6 +2123,84 @@ def _msp_progress_get_assignments(task_id: int) -> Dict[str, Any]:
         return {"status": "error", "error": _format_com_error(e)}
 
 
+def _msp_progress_set_by_date(progress_date: Any,
+                              scope: str = "all",
+                              as_scheduled: bool = True) -> Dict[str, Any]:
+    """Bulk-update progress to a given date (``app.UpdateProject``).
+
+    Implements the "plan = actual" up-to-data-date assumption — fast retroactive
+    backlog catch-up. Phase 3b — see design doc Section 6 (Q1) and Open
+    Questions #2 for already-progressed task interaction.
+
+    Probe-confirmed signature on MSP 16.0::
+
+        UpdateProject(All, UpdateDate, action)
+
+    where ``All`` (bool): True = all tasks / False = currently-selected only;
+    ``UpdateDate`` (datetime.datetime; **not** pywintypes.Time — COM rejects);
+    ``action`` (int): 1 = update progress as scheduled (default), 0 =
+    reschedule incomplete only (no progress write), 2 = no-op.
+
+    Args:
+        progress_date: ISO 8601 string or ``datetime.datetime``. Empty / unparseable
+                       string returns ``{status: error}``.
+        scope: ``"all"`` (entire project) or ``"selected"`` (currently selected
+               tasks in MSP UI).
+        as_scheduled: True → action=1 (write progress as scheduled up to date);
+                      False → action=0 (reschedule incomplete portion only).
+                      Note: MSP COM ``UpdateProject`` does not expose a pure
+                      "% complete only" mode. ``as_scheduled=False`` here means
+                      reschedule-incomplete (lighter touch — no actuals written).
+
+    Returns:
+        ``{status, progress_date, mode, scope, task_count_affected}`` on success;
+        ``{status: error, error}`` on parse / COM failure.
+    """
+    if scope not in ("all", "selected"):
+        return {"status": "error",
+                "error": f"scope must be 'all' or 'selected', got '{scope}'"}
+    # Parse progress_date → plain datetime.datetime (NOT pywintypes — COM rejects)
+    try:
+        if isinstance(progress_date, _dt.datetime):
+            pd = progress_date
+        elif isinstance(progress_date, str):
+            s = progress_date.strip()
+            if not s:
+                return {"status": "error",
+                        "error": "progress_date is empty string"}
+            try:
+                pd = _dt.datetime.fromisoformat(
+                    s.replace("+00:00", "").rstrip("Z")
+                )
+            except Exception:
+                from dateutil import parser
+                pd = parser.parse(s, dayfirst=False)
+        else:
+            return {"status": "error",
+                    "error": f"unsupported progress_date type: "
+                             f"{type(progress_date).__name__}"}
+    except Exception as e:
+        return {"status": "error",
+                "error": f"could not parse progress_date {progress_date!r}: {e}"}
+
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    task_count_before = proj.Tasks.Count
+    try:
+        all_tasks_flag = (scope == "all")
+        action_val = 1 if as_scheduled else 0  # 1 = update as scheduled; 0 = reschedule incomplete only
+        # Probe-confirmed signature on MSP 16.0: positional only, plain datetime.
+        app.UpdateProject(all_tasks_flag, pd, action_val)
+        return {"status": "ok",
+                "progress_date": pd.isoformat(),
+                "mode": "as_scheduled" if as_scheduled else "reschedule_incomplete",
+                "scope": scope,
+                "task_count_affected": task_count_before}
+    except Exception as e:
+        logger.error(f"_msp_progress_set_by_date({progress_date}) failed: {e}")
+        return {"status": "error", "error": _format_com_error(e)}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

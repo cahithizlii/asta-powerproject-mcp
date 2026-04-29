@@ -1504,6 +1504,41 @@ def _msp_baseline_compare_two(baseline_a: int,
         return {"status": "error", "error": _format_com_error(e)}
 
 
+def _msp_baseline_summary(baseline_number: int = 0) -> Dict[str, Any]:
+    """Project-level RAG status from baseline comparison.
+
+    RAG thresholds:
+      green  : slipped_pct <= 5
+      amber  : 5 < slipped_pct <= 20
+      red    : slipped_pct > 20
+    """
+    cmp_result = _msp_baseline_compare(baseline_number=baseline_number,
+                                       include_unchanged=True)
+    if cmp_result.get("status") != "ok":
+        return cmp_result  # propagate error
+    s = cmp_result["summary"]
+    total_tasks = s["slipped_count"] + s["ahead_count"] + s["on_time_count"]
+    slipped_pct = (s["slipped_count"] / total_tasks * 100.0) if total_tasks > 0 else 0.0
+    if slipped_pct <= 5:
+        health = "green"
+    elif slipped_pct <= 20:
+        health = "amber"
+    else:
+        health = "red"
+    return {
+        "status": "ok",
+        "baseline_number": baseline_number,
+        "project": {
+            "task_count": total_tasks,
+            "slipped_count": s["slipped_count"],
+            "slipped_pct": round(slipped_pct, 2),
+            "start_drift_days": s["total_start_drift_days"],
+            "finish_drift_days": s["total_finish_drift_days"],
+            "schedule_health": health,
+        },
+    }
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

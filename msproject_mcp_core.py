@@ -41,7 +41,7 @@ mcp = FastMCP(
     instructions=(
         "MS Project COM-based MCP server. Connects to running MS Project (Application='MSProject.Application'). "
         "Hybrid speed: 1-5 items COM direct, 6-19 batch, 20+ MSPDI bulk import. "
-        "Tools: msproject_task, msproject_link, msproject_schedule, msproject_calendar, msproject_resource, msproject_baseline."
+        "Tools: msproject_task, msproject_link, msproject_schedule, msproject_calendar, msproject_resource, msproject_baseline, msproject_progress."
     ),
 )
 
@@ -3494,6 +3494,72 @@ async def msproject_baseline(params: dict) -> str:
                  "error": f"Unknown action '{action}'. Valid: save/clear/clear_all/list/get_task_baseline/compare/compare_two/summary/set_active"}
     except Exception as e:
         logger.error(f"msproject_baseline({action}) failed: {e}")
+        r = {"status": "error", "error": _format_com_error(e)}
+    return json.dumps(r, default=str, ensure_ascii=False)
+
+
+@mcp.tool(
+    name="msproject_progress",
+    annotations={"title": "MS Project Progress Operations", "readOnlyHint": False},
+)
+async def msproject_progress(params: dict) -> str:
+    """Task + assignment progress, time-phased actuals, status date, EVM-ready summary.
+
+    Actions:
+    - set_task_progress: Task-level set. Params: task_id, [percent_complete, percent_work_complete, actual_start, actual_finish, actual_duration_h, actual_work_h, remaining_work_h, remaining_duration_h, physical_pct, stop, resume]
+    - get_task_progress: Task-level read. Params: task_id
+    - set_assignment_progress: Per-resource man-hour set. Params: task_id, resource_id, [actual_work_h, actual_start, actual_finish, percent_work_complete, remaining_work_h, units]
+    - get_assignment_progress: Per-task assignments list. Params: task_id
+    - set_progress_by_date: Bulk update via app.UpdateProject. Params: progress_date, [scope='all', as_scheduled=True]
+    - set_status_date: Set proj.StatusDate (data_date). Params: status_date
+    - clear_progress: Single-task progress reset. Params: task_id
+    - clear_all_progress: Project-wide progress reset.
+    - time_phased_actual_write: Per-period actual_work write. Params: task_id, resource_id, periods, [unit='day']
+    - time_phased_actual_read: Per-period actual_work read. Params: task_id, resource_id, start_date, end_date, [unit='day']
+    - bulk_progress_update: Hybrid bulk path. Params: items (list of {task_id, ...progress fields})
+    - summary: Project-level EVM-ready aggregate.
+
+    Phase 3b (29 Apr 2026). DCMA-aligned: physical_pct exposed for EV input
+    (independent of percent_complete). Foundation for Phase 5 msproject_evm.
+    """
+    import json
+    action = params.get("action", "")
+    p = {k: v for k, v in params.items() if k != "action"}
+    try:
+        if action == "set_task_progress":
+            r = _msp_progress_set_task(**p)
+        elif action == "get_task_progress":
+            r = _msp_progress_get_task(**p)
+        elif action == "set_assignment_progress":
+            r = _msp_progress_set_assignment(**p)
+        elif action == "get_assignment_progress":
+            r = _msp_progress_get_assignments(**p)
+        elif action == "set_progress_by_date":
+            r = _msp_progress_set_by_date(**p)
+        elif action == "set_status_date":
+            r = _msp_progress_set_status_date(**p)
+        elif action == "clear_progress":
+            r = _msp_progress_clear(**p)
+        elif action == "clear_all_progress":
+            r = _msp_progress_clear_all(**p)
+        elif action == "time_phased_actual_write":
+            r = _msp_progress_time_phased_write(**p)
+        elif action == "time_phased_actual_read":
+            r = _msp_progress_time_phased_read(**p)
+        elif action == "bulk_progress_update":
+            r = _msp_progress_bulk_update(**p)
+        elif action == "summary":
+            r = _msp_progress_summary(**p)
+        else:
+            r = {"status": "error",
+                 "error": f"Unknown action '{action}'. Valid: set_task_progress/"
+                          "get_task_progress/set_assignment_progress/"
+                          "get_assignment_progress/set_progress_by_date/"
+                          "set_status_date/clear_progress/clear_all_progress/"
+                          "time_phased_actual_write/time_phased_actual_read/"
+                          "bulk_progress_update/summary"}
+    except Exception as e:
+        logger.error(f"msproject_progress({action}) failed: {e}")
         r = {"status": "error", "error": _format_com_error(e)}
     return json.dumps(r, default=str, ensure_ascii=False)
 

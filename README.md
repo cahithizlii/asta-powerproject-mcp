@@ -9,7 +9,7 @@ Asta Powerproject and Microsoft Project.
 |---|---|---|
 | `asta_powerproject_mcp` | `asta_mcp_core.py` | Live COM control of Asta Powerproject (8 tools): tasks, links, progress, resources, schedule, codes, views, exports. |
 | `asta_powerproject_file` | `asta_mcp_file.py` | File-based read access via MPXJ/MSPDI for Asta `.pp/.xer/.xml` (4 tools): query, resources, calendar, edit. |
-| `msproject_mcp` | `msproject_mcp_core.py` | Microsoft Project COM with hybrid bulk routing (6 tools, ~40 actions): `msproject_task`, `msproject_link`, `msproject_schedule`, `msproject_calendar`, `msproject_resource`, `msproject_baseline`. |
+| `msproject_mcp` | `msproject_mcp_core.py` | Microsoft Project COM with hybrid bulk routing (7 tools, ~52 actions): `msproject_task`, `msproject_link`, `msproject_schedule`, `msproject_calendar`, `msproject_resource`, `msproject_baseline`, `msproject_progress`. |
 
 ## Phase 1 Status — MS Project MCP
 
@@ -83,6 +83,40 @@ user's active project.
 
 Full pytest coverage: **203/203 + 1 xfail** (156 Phase 1+2a+2b + 47 Phase 3a).
 Tool count after Phase 3a: **6 tools, ~40 actions**.
+
+## Phase 3b — Progress Management (29 Apr 2026)
+
+`msproject_progress` tool with 12 actions, dual-track progress + time-phased
+actuals + EVM foundation:
+
+**Task-level:**
+- `set_task_progress` / `get_task_progress` — % complete, % work complete,
+  actual_start/finish, actual_work, remaining_work, **physical_pct (DCMA)**,
+  stop/resume
+
+**Assignment-level (per-resource man-hour):**
+- `set_assignment_progress` / `get_assignment_progress` — assignment.ActualWork,
+  PercentWorkComplete, RemainingWork, Units (rolls up to task automatically)
+
+**Time-phased (TimeScaleData):**
+- `time_phased_actual_write` / `time_phased_actual_read` — per-day or
+  per-week actual_work buckets for hakediş/EVM period delta reporting
+
+**Bulk operations:**
+- `set_progress_by_date` — `app.UpdateProject(ProgressDate)` retroactive
+  catch-up (plan = actual up to date)
+- `bulk_progress_update` — hybrid 1-5/6-19/20+ path (Phase 2b T37 pattern)
+- `set_status_date` — `proj.StatusDate` (data_date)
+- `clear_progress` / `clear_all_progress` — reset progress
+
+**EVM-ready aggregate:**
+- `summary` — BAC, ACWP, project_pct_complete, task counts (completed/
+  in_progress/not_started). Foundation for upcoming Phase 5 `msproject_evm`.
+
+Acceptance: [`samples/build_progress_lifecycle.py`](samples/build_progress_lifecycle.py)
+runs full progress lifecycle in <15s (measured 5.74s on dev box).
+
+Tool count: **7 tools, ~52 actions**.
 
 ## Quick Start
 

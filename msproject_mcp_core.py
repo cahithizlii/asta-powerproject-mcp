@@ -2201,6 +2201,33 @@ def _msp_progress_set_by_date(progress_date: Any,
         return {"status": "error", "error": _format_com_error(e)}
 
 
+def _msp_progress_set_status_date(status_date: str) -> Dict[str, Any]:
+    """Set proj.StatusDate (CLAUDE.md RULE 5 'data_date').
+
+    Used by EVM tooling (Phase 5) and time-phased PV/EV calculations.
+    """
+    try:
+        from dateutil import parser
+        sd = parser.parse(str(status_date))
+    except Exception as e:
+        return {"status": "error",
+                "error": f"could not parse status_date {status_date!r}: {e}"}
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    try:
+        previous = _msp_dt_or_none(proj.StatusDate)
+    except Exception:
+        previous = None
+    try:
+        proj.StatusDate = sd
+        return {"status": "ok",
+                "status_date": str(sd),
+                "previous": previous}
+    except Exception as e:
+        logger.error(f"_msp_progress_set_status_date({status_date}) failed: {e}")
+        return {"status": "error", "error": _format_com_error(e)}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

@@ -1399,6 +1399,111 @@ def _msp_baseline_compare(baseline_number: int = 0,
         return {"status": "error", "error": _format_com_error(e)}
 
 
+def _msp_baseline_compare_two(baseline_a: int,
+                              baseline_b: int,
+                              include_unchanged: bool = False,
+                              variance_threshold_days: float = 0.0) -> Dict[str, Any]:
+    """Compare two saved baselines as a delta (baseline_b - baseline_a).
+
+    Variance is computed as (baseline_b - baseline_a): the change FROM
+    baseline_a TO baseline_b. Use case: baseline_a=0 (Original Plan),
+    baseline_b=1 (Revised Plan) → positive finish_var_days = task slipped
+    between revisions; negative = task pulled ahead between revisions.
+
+    Both baselines must be saved (have a baseline_save_date). Per-task fields
+    with None on either side (e.g. tasks added after a save) yield 0 from
+    _datetime_diff_days, matching the compare-action contract.
+
+    Args:
+        baseline_a: 0-10, the "earlier" baseline slot to subtract.
+        baseline_b: 0-10, the "later" baseline slot.
+        include_unchanged: if False, omit zero-variance tasks from the list.
+        variance_threshold_days: tasks with |finish_var_days| <= threshold
+            count as on_time.
+    """
+    for label, n in [("baseline_a", baseline_a), ("baseline_b", baseline_b)]:
+        if n not in BASELINE_NUMBERS:
+            return {"status": "error",
+                    "error": f"{label} must be 0-10, got {n}"}
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    if _baseline_saved_date(proj, baseline_a) is None:
+        return {"status": "error",
+                "error": f"baseline_a ({baseline_a}) is not saved"}
+    if _baseline_saved_date(proj, baseline_b) is None:
+        return {"status": "error",
+                "error": f"baseline_b ({baseline_b}) is not saved"}
+    tasks_var = []
+    slipped_ct = ahead_ct = on_time_ct = 0
+    total_start_drift = total_finish_drift = 0.0
+    total_dur_var_h = total_work_var_h = 0.0
+    total_cost_var = 0.0
+    try:
+        for i in range(1, proj.Tasks.Count + 1):
+            t = proj.Tasks(i)
+            if t is None or t.Summary:
+                continue
+            a_data = _read_task_baseline(t, baseline_a)
+            b_data = _read_task_baseline(t, baseline_b)
+            # var = b - a (delta FROM baseline_a TO baseline_b)
+            start_var = _datetime_diff_days(b_data["start"], a_data["start"])
+            finish_var = _datetime_diff_days(b_data["finish"], a_data["finish"])
+            dur_var = (b_data["duration_h"] or 0) - (a_data["duration_h"] or 0)
+            work_var = (b_data["work_h"] or 0) - (a_data["work_h"] or 0)
+            cost_var = (b_data["cost"] or 0) - (a_data["cost"] or 0)
+
+            # Status by finish variance + threshold
+            if finish_var > variance_threshold_days:
+                status = "slipped"
+                slipped_ct += 1
+            elif finish_var < -variance_threshold_days:
+                status = "ahead"
+                ahead_ct += 1
+            else:
+                status = "on_time"
+                on_time_ct += 1
+
+            total_start_drift += start_var
+            total_finish_drift += finish_var
+            total_dur_var_h += dur_var
+            total_work_var_h += work_var
+            total_cost_var += cost_var
+
+            no_change = (start_var == 0 and finish_var == 0 and
+                         dur_var == 0 and work_var == 0 and cost_var == 0)
+            if not include_unchanged and no_change:
+                continue
+            tasks_var.append({
+                "id": t.ID,
+                "name": t.Name,
+                "start_var_days": round(start_var, 2),
+                "finish_var_days": round(finish_var, 2),
+                "duration_var_h": round(dur_var, 2),
+                "work_var_h": round(work_var, 2),
+                "cost_var": round(cost_var, 2),
+                "status": status,
+            })
+        return {
+            "status": "ok",
+            "baseline_a": baseline_a,
+            "baseline_b": baseline_b,
+            "summary": {
+                "slipped_count": slipped_ct,
+                "ahead_count": ahead_ct,
+                "on_time_count": on_time_ct,
+                "total_start_drift_days": round(total_start_drift, 2),
+                "total_finish_drift_days": round(total_finish_drift, 2),
+                "total_duration_var_h": round(total_dur_var_h, 2),
+                "total_work_var_h": round(total_work_var_h, 2),
+                "total_cost_var": round(total_cost_var, 2),
+            },
+            "tasks": tasks_var,
+        }
+    except Exception as e:
+        logger.error(f"_msp_baseline_compare_two({baseline_a},{baseline_b}) failed: {e}")
+        return {"status": "error", "error": _format_com_error(e)}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

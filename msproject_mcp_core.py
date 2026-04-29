@@ -1646,11 +1646,11 @@ _PROGRESS_DATE_FIELDS = frozenset({
 
 # Probe-confirmed (msproject_typelib.txt + MSP 16.0 round-trip):
 _TIMESCALE_UNIT_MAP = {
-    "day": 8,    # pjTimescaleDays
-    "week": 6,   # pjTimescaleWeeks
+    "day": 4,    # pjTimescaleDays (probe-confirmed MSP 2024 — T60)
+    "week": 3,   # pjTimescaleWeeks (probe-confirmed MSP 2024 — T60)
 }
 
-_PJ_TIMESCALED_ACTUAL_WORK = 24  # pjAssignmentTimescaledActualWork
+_PJ_TIMESCALED_ACTUAL_WORK = 10  # pjAssignmentTimescaledActualWork (probe-confirmed MSP 2024 — T60)
 
 
 # ---------- PROGRESS HELPERS ----------
@@ -2298,6 +2298,87 @@ def _msp_progress_clear_all() -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"_msp_progress_clear_all failed: {e}")
         return {"status": "error", "error": _format_com_error(e)}
+
+
+def _msp_progress_time_phased_write(task_id: int,
+                                    resource_id: int,
+                                    periods: List[Dict[str, Any]],
+                                    unit: str = "day") -> Dict[str, Any]:
+    """Write per-period actual_work to an assignment via TimeScaleData.
+
+    Phase 3b T60 — see design doc Section 6 Q2. Granularity: 'day' or 'week'.
+
+    periods: [{start: ISO, end: ISO, actual_work_h: float}, ...]
+    Each period maps to one (or more) TimeScaleValues slots; write fails per-
+    slot if MSP doesn't have a matching cell. Failures aggregate into
+    return['failures'] without raising. COM signature uses positional args
+    (StartDate, EndDate, Type, TimeScaleUnit) — note capital S in TimeScaleUnit
+    per probe-confirmed signature on MSP 2024.
+    """
+    if unit not in _TIMESCALE_UNIT_MAP:
+        return {"status": "error",
+                "error": f"unit must be 'day' or 'week', got '{unit}'"}
+    if not isinstance(periods, list) or not periods:
+        return {"status": "error", "error": "periods must be a non-empty list"}
+    unit_code = _TIMESCALE_UNIT_MAP[unit]
+
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    t = _find_task_by_id(proj, task_id)
+    if t is None:
+        return {"status": "error", "error": f"Task ID {task_id} not found"}
+    asg = _get_assignment_by_resource_id(t, resource_id)
+    if asg is None:
+        return {"status": "error",
+                "error": f"No assignment for resource_id {resource_id} on task {task_id}"}
+
+    from dateutil import parser
+    written = 0
+    failures: List[Dict[str, Any]] = []
+    for idx, p in enumerate(periods):
+        try:
+            ps = parser.parse(str(p["start"]))
+            pe = parser.parse(str(p["end"]))
+            hours = float(p["actual_work_h"])
+        except Exception as e:
+            failures.append({"index": idx, "period": p,
+                             "error": f"parse failed: {e}"})
+            continue
+        try:
+            # Positional call: (StartDate, EndDate, Type, TimeScaleUnit)
+            tsv = asg.TimeScaleData(ps, pe,
+                                    _PJ_TIMESCALED_ACTUAL_WORK,
+                                    unit_code)
+            if tsv.Count == 0:
+                failures.append({"index": idx, "period": p,
+                                 "error": "no time slots in range (assignment "
+                                          "may not span this date)"})
+                continue
+            # Distribute hours across all slots evenly
+            minutes_total = _hours_to_minutes(hours)
+            slot_count = tsv.Count
+            per_slot = minutes_total // slot_count
+            remainder = minutes_total - (per_slot * slot_count)
+            slot_failures = 0
+            for i in range(1, slot_count + 1):
+                try:
+                    val = per_slot + (remainder if i == slot_count else 0)
+                    tsv.Item(i).Value = val
+                except Exception as e:
+                    slot_failures += 1
+                    failures.append({"index": idx, "slot": i,
+                                     "error": _format_com_error(e)})
+            # Only count as written if at least one slot succeeded
+            if slot_failures < slot_count:
+                written += 1
+        except Exception as e:
+            failures.append({"index": idx, "period": p,
+                             "error": _format_com_error(e)})
+    status = "ok" if not failures else ("partial" if written else "error")
+    return {"status": status,
+            "task_id": task_id, "resource_id": resource_id,
+            "unit": unit,
+            "written_count": written, "failures": failures}
 
 
 def _msp_task_update(task_id: int, name: Optional[str] = None,

@@ -22,13 +22,16 @@ def test_progress_work_fields_constant():
 
 
 def test_timescale_unit_map_constant():
-    assert _TIMESCALE_UNIT_MAP["day"] == 8
-    assert _TIMESCALE_UNIT_MAP["week"] == 6
+    # T60 probe-confirmed via win32com.client.constants on MSP 2024:
+    #   pjTimescaleDays = 4, pjTimescaleWeeks = 3
+    assert _TIMESCALE_UNIT_MAP["day"] == 4
+    assert _TIMESCALE_UNIT_MAP["week"] == 3
 
 
 def test_pj_timescaled_actual_work_const():
-    # Probe-confirmed: pjAssignmentTimescaledActualWork == 24 on MSP 16.0
-    assert _PJ_TIMESCALED_ACTUAL_WORK == 24
+    # T60 probe-confirmed: pjAssignmentTimescaledActualWork == 10 on MSP 2024
+    # (T52 placeholder value 24 was wrong — corrected after live COM probe)
+    assert _PJ_TIMESCALED_ACTUAL_WORK == 10
 
 
 def test_normalize_progress_pct_int_float_str():

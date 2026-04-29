@@ -1998,6 +1998,88 @@ def _msp_progress_get_task(task_id: int) -> Dict[str, Any]:
         return {"status": "error", "error": _format_com_error(e)}
 
 
+def _msp_progress_set_assignment(task_id: int,
+                                 resource_id: int,
+                                 actual_work_h: Optional[float] = None,
+                                 actual_start: Optional[str] = None,
+                                 actual_finish: Optional[str] = None,
+                                 percent_work_complete: Optional[float] = None,
+                                 remaining_work_h: Optional[float] = None,
+                                 units: Optional[float] = None) -> Dict[str, Any]:
+    """Per-resource man-hour write on a single assignment.
+
+    Phase 3b — for hakediş workflows where each resource's hours are tracked
+    separately (e.g., "T101: COW=24h, STL=18h, MSN=10h").
+
+    MSP rolls up assignment-level writes to task.ActualWork automatically.
+    Returns {status, task_id, resource_id, changes: [field]}.
+    """
+    candidates = {
+        "actual_work_h": actual_work_h,
+        "actual_start": actual_start,
+        "actual_finish": actual_finish,
+        "percent_work_complete": percent_work_complete,
+        "remaining_work_h": remaining_work_h,
+        "units": units,
+    }
+    fields = {k: v for k, v in candidates.items() if v is not None}
+    if not fields:
+        return {"status": "error", "error": "no assignment fields provided"}
+
+    # Pre-validate pct
+    if "percent_work_complete" in fields:
+        try:
+            fields["percent_work_complete"] = _normalize_progress_pct(
+                fields["percent_work_complete"])
+        except ValueError as e:
+            return {"status": "error", "error": str(e)}
+    err = _validate_actual_dates(fields.get("actual_start"),
+                                 fields.get("actual_finish"))
+    if err:
+        return {"status": "error", "error": err}
+
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    t = _find_task_by_id(proj, task_id)
+    if t is None:
+        return {"status": "error", "error": f"Task ID {task_id} not found"}
+    asg = _get_assignment_by_resource_id(t, resource_id)
+    if asg is None:
+        return {"status": "error",
+                "error": f"No assignment for resource_id {resource_id} on task {task_id}"}
+
+    changes: List[str] = []
+    failures: List[Dict[str, str]] = []
+    for field, value in fields.items():
+        try:
+            if field == "actual_work_h":
+                asg.ActualWork = _hours_to_minutes(value)
+            elif field == "actual_start":
+                asg.ActualStart = _to_pywintypes_date(value)  # T52 fix integration
+            elif field == "actual_finish":
+                asg.ActualFinish = _to_pywintypes_date(value)  # T52 fix integration
+            elif field == "percent_work_complete":
+                asg.PercentWorkComplete = value
+            elif field == "remaining_work_h":
+                asg.RemainingWork = _hours_to_minutes(value)
+            elif field == "units":
+                asg.Units = float(value)
+            else:
+                raise ValueError(f"unknown assignment field: {field}")
+            changes.append(field)
+        except Exception as e:
+            failures.append({"field": field, "error": _format_com_error(e)})
+            logger.debug(
+                f"set_assignment_progress({task_id},{resource_id},{field}={value}) failed: {e}")
+
+    if not changes and failures:
+        return {"status": "error", "task_id": task_id, "resource_id": resource_id,
+                "error": "all assignment field writes failed", "failures": failures}
+    status = "ok" if not failures else "partial"
+    return {"status": status, "task_id": task_id, "resource_id": resource_id,
+            "changes": changes, "failures": failures}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

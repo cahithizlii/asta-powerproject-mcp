@@ -9,7 +9,7 @@ Asta Powerproject and Microsoft Project.
 |---|---|---|
 | `asta_powerproject_mcp` | `asta_mcp_core.py` | Live COM control of Asta Powerproject (8 tools): tasks, links, progress, resources, schedule, codes, views, exports. |
 | `asta_powerproject_file` | `asta_mcp_file.py` | File-based read access via MPXJ/MSPDI for Asta `.pp/.xer/.xml` (4 tools): query, resources, calendar, edit. |
-| `msproject_mcp` | `msproject_mcp_core.py` | Microsoft Project COM with hybrid bulk routing (5 tools, ~31 actions): `msproject_task`, `msproject_link`, `msproject_schedule`, `msproject_calendar`, `msproject_resource`. |
+| `msproject_mcp` | `msproject_mcp_core.py` | Microsoft Project COM with hybrid bulk routing (6 tools, ~40 actions): `msproject_task`, `msproject_link`, `msproject_schedule`, `msproject_calendar`, `msproject_resource`, `msproject_baseline`. |
 
 ## Phase 1 Status — MS Project MCP
 
@@ -63,6 +63,26 @@ in <5s) is xfail until Phase 3+ implements native MSPDI assignment merge.
 
 Full pytest coverage: **156/156 + 1 xfail** (83 Phase 1+2a + 73 Phase 2b).
 Tool count after Phase 2b: **5 tools, ~31 actions**.
+
+## Phase 3a Status — Baseline (28 Apr 2026)
+
+`msproject_baseline` tool with 9 actions, all 11 baseline slots (Baseline + Baseline1..Baseline10):
+
+- `save` / `clear` / `clear_all` — multi-baseline lifecycle
+- `list` — all saved baselines + metadata (saved date, task count, totals)
+- `get_task_baseline` — read one task's baseline values
+- `compare` — current vs baseline variance + threshold filter
+- `compare_two` — baseline-to-baseline delta (revision tracking)
+- `summary` — project-level RAG (green<=5% slipped, amber<=20%, red>20%)
+- `set_active` — graceful fallback if MSP version doesn't expose API
+
+Acceptance: [`samples/build_baseline_lifecycle.py`](samples/build_baseline_lifecycle.py)
+runs full Original -> progress -> revise -> compare lifecycle (40 tasks, 3 resources,
+120 assignments, 2 baselines, 2 compares, summary, list) in <10s, isolated from the
+user's active project.
+
+Full pytest coverage: **203/203 + 1 xfail** (156 Phase 1+2a+2b + 47 Phase 3a).
+Tool count after Phase 3a: **6 tools, ~40 actions**.
 
 ## Quick Start
 

@@ -41,7 +41,7 @@ mcp = FastMCP(
     instructions=(
         "MS Project COM-based MCP server. Connects to running MS Project (Application='MSProject.Application'). "
         "Hybrid speed: 1-5 items COM direct, 6-19 batch, 20+ MSPDI bulk import. "
-        "Tools: msproject_task, msproject_link, msproject_schedule, msproject_calendar, msproject_resource."
+        "Tools: msproject_task, msproject_link, msproject_schedule, msproject_calendar, msproject_resource, msproject_baseline."
     ),
 )
 
@@ -2396,6 +2396,57 @@ async def msproject_resource(params: dict) -> str:
                  "error": f"Unknown action '{action}'. Valid: add/update/delete/list/assign/unassign/bulk_assign"}
     except Exception as e:
         logger.error(f"msproject_resource({action}) failed: {e}")
+        r = {"status": "error", "error": _format_com_error(e)}
+    return json.dumps(r, default=str, ensure_ascii=False)
+
+
+@mcp.tool(
+    name="msproject_baseline",
+    annotations={"title": "MS Project Baseline Operations", "readOnlyHint": False},
+)
+async def msproject_baseline(params: dict) -> str:
+    """Multi-baseline (Baseline + Baseline1..Baseline10) management + variance reporting.
+
+    Actions:
+    - save: Save current as baseline. Params: [baseline_number=0, name, scope='all', roll_up_to_summary=True]
+    - clear: Clear single baseline. Params: [baseline_number=0]
+    - clear_all: Clear all 11 saved baselines.
+    - list: List all saved baselines with metadata.
+    - get_task_baseline: Read one task's baseline values. Params: task_id, [baseline_number=0]
+    - compare: Variance current vs baseline. Params: [baseline_number=0, include_unchanged=False, variance_threshold_days=0]
+    - compare_two: Delta between two baselines. Params: baseline_a, baseline_b, [include_unchanged, variance_threshold_days]
+    - summary: Project-level RAG status. Params: [baseline_number=0]
+    - set_active: Set active baseline for views (version-dependent). Params: baseline_number
+
+    Phase 3a (28 Apr 2026). RAG thresholds: green<=5%, amber<=20%, red>20% slipped.
+    """
+    import json
+    action = params.get("action", "")
+    p = {k: v for k, v in params.items() if k != "action"}
+    try:
+        if action == "save":
+            r = _msp_baseline_save(**p)
+        elif action == "clear":
+            r = _msp_baseline_clear(**p)
+        elif action == "clear_all":
+            r = _msp_baseline_clear_all(**p)
+        elif action == "list":
+            r = _msp_baseline_list(**p)
+        elif action == "get_task_baseline":
+            r = _msp_baseline_get_task_baseline(**p)
+        elif action == "compare":
+            r = _msp_baseline_compare(**p)
+        elif action == "compare_two":
+            r = _msp_baseline_compare_two(**p)
+        elif action == "summary":
+            r = _msp_baseline_summary(**p)
+        elif action == "set_active":
+            r = _msp_baseline_set_active(**p)
+        else:
+            r = {"status": "error",
+                 "error": f"Unknown action '{action}'. Valid: save/clear/clear_all/list/get_task_baseline/compare/compare_two/summary/set_active"}
+    except Exception as e:
+        logger.error(f"msproject_baseline({action}) failed: {e}")
         r = {"status": "error", "error": _format_com_error(e)}
     return json.dumps(r, default=str, ensure_ascii=False)
 

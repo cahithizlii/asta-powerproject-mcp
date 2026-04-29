@@ -1539,6 +1539,40 @@ def _msp_baseline_summary(baseline_number: int = 0) -> Dict[str, Any]:
     }
 
 
+def _msp_baseline_set_active(baseline_number: int) -> Dict[str, Any]:
+    """Set the active baseline for views/EVM calculations.
+
+    The "active baseline" controls which Baseline*N* fields the Earned Value
+    engine and baseline-aware views use. T47 probe (MSP 16.0) confirmed that
+    proj.EarnedValueBaseline is the real read/write property — round-trips
+    exactly. Other candidates (BaselineForEarnedValue, ActiveBaselineNumber)
+    silently swallow setattr without persisting on this MSP build.
+
+    NOTE: MSP COM API for this is version-dependent. Older MSP versions may
+    not expose EarnedValueBaseline; in that case the function returns a
+    graceful "not yet supported" error — saved baseline data is still readable
+    via get_task_baseline / compare regardless of which is "active".
+    """
+    if baseline_number not in BASELINE_NUMBERS:
+        return {"status": "error",
+                "error": f"baseline_number must be 0-10, got {baseline_number}"}
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    # Probe-confirmed property: proj.EarnedValueBaseline (read/write int, round-trips).
+    try:
+        proj.EarnedValueBaseline = baseline_number
+        readback = proj.EarnedValueBaseline
+        if readback == baseline_number:
+            return {"status": "ok", "active_baseline": baseline_number,
+                    "method": "proj.EarnedValueBaseline"}
+    except Exception as e:
+        logger.debug(f"_msp_baseline_set_active: EarnedValueBaseline failed: {e}")
+    return {"status": "error",
+            "error": ("set_active is not yet supported on this MS Project version. "
+                     "Use msproject_baseline compare/summary directly with the "
+                     "baseline_number parameter — they don't require setting an active baseline.")}
+
+
 def _msp_task_update(task_id: int, name: Optional[str] = None,
                      duration: Optional[str] = None,
                      start: Optional[str] = None, finish: Optional[str] = None,

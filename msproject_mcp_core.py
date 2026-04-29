@@ -1660,11 +1660,22 @@ def _normalize_progress_pct(v: Any) -> float:
 
     Accepts int / float / str ('50', '50.5', '50%'). Raises ValueError on
     out-of-range or non-numeric input. Returns float rounded to 2 decimals.
+
+    Note: ``bool`` is rejected explicitly. In Python ``bool`` is a subclass of
+    ``int`` so ``True`` would otherwise coerce to 1.0 and ``False`` to 0.0 —
+    JSON inputs like ``{"physical_pct": true}`` would silently produce 1%
+    progress. This guard catches that class of caller bug at the boundary.
     """
     if v is None:
         raise ValueError("progress percentage cannot be None")
+    if isinstance(v, bool):
+        raise ValueError(
+            f"progress percentage must be numeric, not bool: {v!r}"
+        )
     if isinstance(v, str):
         s = v.strip().rstrip("%").strip()
+        if not s:
+            raise ValueError(f"progress percentage is empty string: {v!r}")
         try:
             f = float(s)
         except Exception:
@@ -1698,19 +1709,38 @@ def _validate_actual_dates(start: Optional[str],
                           finish: Optional[str]) -> Optional[str]:
     """Verify actual_start <= actual_finish if both provided.
 
-    Returns None if valid, or an error message string if invalid.
-    Tolerant of ISO 8601, pywintypes datetime str, and dateutil-parseable input.
+    Returns ``None`` if valid, or an error message string if invalid.
+
+    Date format: ISO 8601 strict (``datetime.fromisoformat``-compatible).
+    Falls back to ``dateutil.parser.parse`` with ``dayfirst=False`` for
+    non-ISO inputs (e.g. the ``str()`` form of ``pywintypes.datetime``).
+
+    Format assumption: ambiguous slash-separated dates like ``01/02/2026`` are
+    interpreted as **US (Jan 2)**, never EU. Public callers should always pass
+    ISO 8601 to avoid surprise.
     """
     if start is None or finish is None:
         return None
+
+    def _parse(s: Any) -> "_dt.datetime":
+        s = str(s).strip()
+        if not s:
+            raise ValueError("empty date string")
+        try:
+            return _dt.datetime.fromisoformat(
+                s.replace("+00:00", "").rstrip("Z")
+            )
+        except Exception:
+            from dateutil import parser
+            return parser.parse(s, dayfirst=False)
+
     try:
-        from dateutil import parser
-        s = parser.parse(str(start))
-        f = parser.parse(str(finish))
+        s_dt = _parse(start)
+        f_dt = _parse(finish)
     except Exception as e:
         return f"could not parse dates ({start!r}, {finish!r}): {e}"
-    if s > f:
-        return (f"actual_start ({start}) must be <= actual_finish ({finish})")
+    if s_dt > f_dt:
+        return f"actual_start ({start}) must be <= actual_finish ({finish})"
     return None
 
 
@@ -1741,10 +1771,13 @@ def _read_task_progress_dict(task: Any) -> Dict[str, Any]:
     Each property is guarded; failure on one field yields safe default.
     """
     out: Dict[str, Any] = {}
+    # Defaults are 0.0 (float) for type stability — successful reads also use
+    # float(v), so JSON output remains uniform whether the read succeeded or
+    # fell back to the default.
     pct_pairs = [
-        ("PercentComplete", "percent_complete", 0),
-        ("PercentWorkComplete", "percent_work_complete", 0),
-        ("PhysicalPercentComplete", "physical_pct", 0),
+        ("PercentComplete", "percent_complete", 0.0),
+        ("PercentWorkComplete", "percent_work_complete", 0.0),
+        ("PhysicalPercentComplete", "physical_pct", 0.0),
     ]
     for prop, key, default in pct_pairs:
         try:
@@ -1777,6 +1810,58 @@ def _read_task_progress_dict(task: Any) -> Dict[str, Any]:
     return out
 
 
+def _to_pywintypes_date(v: Any) -> Any:
+    """Convert public-API date input to MSP COM-compatible pywintypes.Time.
+
+    MSP COM rejects raw strings on date properties (``task.ActualStart = "..."``
+    raises an opaque COM error). Public callers JSON-encode dates as ISO
+    strings, so this helper bridges the two.
+
+    Accepts:
+      * ``None`` → returns ``None`` (caller passes through to clear / no-op)
+      * ``pywintypes.datetime`` / ``pywintypes.TimeType`` → returned as-is
+      * ``datetime.datetime`` → wrapped via ``pywintypes.Time``
+      * ISO 8601 string (``2026-04-15`` or ``2026-04-15 08:00:00``) parsed
+        with ``datetime.fromisoformat``; trailing ``Z`` and ``+00:00`` stripped
+      * Non-ISO strings → fall back to ``dateutil.parser.parse`` with
+        ``dayfirst=False`` so ambiguous ``01/02/2026`` is deterministic (Jan 2)
+
+    Raises ``ValueError`` on empty string, unparseable string, or unsupported
+    type.
+    """
+    if v is None:
+        return None
+    # pywintypes.datetime / pywintypes.Time → pass through unchanged
+    try:
+        import pywintypes
+        if isinstance(v, pywintypes.TimeType):
+            return v
+    except ImportError:
+        pass
+    # datetime.datetime → wrap in pywintypes.Time
+    if isinstance(v, _dt.datetime):
+        import pywintypes
+        return pywintypes.Time(v)
+    # ISO 8601 string (preferred)
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            raise ValueError("date input is empty string")
+        try:
+            dt = _dt.datetime.fromisoformat(
+                s.replace("+00:00", "").rstrip("Z")
+            )
+        except Exception:
+            try:
+                from dateutil import parser
+                dt = parser.parse(s, dayfirst=False)
+            except Exception as e:
+                raise ValueError(f"could not parse date {v!r}: {e}")
+        import pywintypes
+        return pywintypes.Time(dt)
+    raise ValueError(f"unsupported date type: {type(v).__name__} ({v!r})")
+
+
 def _msp_task_set_progress_field(task: Any, field: str, value: Any) -> None:
     """Low-level setter that maps public field names → MSP COM properties.
 
@@ -1790,9 +1875,9 @@ def _msp_task_set_progress_field(task: Any, field: str, value: Any) -> None:
     elif field == "physical_pct":
         task.PhysicalPercentComplete = _normalize_progress_pct(value)
     elif field == "actual_start":
-        task.ActualStart = value
+        task.ActualStart = _to_pywintypes_date(value)
     elif field == "actual_finish":
-        task.ActualFinish = value
+        task.ActualFinish = _to_pywintypes_date(value)
     elif field == "actual_duration_h":
         task.ActualDuration = _hours_to_minutes(value)
     elif field == "actual_work_h":
@@ -1802,9 +1887,9 @@ def _msp_task_set_progress_field(task: Any, field: str, value: Any) -> None:
     elif field == "remaining_duration_h":
         task.RemainingDuration = _hours_to_minutes(value)
     elif field == "stop":
-        task.Stop = value
+        task.Stop = _to_pywintypes_date(value)
     elif field == "resume":
-        task.Resume = value
+        task.Resume = _to_pywintypes_date(value)
     else:
         raise ValueError(f"Unknown progress field: {field}")
 

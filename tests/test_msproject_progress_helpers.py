@@ -5,8 +5,8 @@ from msproject_mcp_core import (
     _PROGRESS_DATE_FIELDS, _TIMESCALE_UNIT_MAP, _PJ_TIMESCALED_ACTUAL_WORK,
     _normalize_progress_pct, _hours_to_minutes, _minutes_to_hours,
     _validate_actual_dates, _get_assignment_by_resource_id,
-    _read_task_progress_dict, _msp_task_add_single,
-    _msp_resource_add, _msp_resource_assign,
+    _read_task_progress_dict, _to_pywintypes_date,
+    _msp_task_add_single, _msp_resource_add, _msp_resource_assign,
 )
 
 
@@ -105,3 +105,78 @@ def test_read_task_progress_dict_initial_state(clean_test_project):
     assert p["actual_work_h"] == 0
     assert p["remaining_work_h"] >= 0  # 24h for 3d × 8h
     assert "physical_pct" in p
+
+
+# --- T52 review fix: edge cases for _normalize_progress_pct -----------------
+
+def test_normalize_progress_pct_rejects_empty_string():
+    """Empty / whitespace-only strings have no numeric meaning → reject."""
+    with pytest.raises(ValueError):
+        _normalize_progress_pct("")
+    with pytest.raises(ValueError):
+        _normalize_progress_pct("   ")
+
+
+def test_normalize_progress_pct_rejects_none():
+    with pytest.raises(ValueError):
+        _normalize_progress_pct(None)
+
+
+def test_normalize_progress_pct_rejects_bool():
+    """bool is subclass of int in Python — silently coerces to 0.0/1.0 unless
+    guarded. JSON ``{"physical_pct": true}`` would otherwise produce 1%
+    progress. Review fix #1."""
+    with pytest.raises(ValueError):
+        _normalize_progress_pct(True)
+    with pytest.raises(ValueError):
+        _normalize_progress_pct(False)
+
+
+def test_normalize_progress_pct_boundaries():
+    assert _normalize_progress_pct(0.0) == 0.0
+    assert _normalize_progress_pct(100.0) == 100.0
+    assert _normalize_progress_pct("0") == 0.0
+    assert _normalize_progress_pct("100") == 100.0
+
+
+def test_normalize_progress_pct_scientific_notation():
+    """1e2 = 100.0 — accepted via float() parsing."""
+    assert _normalize_progress_pct("1e2") == 100.0
+    assert _normalize_progress_pct("5e1") == 50.0
+
+
+# --- T52 review fix #3: _to_pywintypes_date helper --------------------------
+
+def test_to_pywintypes_date_handles_none_iso_and_datetime():
+    """Conversion helper for date setter (review fix #3)."""
+    import datetime
+    # None passes through
+    assert _to_pywintypes_date(None) is None
+    # ISO string parses
+    result = _to_pywintypes_date("2026-04-15")
+    assert result is not None
+    # datetime.datetime converts
+    dt = datetime.datetime(2026, 4, 15, 8, 0)
+    result = _to_pywintypes_date(dt)
+    assert result is not None
+    # Empty string raises
+    with pytest.raises(ValueError):
+        _to_pywintypes_date("")
+    # Garbage raises
+    with pytest.raises(ValueError):
+        _to_pywintypes_date("not a date")
+
+
+# --- T52 review fix #2: float type stability in _read_task_progress_dict ----
+
+def test_read_task_progress_dict_returns_floats(clean_test_project):
+    """Percentage fields should be float, not int (review fix #2)."""
+    add_t = _msp_task_add_single(name="FloatT-T52F", duration="1d")
+    proj = clean_test_project
+    from msproject_mcp_core import _find_task_by_id
+    t = _find_task_by_id(proj, add_t["task_id"])
+    p = _read_task_progress_dict(t)
+    # Defaults are 0.0 float, not 0 int
+    assert isinstance(p["percent_complete"], float)
+    assert isinstance(p["percent_work_complete"], float)
+    assert isinstance(p["physical_pct"], float)

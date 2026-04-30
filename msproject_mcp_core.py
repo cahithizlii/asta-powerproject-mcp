@@ -4473,6 +4473,78 @@ def _msp_file_add_resources(file_path: str, items: List[Dict[str, Any]]) -> Dict
         return {"status": "error", "error": str(e)}
 
 
+# T71 — fields key translation: unified contract -> mspdi_parser kwarg names
+_TASK_UPDATE_FIELD_MAP = {
+    "duration": "duration_str",
+    "name": "name",
+    "percent_complete": "percent_complete",
+    "notes": "notes",
+    "start": "start_date",
+    "finish": "finish_date",
+}
+
+
+def _msp_file_update_task(file_path: str, task_id: int,
+                          fields: Dict[str, Any]) -> Dict[str, Any]:
+    """Update a single task's fields in an XML file.
+
+    fields: unified-contract dict (keys: duration, name, percent_complete,
+    notes, start, finish). Translated to MspdiProject.update_task kwargs
+    via _TASK_UPDATE_FIELD_MAP.
+    """
+    if not isinstance(fields, dict) or not fields:
+        return {"status": "error", "error": "fields dict is required"}
+    try:
+        mgr = _get_msp_file_manager(file_path)
+        _ensure_xml_write_target(mgr)
+        # Translate field names
+        kwargs: Dict[str, Any] = {}
+        for k, v in fields.items():
+            mapped = _TASK_UPDATE_FIELD_MAP.get(k)
+            if mapped is None:
+                return {"status": "error",
+                        "error": f"Unknown field '{k}'. Valid: {list(_TASK_UPDATE_FIELD_MAP.keys())}"}
+            kwargs[mapped] = v
+        result = mgr.update_task(task_id=task_id, **kwargs)
+        # mspdi_parser returns dict with 'error' key on missing task
+        if isinstance(result, dict) and "error" in result:
+            return {"status": "error", "error": result["error"]}
+        mgr.save(output_path=file_path)
+        sync = _maybe_auto_sync(file_path)
+        return {"status": "ok", "task_id": task_id, **sync}
+    except FileNotFoundError as e:
+        return {"status": "error", "error": str(e)}
+    except ValueError as e:
+        return {"status": "error", "error": str(e)}
+    except Exception as e:
+        logger.exception(f"_msp_file_update_task failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+def _msp_file_save_as(file_path: str, output_path: str) -> Dict[str, Any]:
+    """Save an XML project to a new path. Source file unchanged.
+
+    output_path must end in .xml or .mspdi.
+    """
+    ext = os.path.splitext(output_path)[1].lower()
+    if ext not in ('.xml', '.mspdi'):
+        return {"status": "error",
+                "error": f"output_path must end in .xml or .mspdi (got '{ext}')"}
+    try:
+        mgr = _get_msp_file_manager(file_path)
+        _ensure_xml_write_target(mgr)
+        mgr.save(output_path=output_path)
+        size = os.path.getsize(output_path)
+        return {"status": "ok", "output_path": output_path, "size_bytes": size}
+    except FileNotFoundError as e:
+        return {"status": "error", "error": str(e)}
+    except ValueError as e:
+        return {"status": "error", "error": str(e)}
+    except Exception as e:
+        logger.exception(f"_msp_file_save_as failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 def main():
     """Run MCP server (stdio)."""
     mcp.run()

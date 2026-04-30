@@ -4215,6 +4215,83 @@ def _msp_file_read_progress(file_path: str,
         return {"status": "error", "error": str(e)}
 
 
+def _safe_eval_filter(expression: str, row: Dict[str, Any]) -> bool:
+    """Evaluate a simple filter expression against a row dict.
+
+    Supports: == != < <= > >= AND OR. String literals in single/double quotes.
+    Field names are dict keys (e.g., 'name', 'duration_h', 'percent_complete').
+
+    Restricted eval — no builtins, no module access, no function calls,
+    no attribute access. Only literal comparisons + boolean combinators.
+    """
+    # Normalize boolean operators (case-insensitive AND/OR)
+    expr = expression
+    for kw in (" AND ", " and "):
+        expr = expr.replace(kw, " and ")
+    for kw in (" OR ", " or "):
+        expr = expr.replace(kw, " or ")
+    # Reject dangerous patterns up front (defense in depth — empty builtins
+    # already prevent most attacks but explicit reject is faster + clearer)
+    forbidden = ("__", "import", "exec", "eval", "open(", "globals(",
+                 "locals(", "compile(", "lambda", ";")
+    for f in forbidden:
+        if f in expression:
+            raise ValueError(f"Expression contains forbidden token '{f}'")
+    safe_globals = {"__builtins__": {}}
+    safe_locals = {k: row.get(k) for k in row}
+    try:
+        return bool(eval(expr, safe_globals, safe_locals))
+    except SyntaxError as e:
+        raise ValueError(f"Invalid expression syntax: {e}") from e
+    except Exception as e:
+        # NameError on unknown field, TypeError on bad comparison, etc.
+        raise ValueError(f"Expression eval failed: {e}") from e
+
+
+def _msp_file_query(file_path: str,
+                    expression: str,
+                    limit: Optional[int] = None) -> Dict[str, Any]:
+    """Run an ad-hoc filter expression against tasks in a project file.
+
+    Returns matching task list with the standard task contract fields.
+    Expression syntax: simple Python-like comparisons with AND/OR operators.
+    Field names are task keys (id, name, duration_h, start, finish,
+    percent_complete, summary).
+
+    Examples:
+      "duration_h > 8 AND name == 'T2'"
+      "percent_complete < 100 OR summary == False"
+
+    Restricted eval — no function calls, imports, attribute access, or
+    builtins. Use _msp_file_read_tasks for unfiltered reads.
+    """
+    try:
+        mgr = _get_msp_file_manager(file_path)
+        if isinstance(mgr, MspdiProject):
+            raw_tasks = mgr.get_all_tasks()
+            tasks = [_normalize_mspdi_task(t) for t in raw_tasks]
+        else:
+            tasks = mgr.read_tasks()
+        # Exclude summary tasks for cleaner query results (matches read_tasks behavior)
+        tasks = [t for t in tasks if not t.get("summary", False)]
+        results = []
+        for t in tasks:
+            try:
+                if _safe_eval_filter(expression, t):
+                    results.append(t)
+            except ValueError as e:
+                return {"status": "error",
+                        "error": f"Invalid expression: {e}"}
+        if limit and limit > 0:
+            results = results[:limit]
+        return {"status": "ok", "count": len(results), "results": results}
+    except FileNotFoundError as e:
+        return {"status": "error", "error": str(e)}
+    except Exception as e:
+        logger.error(f"_msp_file_query({file_path}) failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 def main():
     """Run MCP server (stdio)."""
     mcp.run()

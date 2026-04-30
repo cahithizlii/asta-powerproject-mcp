@@ -118,6 +118,50 @@ runs full progress lifecycle in <15s (measured 5.74s on dev box).
 
 Tool count: **7 tools, ~52 actions**.
 
+## Phase 4 — File MCP (30 Apr 2026)
+
+`msproject_file` tool — file-based read+write for MS Project files
+(`.xml`/`.mspdi`/`.mpp`). 14 actions covering read, write, query, and
+bulk assignment HERO. **MS Project does not need to be running** for
+file operations; if it is and a project's `FullName` matches the
+edited file_path, write actions automatically `FileClose+FileOpen+
+Reschedule` for clean reload (conservative auto-sync — never touches
+unrelated projects).
+
+**Read (8):**
+- `read_tasks` / `read_links` / `read_resources` / `read_assignments`
+  / `read_calendars` — unified contract dicts via factory dispatch
+- `read_baselines` (Phase 3a integration) — minimal contract on XML
+  path until Phase 5 extends `mspdi_parser.add_baseline`
+- `read_progress` (Phase 3b integration) — % complete + actual_start/
+  finish (N/A sentinel normalized to None for EVM safety) +
+  actual_work_h + status_date
+- `query` — restricted-eval filter expressions (==, !=, <, <=, >, >=,
+  AND, OR). Sandboxed: empty `__builtins__` + forbidden-token preflight
+  (rejects `__`, `import`, `exec`, `eval`, `lambda`, `:=`, etc.)
+
+**Write (6, XML only — `.mpp` is Microsoft proprietary):**
+- `add_tasks` / `add_links` / `add_resources` — bulk add via
+  `mspdi_parser` (extended in T67/T68/T70 to expose `is_base`,
+  `actual_*`, `status_date`, `add_resource`)
+- `bulk_add_assignments` — **🚀 HERO**: 2800 assignments in <5s via
+  single XML write pass (pure Python, no COM crossing)
+- `update_task` — duration/name/percent_complete/notes/start/finish
+- `save_as` — copy to new `.xml`/`.mspdi` path
+
+**Format dispatch:**
+- `.xml`/`.mspdi` → native `MspdiProject` (zero Java dependency)
+- `.mpp` → `MspMppFileManager` (MPXJ + JPype JVM, lazy init —
+  read-only)
+- XML schema sniff (`_detect_msp_xml_schema`) refuses non-MSPDI XML
+  with informative redirect to Asta MCP
+
+Acceptance: [`samples/build_file_lifecycle.py`](samples/build_file_lifecycle.py)
+runs full read+write+HERO lifecycle in <30s (measured 0.57s on dev
+box; HERO 2800 assignments alone 0.07s).
+
+Tool count: **8 tools, 14 + ~52 = ~66 actions**.
+
 ## Quick Start
 
 1. Install deps: `pip install -r requirements.txt`

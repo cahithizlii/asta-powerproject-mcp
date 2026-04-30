@@ -4669,6 +4669,74 @@ def _auto_sync_to_open_msp(modified_xml_path: str) -> Dict[str, Any]:
             pass
 
 
+@mcp.tool(
+    name="msproject_file",
+    annotations={"title": "MS Project File-Based Operations", "readOnlyHint": False},
+)
+async def msproject_file(params: dict) -> str:
+    """File-based read+write for MS Project files (.xml/.mspdi/.mpp).
+
+    Actions:
+    Read (8): read_tasks, read_links, read_resources, read_assignments,
+              read_calendars, read_baselines, read_progress, query
+    Write (6): add_tasks, add_links, add_resources, bulk_add_assignments,
+               update_task, save_as
+
+    All actions require file_path. .xml/.mspdi via native Python parser
+    (zero Java); .mpp via MPXJ + JVM (lazy init).
+    Write actions: if MSP open AND a project's FullName matches file_path,
+    auto FileClose+FileOpen+Reschedule for clean reload (default — not
+    opt-in). MSP closed or unrelated projects → XML on disk only.
+
+    Phase 4 (30 Apr 2026). HERO: bulk_add_assignments 2800 in <5s.
+    """
+    import json
+    action = params.get("action", "")
+    p = {k: v for k, v in params.items() if k != "action"}
+    try:
+        if action == "read_tasks":
+            r = _msp_file_read_tasks(**p)
+        elif action == "read_links":
+            r = _msp_file_read_links(**p)
+        elif action == "read_resources":
+            r = _msp_file_read_resources(**p)
+        elif action == "read_assignments":
+            r = _msp_file_read_assignments(**p)
+        elif action == "read_calendars":
+            r = _msp_file_read_calendars(**p)
+        elif action == "read_baselines":
+            r = _msp_file_read_baselines(**p)
+        elif action == "read_progress":
+            r = _msp_file_read_progress(**p)
+        elif action == "query":
+            r = _msp_file_query(**p)
+        elif action == "add_tasks":
+            r = _msp_file_add_tasks(**p)
+        elif action == "add_links":
+            r = _msp_file_add_links(**p)
+        elif action == "add_resources":
+            r = _msp_file_add_resources(**p)
+        elif action == "bulk_add_assignments":
+            r = _msp_file_bulk_add_assignments(**p)
+        elif action == "update_task":
+            r = _msp_file_update_task(**p)
+        elif action == "save_as":
+            r = _msp_file_save_as(**p)
+        else:
+            r = {"status": "error",
+                 "error": (f"Unknown action '{action}'. Valid: read_tasks/"
+                           "read_links/read_resources/read_assignments/"
+                           "read_calendars/read_baselines/read_progress/"
+                           "query/add_tasks/add_links/add_resources/"
+                           "bulk_add_assignments/update_task/save_as")}
+    except TypeError as e:
+        r = {"status": "error", "error": f"Invalid params for {action}: {e}"}
+    except Exception as e:
+        logger.error(f"msproject_file({action}) failed: {e}")
+        r = {"status": "error", "error": str(e)}
+    return json.dumps(r, default=str, ensure_ascii=False)
+
+
 def main():
     """Run MCP server (stdio)."""
     mcp.run()

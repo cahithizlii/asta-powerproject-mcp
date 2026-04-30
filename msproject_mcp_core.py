@@ -3592,6 +3592,242 @@ async def msproject_progress(params: dict) -> str:
     return json.dumps(r, default=str, ensure_ascii=False)
 
 
+# ============================================================================
+# PHASE 4 - FILE MCP (msproject_file)
+# ============================================================================
+# Phase 4 (T65 foundations) — adds file-mode helpers separate from the COM
+# code above. Phase 1-3 helpers DO NOT reference anything below this line.
+# Imports/state added here:
+#   * MspdiProject (native MSPDI parser, reused from Asta side)
+#   * _jvm_started bool (lazy MPXJ JVM lifecycle)
+#   * _detect_msp_xml_schema, _get_msp_file_manager, MspMppFileManager
+# ----------------------------------------------------------------------------
+
+# Native MSPDI parser (zero Java dependency, reuse from Asta).
+from mspdi_parser import MspdiProject
+
+# JVM pre-start for MPXJ (lazy — only if .mpp encountered).
+_jvm_started = False
+
+
+def _ensure_jvm_started() -> None:
+    """Start JVM lazily on first MPP request. Idempotent.
+
+    MPXJ requires JPype1+JVM to read .mpp binaries. We pay this cost only
+    when the user actually opens a .mpp file. Re-invocation is a no-op.
+    """
+    global _jvm_started
+    if _jvm_started:
+        return
+    try:
+        import mpxj
+        if not mpxj.jpype.isJVMStarted():
+            mpxj.jpype.startJVM()
+            logger.info("JVM started for MPXJ")
+        _jvm_started = True
+    except ImportError as e:
+        raise RuntimeError(
+            "MPXJ not installed. For .mpp support: pip install mpxj jpype1"
+        ) from e
+
+
+def _detect_msp_xml_schema(file_path: str) -> bool:
+    """Read first 512 bytes; check for MS Project MSPDI namespace.
+
+    Returns True if MS Project XML (schemas.microsoft.com/project), False
+    if Asta or unknown schema. Raises FileNotFoundError if path missing.
+    """
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"File not found: {file_path}")
+    with open(file_path, 'rb') as f:
+        head = f.read(512).decode('utf-8', errors='replace')
+    return 'schemas.microsoft.com/project' in head
+
+
+def _mpxj_duration_to_hours(d) -> float:
+    """Convert MPXJ Duration object to hours (float). Handles None safely."""
+    if d is None:
+        return 0.0
+    try:
+        from org.mpxj import TimeUnit
+        n = float(d.getDuration())
+        unit = d.getUnits()
+        if unit == TimeUnit.HOURS:
+            return n
+        elif unit == TimeUnit.DAYS:
+            return n * 8.0
+        elif unit == TimeUnit.WEEKS:
+            return n * 40.0
+        elif unit == TimeUnit.MINUTES:
+            return n / 60.0
+        else:
+            return n  # fallback assume hours
+    except Exception:
+        return 0.0
+
+
+class MspMppFileManager:
+    """Read-only manager for .mpp files via MPXJ + JVM.
+
+    Adapted from Asta asta_mcp_file.py AstaFileManager (drops .pp support,
+    MPP only). MPP write is not supported by MPXJ — Phase 4 intentionally
+    keeps this class read-only.
+
+    Lazy load: __init__ does NOT touch MPXJ/JVM. The first read_*() call
+    triggers JVM start + UniversalProjectReader. This makes init cheap
+    (and importable on systems without Java).
+    """
+
+    def __init__(self, file_path: str):
+        self.file_path = file_path.replace("\\", "/")
+        if not os.path.exists(self.file_path):
+            raise FileNotFoundError(f"File not found: {self.file_path}")
+        self._project = None  # lazy load on first read
+
+    def _load(self):
+        if self._project is not None:
+            return self._project
+        _ensure_jvm_started()
+        from org.mpxj.reader import UniversalProjectReader
+        reader = UniversalProjectReader()
+        try:
+            self._project = reader.read(self.file_path)
+            logger.info(f"MPP loaded: {self.file_path}")
+            return self._project
+        except Exception as e:
+            raise RuntimeError(f"MPXJ read failed for {self.file_path}: {e}") from e
+
+    def read_tasks(self) -> List[Dict[str, Any]]:
+        proj = self._load()
+        out: List[Dict[str, Any]] = []
+        for t in proj.getTasks():
+            if t is None or t.getID() == 0:
+                continue
+            out.append({
+                "id": int(t.getID()),
+                "name": str(t.getName() or ""),
+                "duration_h": _mpxj_duration_to_hours(t.getDuration()),
+                "start": str(t.getStart()) if t.getStart() else None,
+                "finish": str(t.getFinish()) if t.getFinish() else None,
+                "percent_complete": float(t.getPercentageComplete() or 0),
+                "summary": bool(t.getSummary()),
+            })
+        return out
+
+    def read_links(self) -> List[Dict[str, Any]]:
+        proj = self._load()
+        out: List[Dict[str, Any]] = []
+        for t in proj.getTasks():
+            if t is None or t.getID() == 0:
+                continue
+            for rel in (t.getPredecessors() or []):
+                lag = rel.getLag()
+                out.append({
+                    "from_id": int(rel.getTargetTask().getID()),
+                    "to_id": int(t.getID()),
+                    "type": str(rel.getType()),
+                    "lag_days": _mpxj_duration_to_hours(lag) / 8.0 if lag else 0.0,
+                })
+        return out
+
+    def read_resources(self) -> List[Dict[str, Any]]:
+        proj = self._load()
+        out: List[Dict[str, Any]] = []
+        for r in proj.getResources():
+            if r is None or r.getID() == 0:
+                continue
+            out.append({
+                "id": int(r.getID()),
+                "name": str(r.getName() or ""),
+                "type": str(r.getType() or "Work"),
+                "max_units": float(r.getMaxUnits() or 1.0),
+            })
+        return out
+
+    def read_assignments(self) -> List[Dict[str, Any]]:
+        proj = self._load()
+        out: List[Dict[str, Any]] = []
+        for a in proj.getResourceAssignments():
+            t = a.getTask()
+            r = a.getResource()
+            if t is None or r is None:
+                continue
+            out.append({
+                "task_id": int(t.getID()),
+                "resource_id": int(r.getID()),
+                "units": float(a.getUnits() or 1.0),
+                "work_h": _mpxj_duration_to_hours(a.getWork()),
+            })
+        return out
+
+    def read_calendars(self) -> List[Dict[str, Any]]:
+        proj = self._load()
+        out: List[Dict[str, Any]] = []
+        for cal in proj.getCalendars():
+            out.append({
+                "name": str(cal.getName() or ""),
+                "is_base": bool(cal.getParent() is None),
+            })
+        return out
+
+    def read_baselines(self, baseline_number: int = 0) -> Dict[str, Any]:
+        return {
+            "baseline_number": baseline_number,
+            "saved_date": None,
+            "tasks": [],
+            "note": "MPP baseline read via MPXJ - limited fields",
+        }
+
+    def read_progress(self) -> Dict[str, Any]:
+        proj = self._load()
+        tasks: List[Dict[str, Any]] = []
+        for t in proj.getTasks():
+            if t is None or t.getID() == 0 or t.getSummary():
+                continue
+            tasks.append({
+                "id": int(t.getID()),
+                "percent_complete": float(t.getPercentageComplete() or 0),
+                "actual_work_h": _mpxj_duration_to_hours(t.getActualWork()),
+            })
+        try:
+            props = proj.getProjectProperties()
+            status_date = props.getStatusDate() if props else None
+        except Exception:
+            status_date = None
+        return {
+            "status_date": str(status_date) if status_date else None,
+            "tasks": tasks,
+        }
+
+
+def _get_msp_file_manager(file_path: str):
+    """Factory: returns MspdiProject for .xml/.mspdi, MspMppFileManager for .mpp.
+
+    Performs schema check for XML — refuses non-MSPDI XML with clear error
+    pointing at asta_powerproject_file MCP for Asta files.
+
+    Note on error precedence: extension is validated FIRST (cheap, no I/O)
+    so callers passing an unsupported extension always see ValueError, even
+    if the path doesn't exist. Existence check follows.
+    """
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext not in ('.xml', '.mspdi', '.mpp'):
+        raise ValueError(
+            f"Unsupported extension '{ext}'. Phase 4 supports: .xml, .mspdi, .mpp"
+        )
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"File not found: {file_path}")
+    if ext in ('.xml', '.mspdi'):
+        if not _detect_msp_xml_schema(file_path):
+            raise ValueError(
+                f"Not a MS Project XML - appears to be Asta or unknown schema. "
+                f"For Asta files use asta_powerproject_file MCP. File: {file_path}"
+            )
+        return MspdiProject(file_path)
+    # ext == '.mpp'
+    return MspMppFileManager(file_path)
+
+
 def main():
     """Run MCP server (stdio)."""
     mcp.run()

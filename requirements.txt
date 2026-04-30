@@ -12,6 +12,8 @@ python-dateutil>=2.8.0
 
 # Project file reading (supports .pp, .mpp, .xml, .xer)
 mpxj>=1.0.0
+# JPype1 - JVM bridge for MPXJ (.mpp read in Phase 4 file MCP)
+jpype1>=1.5
 
 # GUI Automation (for controlling Asta on Windows desktop)
 pyautogui>=0.9.54

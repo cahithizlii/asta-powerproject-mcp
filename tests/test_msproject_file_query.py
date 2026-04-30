@@ -67,3 +67,26 @@ def test_query_no_attribute_access():
     r = _msp_file_query(file_path=MSP_XML, expression="(1).__class__")
     # Either error or empty result acceptable; should not raise unhandled exception
     assert r["status"] in ("ok", "error")
+
+
+def test_query_walrus_rejected():
+    """T69 review fix: walrus operator (:=) is forbidden."""
+    r = _msp_file_query(file_path=MSP_XML, expression="(x := 5) > 3")
+    assert r["status"] == "error"
+    assert ":=" in r["error"]
+
+
+def test_query_include_summaries_default_excludes():
+    """Default behavior — summary tasks excluded before filter."""
+    r = _msp_file_query(file_path=MSP_XML, expression="summary == True")
+    assert r["status"] == "ok"
+    assert r["count"] == 0  # all summaries dropped before filter
+
+
+def test_query_include_summaries_opt_in():
+    """include_summaries=True allows querying summaries."""
+    r = _msp_file_query(file_path=MSP_XML, expression="summary == True",
+                        include_summaries=True)
+    assert r["status"] == "ok"
+    # Sample fixture has 1 summary task (root)
+    assert r["count"] >= 1

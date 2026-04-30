@@ -4215,7 +4215,8 @@ def _msp_file_read_progress(file_path: str,
         return {"status": "error", "error": str(e)}
 
 
-def _safe_eval_filter(expression: str, row: Dict[str, Any]) -> bool:
+def _safe_eval_filter(expression: str, row: Dict[str, Any],
+                     code_cache: Optional[Dict[str, Any]] = None) -> bool:
     """Evaluate a simple filter expression against a row dict.
 
     Supports: == != < <= > >= AND OR. String literals in single/double quotes.
@@ -4223,6 +4224,17 @@ def _safe_eval_filter(expression: str, row: Dict[str, Any]) -> bool:
 
     Restricted eval — no builtins, no module access, no function calls,
     no attribute access. Only literal comparisons + boolean combinators.
+
+    THREAT MODEL: trusted MCP user input, NOT internet-exposed. Error
+    messages may include Python interpreter detail (e.g., NameError) —
+    acceptable for trusted contexts only. If this helper ever becomes
+    reachable from untrusted callers, sanitize errors to a generic
+    'Invalid expression' first and consider upgrading the substring
+    forbidden-token check to an AST-walker whitelist.
+
+    code_cache: optional shared dict for compiled expressions. Pass the
+    same dict across multiple calls to amortize compile cost (T69 review:
+    O(N) compile -> O(1) per query).
     """
     # Normalize boolean operators (case-insensitive AND/OR)
     expr = expression
@@ -4231,16 +4243,27 @@ def _safe_eval_filter(expression: str, row: Dict[str, Any]) -> bool:
     for kw in (" OR ", " or "):
         expr = expr.replace(kw, " or ")
     # Reject dangerous patterns up front (defense in depth — empty builtins
-    # already prevent most attacks but explicit reject is faster + clearer)
+    # already prevent most attacks but explicit reject is faster + clearer).
+    # NOTE: substring match — `__` is intentionally broad (blocks all dunder
+    # routes). If a future MSPDI field name contains `import`/`exec`/etc. as
+    # a substring, upgrade to a word-boundary regex.
     forbidden = ("__", "import", "exec", "eval", "open(", "globals(",
-                 "locals(", "compile(", "lambda", ";")
+                 "locals(", "compile(", "lambda", ";", ":=")
     for f in forbidden:
         if f in expression:
             raise ValueError(f"Expression contains forbidden token '{f}'")
     safe_globals = {"__builtins__": {}}
     safe_locals = {k: row.get(k) for k in row}
     try:
-        return bool(eval(expr, safe_globals, safe_locals))
+        # Compile once per unique expression; reuse compiled code object.
+        if code_cache is not None:
+            code = code_cache.get(expr)
+            if code is None:
+                code = compile(expr, "<filter>", "eval")
+                code_cache[expr] = code
+        else:
+            code = compile(expr, "<filter>", "eval")
+        return bool(eval(code, safe_globals, safe_locals))
     except SyntaxError as e:
         raise ValueError(f"Invalid expression syntax: {e}") from e
     except Exception as e:
@@ -4250,7 +4273,8 @@ def _safe_eval_filter(expression: str, row: Dict[str, Any]) -> bool:
 
 def _msp_file_query(file_path: str,
                     expression: str,
-                    limit: Optional[int] = None) -> Dict[str, Any]:
+                    limit: Optional[int] = None,
+                    include_summaries: bool = False) -> Dict[str, Any]:
     """Run an ad-hoc filter expression against tasks in a project file.
 
     Returns matching task list with the standard task contract fields.
@@ -4258,12 +4282,25 @@ def _msp_file_query(file_path: str,
     Field names are task keys (id, name, duration_h, start, finish,
     percent_complete, summary).
 
+    AND/OR must be SPACE-DELIMITED (e.g. ``"a AND b"`` not ``"a AND b"``)
+    or use lowercase Python ``and``/``or``. The forbidden-token check uses
+    substring match, so field names containing ``__``/``import``/``exec``/
+    etc. as substrings are rejected (current MSPDI/MPXJ field set is
+    safe — none collide).
+
     Examples:
       "duration_h > 8 AND name == 'T2'"
-      "percent_complete < 100 OR summary == False"
+      "percent_complete < 100 OR id < 100"
+
+    include_summaries: by default, summary tasks (root project + WBS
+        rollups) are excluded from the candidate set BEFORE the filter
+        runs (matches ``read_tasks`` behavior). Set True to query over
+        summaries too — useful when you specifically want
+        ``"summary == True"``.
 
     Restricted eval — no function calls, imports, attribute access, or
-    builtins. Use _msp_file_read_tasks for unfiltered reads.
+    builtins. Use _msp_file_read_tasks for unfiltered reads. Threat model:
+    trusted MCP user input. Compile cost amortized via per-call code cache.
     """
     try:
         mgr = _get_msp_file_manager(file_path)
@@ -4272,12 +4309,14 @@ def _msp_file_query(file_path: str,
             tasks = [_normalize_mspdi_task(t) for t in raw_tasks]
         else:
             tasks = mgr.read_tasks()
-        # Exclude summary tasks for cleaner query results (matches read_tasks behavior)
-        tasks = [t for t in tasks if not t.get("summary", False)]
+        if not include_summaries:
+            tasks = [t for t in tasks if not t.get("summary", False)]
+        # Compile expression once across all rows
+        code_cache: Dict[str, Any] = {}
         results = []
         for t in tasks:
             try:
-                if _safe_eval_filter(expression, t):
+                if _safe_eval_filter(expression, t, code_cache=code_cache):
                     results.append(t)
             except ValueError as e:
                 return {"status": "error",
@@ -4288,7 +4327,7 @@ def _msp_file_query(file_path: str,
     except FileNotFoundError as e:
         return {"status": "error", "error": str(e)}
     except Exception as e:
-        logger.error(f"_msp_file_query({file_path}) failed: {e}")
+        logger.exception(f"_msp_file_query({file_path}) failed: {e}")
         return {"status": "error", "error": str(e)}
 
 

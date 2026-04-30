@@ -3833,6 +3833,155 @@ def _get_msp_file_manager(file_path: str):
     return MspMppFileManager(file_path)
 
 
+# ---------- PHASE 4 ACTION HELPERS ----------
+#
+# T66 PROBE FINDINGS (mspdi_parser.MspdiProject API):
+#   * get_all_tasks() returns list of dicts with keys:
+#       id, unique_id, name, duration (str "1d"), start, finish,
+#       percent_complete, critical, milestone, summary, total_float,
+#       notes, predecessors, successors
+#   * predecessors / successors are lists of dicts:
+#       {"task_id": int, "type": "FS"|"SS"|"FF"|"SF", "lag": "0d"}
+#     (task_id resolved from UID by _id_by_uid; type/lag pre-formatted)
+#   * NO get_links() method. get_link_chain(from_pat, to_pat) takes 2
+#     regex strings - not suitable for "all links". Use task walk.
+#   * MspMppFileManager (added T65) already returns the unified contract
+#     {id, name, duration_h, start, finish, percent_complete, summary}
+#     for tasks and {from_id, to_id, type, lag_days} for links.
+#
+# Adapter strategy: when manager is MspdiProject, normalize task dicts
+# (rename unique_id, parse duration string -> hours) and walk
+# predecessors lists to build the unified link list.
+
+
+def _parse_duration_h(d) -> float:
+    """Parse duration representations to hours.
+
+    Accepts numeric (assume hours), ISO 8601 (PT8H0M0S), or
+    Asta/MSPDI-style strings ('1d', '3w', '8h')."""
+    if d is None:
+        return 0.0
+    if isinstance(d, (int, float)):
+        return float(d)
+    s = str(d).strip()
+    if s.startswith('PT'):
+        import re
+        h = re.search(r'(\d+)H', s)
+        m = re.search(r'(\d+)M', s)
+        return (float(h.group(1)) if h else 0.0) + (float(m.group(1)) / 60 if m else 0.0)
+    if s.endswith('d'):
+        try:
+            return float(s[:-1]) * 8.0
+        except ValueError:
+            return 0.0
+    if s.endswith('w'):
+        try:
+            return float(s[:-1]) * 40.0
+        except ValueError:
+            return 0.0
+    if s.endswith('h'):
+        try:
+            return float(s[:-1])
+        except ValueError:
+            return 0.0
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
+def _normalize_mspdi_task(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Translate MspdiProject get_all_tasks() dict to unified Phase 4 task dict.
+
+    Probe-confirmed keys: id, name, duration (str), start, finish,
+    percent_complete, summary.
+    """
+    return {
+        "id": raw["id"],
+        "name": raw["name"],
+        "duration_h": _parse_duration_h(raw.get("duration")),
+        "start": raw.get("start"),
+        "finish": raw.get("finish"),
+        "percent_complete": float(raw.get("percent_complete", 0)),
+        "summary": bool(raw.get("summary", False)),
+    }
+
+
+def _msp_file_read_tasks(file_path: str,
+                         filters: Optional[Dict[str, Any]] = None,
+                         limit: Optional[int] = None) -> Dict[str, Any]:
+    """Read all tasks from a MS Project file. Format auto-detected by extension.
+
+    Excludes summary tasks (root project + WBS summaries) for cleaner results.
+    """
+    try:
+        mgr = _get_msp_file_manager(file_path)
+        if isinstance(mgr, MspdiProject):
+            raw_tasks = mgr.get_all_tasks()
+            tasks = [_normalize_mspdi_task(t) for t in raw_tasks]
+        else:
+            tasks = mgr.read_tasks()
+        # Filter out summary tasks (root + WBS)
+        tasks = [t for t in tasks if not t.get("summary", False)]
+        # Apply optional field filters
+        if filters:
+            for k, v in filters.items():
+                tasks = [t for t in tasks if t.get(k) == v]
+        if limit and limit > 0:
+            tasks = tasks[:limit]
+        return {"status": "ok", "count": len(tasks), "tasks": tasks}
+    except FileNotFoundError as e:
+        return {"status": "error", "error": str(e)}
+    except Exception as e:
+        logger.error(f"_msp_file_read_tasks({file_path}) failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+def _extract_links_from_mspdi(mgr: 'MspdiProject') -> List[Dict[str, Any]]:
+    """Extract links from MspdiProject by walking tasks for predecessor info.
+
+    Each task's predecessors list (probe-confirmed shape) is:
+        [{"task_id": int, "type": "FS"|"SS"|"FF"|"SF", "lag": "0d"}, ...]
+    where task_id is the predecessor's task ID. Returns unified contract
+    {from_id, to_id, type, lag_days}.
+    """
+    links: List[Dict[str, Any]] = []
+    raw_tasks = mgr.get_all_tasks()
+    for t in raw_tasks:
+        preds = t.get("predecessors") or []
+        if not preds:
+            continue
+        to_id = t["id"]
+        for p in preds:
+            links.append({
+                "from_id": p["task_id"],
+                "to_id": to_id,
+                "type": p.get("type", "FS"),
+                "lag_days": _parse_duration_h(p.get("lag", "0d")) / 8.0,
+            })
+    return links
+
+
+def _msp_file_read_links(file_path: str) -> Dict[str, Any]:
+    """Read all task predecessor/successor links from a MS Project file.
+
+    For MspdiProject (XML): walks tasks and extracts predecessor entries.
+    For MspMppFileManager (MPP): delegates to its read_links().
+    """
+    try:
+        mgr = _get_msp_file_manager(file_path)
+        if isinstance(mgr, MspdiProject):
+            links = _extract_links_from_mspdi(mgr)
+        else:
+            links = mgr.read_links()
+        return {"status": "ok", "count": len(links), "links": links}
+    except FileNotFoundError as e:
+        return {"status": "error", "error": str(e)}
+    except Exception as e:
+        logger.error(f"_msp_file_read_links({file_path}) failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 def main():
     """Run MCP server (stdio)."""
     mcp.run()

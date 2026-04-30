@@ -3865,10 +3865,14 @@ def _parse_duration_h(d) -> float:
         return float(d)
     s = str(d).strip()
     if s.startswith('PT'):
+        # ISO 8601: PT[H][M][S] — handle decimals (PT8.5H) and seconds (PT0H30M45S)
         import re
-        h = re.search(r'(\d+)H', s)
-        m = re.search(r'(\d+)M', s)
-        return (float(h.group(1)) if h else 0.0) + (float(m.group(1)) / 60 if m else 0.0)
+        h = re.search(r'(\d+(?:\.\d+)?)H', s)
+        m = re.search(r'(\d+(?:\.\d+)?)M', s)
+        sec = re.search(r'(\d+(?:\.\d+)?)S', s)
+        return ((float(h.group(1)) if h else 0.0)
+                + (float(m.group(1)) / 60.0 if m else 0.0)
+                + (float(sec.group(1)) / 3600.0 if sec else 0.0))
     if s.endswith('d'):
         try:
             return float(s[:-1]) * 8.0
@@ -3913,6 +3917,13 @@ def _msp_file_read_tasks(file_path: str,
     """Read all tasks from a MS Project file. Format auto-detected by extension.
 
     Excludes summary tasks (root project + WBS summaries) for cleaner results.
+
+    filters: simple equality match dict, e.g. ``{"name": "Foundation"}``.
+        Limited to exact value match — for complex expressions use the
+        ``query`` action (T69, supports operators and AND/OR).
+        NOTE: summary tasks are stripped BEFORE filters apply, so
+        ``filters={"summary": True}`` will always return 0 results.
+    limit: cap returned task count after filtering.
     """
     try:
         mgr = _get_msp_file_manager(file_path)
@@ -3957,6 +3968,10 @@ def _extract_links_from_mspdi(mgr: 'MspdiProject') -> List[Dict[str, Any]]:
                 "from_id": p["task_id"],
                 "to_id": to_id,
                 "type": p.get("type", "FS"),
+                # mspdi_parser._format_lag emits "Xd" working-day strings.
+                # _parse_duration_h converts to hours via *8.0; /8.0 here
+                # round-trips back to working days. The math cancels — this
+                # is NOT a 5x8 calendar assumption per CLAUDE.md RULE 1.
                 "lag_days": _parse_duration_h(p.get("lag", "0d")) / 8.0,
             })
     return links

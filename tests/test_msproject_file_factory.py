@@ -48,8 +48,19 @@ def test_get_manager_unsupported_extension():
 
 
 def test_msp_mpp_file_manager_init_smoke(tmp_path):
-    """MspMppFileManager initializes with .mpp path (smoke - no read needed)."""
+    """MspMppFileManager initializes with .mpp path (smoke - no read needed).
+
+    Locks the lazy-load contract: __init__ must NOT touch MPXJ/JVM.
+    _project starts as None until first read_*() call.
+    """
     fake_mpp = tmp_path / "fake.mpp"
     fake_mpp.write_bytes(b"\x00" * 100)  # not real MPP, file exists
     mgr = MspMppFileManager(str(fake_mpp))
     assert mgr.file_path.endswith("fake.mpp")
+    assert mgr._project is None  # lazy load not triggered
+
+
+def test_msp_mpp_file_manager_init_missing_file_raises(tmp_path):
+    """MspMppFileManager raises FileNotFoundError on missing .mpp path."""
+    with pytest.raises(FileNotFoundError):
+        MspMppFileManager(str(tmp_path / "missing.mpp"))

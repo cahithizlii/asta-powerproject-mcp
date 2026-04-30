@@ -3662,7 +3662,8 @@ def _mpxj_duration_to_hours(d) -> float:
             return n / 60.0
         else:
             return n  # fallback assume hours
-    except Exception:
+    except Exception as e:
+        logger.warning(f"_mpxj_duration_to_hours failed (returning 0.0): {e}")
         return 0.0
 
 
@@ -3715,6 +3716,9 @@ class MspMppFileManager:
         return out
 
     def read_links(self) -> List[Dict[str, Any]]:
+        # T-future: cache predecessor lookups if MPP perf becomes an issue
+        # (per-task Java->Python crossings are O(N*M); MPP read is cold-path
+        # for typical Phase 4 use, most users hit XML)
         proj = self._load()
         out: List[Dict[str, Any]] = []
         for t in proj.getTasks():
@@ -3792,7 +3796,8 @@ class MspMppFileManager:
         try:
             props = proj.getProjectProperties()
             status_date = props.getStatusDate() if props else None
-        except Exception:
+        except Exception as e:
+            logger.debug(f"MPP status_date read failed: {e}")
             status_date = None
         return {
             "status_date": str(status_date) if status_date else None,

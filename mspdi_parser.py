@@ -646,8 +646,9 @@ class MspdiProject:
         return assignments
 
     def get_calendars(self) -> List[dict]:
-        """Get all calendars."""
-        return [{"id": c["uid"], "name": c["name"]} for c in self._calendars.values()]
+        """Get all calendars with is_base flag (T67 review fix — was stripped)."""
+        return [{"id": c["uid"], "name": c["name"], "is_base": c.get("is_base", False)}
+                for c in self._calendars.values()]
 
     def get_wbs_tree(self, max_depth: int = 99) -> List[dict]:
         """Get WBS hierarchy tree."""

@@ -4028,14 +4028,12 @@ def _normalize_mspdi_assignment(raw: Dict[str, Any]) -> Dict[str, Any]:
 def _normalize_mspdi_calendar(raw: Dict[str, Any]) -> Dict[str, Any]:
     """Translate MspdiProject get_calendars() dict to unified Phase 4 calendar dict.
 
-    Probe T67 confirms keys: id, name. MspdiProject.get_calendars() does NOT
-    expose IsBaseCalendar / BaseCalendarUID (parsed internally but stripped),
-    so is_base defaults to False here. MPP path (MspMppFileManager) does
-    populate is_base via parent-calendar inspection.
+    Probe-confirmed keys: id, name, is_base (T67 review fix exposed is_base
+    via mspdi_parser widening — was previously stripped).
     """
     return {
         "name": raw["name"],
-        "is_base": False,
+        "is_base": bool(raw.get("is_base", False)),
     }
 
 
@@ -4074,7 +4072,8 @@ def _msp_file_read_assignments(file_path: str,
         else:
             assignments = mgr.read_assignments()
         if task_id is not None:
-            assignments = [a for a in assignments if a.get("task_id") == task_id]
+            # Normalizer guarantees task_id key (probe-confirmed required field)
+            assignments = [a for a in assignments if a["task_id"] == task_id]
         return {"status": "ok", "count": len(assignments), "assignments": assignments}
     except FileNotFoundError as e:
         return {"status": "error", "error": str(e)}

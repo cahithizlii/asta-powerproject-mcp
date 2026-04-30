@@ -1213,6 +1213,73 @@ class MspdiProject:
             "message": f"Task '{name}' added (ID: {tid}, UID: {uid})",
         }
 
+    def _next_resource_id(self) -> int:
+        """Get next available resource ID."""
+        max_id = 0
+        for r in self._resources.values():
+            rid = r.get("id", 0)
+            if rid > max_id:
+                max_id = rid
+        return max_id + 1
+
+    # MSPDI Resource Type enum: 0=Material, 1=Work, 2=Cost
+    _RESOURCE_TYPE_MAP = {"Material": 0, "Work": 1, "Cost": 2}
+
+    def add_resource(self, name: str, type: str = "Work",
+                     max_units: float = 1.0,
+                     standard_rate: str = None) -> int:
+        """Add a new resource to the XML. Phase 4 T70 extension.
+
+        Mirrors add_task style: create XML element, append to <Resources>,
+        update _resources dict + _resource_elems, return new resource ID.
+
+        Returns the new resource ID (int), or raises ValueError on bad input.
+        """
+        if not name:
+            raise ValueError("Resource name is required")
+        type_code = self._RESOURCE_TYPE_MAP.get(type)
+        if type_code is None:
+            raise ValueError(
+                f"Resource type must be Work/Material/Cost, got {type!r}")
+
+        resources_elem = self._find(self.root, "Resources")
+        if resources_elem is None:
+            resources_elem = ET.SubElement(self.root, self._t("Resources"))
+
+        uid = self._next_uid()
+        rid = self._next_resource_id()
+
+        # Create resource element
+        resource_elem = ET.Element(self._t("Resource"))
+        fields = [
+            ("UID", str(uid)),
+            ("ID", str(rid)),
+            ("Name", name),
+            ("Type", str(type_code)),
+            ("IsNull", "0"),
+            ("MaxUnits", f"{float(max_units):.6f}"),
+        ]
+        if standard_rate is not None:
+            fields.append(("StandardRate", str(standard_rate)))
+        for tag, val in fields:
+            sub = ET.SubElement(resource_elem, self._t(tag))
+            sub.text = val
+
+        resources_elem.append(resource_elem)
+
+        # Update internal indices
+        resource_dict = {
+            "uid": uid, "id": rid, "name": name,
+            "type": type_code, "type_name": type,
+            "max_units": float(max_units),
+            "standard_rate": standard_rate or "0",
+            "cost": 0.0, "calendar_uid": "", "email": "", "group": "",
+        }
+        self._resources[uid] = resource_dict
+        self._resource_elems[uid] = resource_elem
+
+        return rid
+
     def update_task(self, task_id: int, name: str = None,
                     duration_str: str = None, percent_complete: float = None,
                     notes: str = None, start_date: str = None,

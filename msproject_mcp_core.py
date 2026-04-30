@@ -4331,6 +4331,148 @@ def _msp_file_query(file_path: str,
         return {"status": "error", "error": str(e)}
 
 
+# ---------- PHASE 4 WRITE ACTION HELPERS (T70+) ----------
+
+def _ensure_xml_write_target(mgr) -> None:
+    """Raise ValueError if mgr is not an MspdiProject (XML write only).
+
+    .mpp is Microsoft proprietary binary — no Python library can write it.
+    Convert to .xml first via MS Project Save As, or use COM tools for live ops.
+    """
+    if not isinstance(mgr, MspdiProject):
+        raise ValueError(
+            ".mpp write not supported (Microsoft proprietary binary format). "
+            "Convert to .xml first via MS Project Save As, or use COM tools."
+        )
+
+
+def _auto_sync_to_open_msp_available() -> bool:
+    """T70 stub: True if _auto_sync_to_open_msp helper is wired (T72).
+
+    Returns False until T72 lands. Write helpers call this to decide
+    whether to attempt auto-sync.
+    """
+    return ('_auto_sync_to_open_msp' in globals() and
+            callable(globals().get('_auto_sync_to_open_msp')))
+
+
+def _maybe_auto_sync(file_path: str) -> Dict[str, Any]:
+    """Conditional auto-sync wrapper.
+
+    Returns {auto_imported, reschedule_ok} populated by T72's helper if
+    available, else {auto_imported: False} stub.
+    """
+    if _auto_sync_to_open_msp_available():
+        return _auto_sync_to_open_msp(file_path)  # type: ignore[name-defined]
+    return {"auto_imported": False}
+
+
+def _msp_file_add_tasks(file_path: str, items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Bulk add tasks to a MS Project XML file.
+
+    items: list of {name, duration, [start, ...]} dicts. Required: name, duration.
+    MspdiProject.add_task signature uses duration_str (not duration); adapter
+    translates the unified contract.
+
+    Returns {status, count, task_ids, auto_imported, ...}.
+    """
+    if not items:
+        return {"status": "ok", "count": 0, "task_ids": [],
+                "auto_imported": False}
+    try:
+        mgr = _get_msp_file_manager(file_path)
+        _ensure_xml_write_target(mgr)
+        task_ids: List[int] = []
+        for item in items:
+            kwargs = {k: v for k, v in item.items()
+                      if k not in ("name", "duration")}
+            res = mgr.add_task(name=item["name"],
+                               duration_str=item.get("duration", "1d"),
+                               **kwargs)
+            # mspdi_parser.add_task returns dict {task_id, uid, name, ...}
+            task_ids.append(res["task_id"] if isinstance(res, dict) else int(res))
+        # Overwrite original file (mspdi_parser.save() default writes a
+        # timestamped sibling; we want in-place edit semantics).
+        mgr.save(output_path=file_path)
+        sync = _maybe_auto_sync(file_path)
+        return {"status": "ok", "count": len(task_ids),
+                "task_ids": task_ids, **sync}
+    except FileNotFoundError as e:
+        return {"status": "error", "error": str(e)}
+    except ValueError as e:
+        return {"status": "error", "error": str(e)}
+    except Exception as e:
+        logger.exception(f"_msp_file_add_tasks failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+def _msp_file_add_links(file_path: str, items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Bulk add predecessor links between tasks.
+
+    items: list of {from_id, to_id, [type='FS', lag='0d']} dicts.
+    MspdiProject.add_link uses predecessor_id/successor_id/link_type/lag_str
+    keyword names; this adapter translates from the unified contract.
+    """
+    if not items:
+        return {"status": "ok", "count": 0, "auto_imported": False}
+    try:
+        mgr = _get_msp_file_manager(file_path)
+        _ensure_xml_write_target(mgr)
+        added = 0
+        for item in items:
+            mgr.add_link(predecessor_id=item["from_id"],
+                         successor_id=item["to_id"],
+                         link_type=item.get("type", "FS"),
+                         lag_str=item.get("lag"))
+            added += 1
+        # Overwrite original file (mspdi_parser.save() default writes a
+        # timestamped sibling; we want in-place edit semantics).
+        mgr.save(output_path=file_path)
+        sync = _maybe_auto_sync(file_path)
+        return {"status": "ok", "count": added, **sync}
+    except FileNotFoundError as e:
+        return {"status": "error", "error": str(e)}
+    except ValueError as e:
+        return {"status": "error", "error": str(e)}
+    except Exception as e:
+        logger.exception(f"_msp_file_add_links failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+def _msp_file_add_resources(file_path: str, items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Bulk add resources to a MS Project XML file.
+
+    items: list of {name, [type='Work', max_units=1.0, standard_rate]} dicts.
+    Uses MspdiProject.add_resource (T70 extension to mspdi_parser).
+    """
+    if not items:
+        return {"status": "ok", "count": 0, "resource_ids": [],
+                "auto_imported": False}
+    try:
+        mgr = _get_msp_file_manager(file_path)
+        _ensure_xml_write_target(mgr)
+        res_ids: List[int] = []
+        for item in items:
+            rid = mgr.add_resource(name=item["name"],
+                                   type=item.get("type", "Work"),
+                                   max_units=float(item.get("max_units", 1.0)),
+                                   standard_rate=item.get("standard_rate"))
+            res_ids.append(rid)
+        # Overwrite original file (mspdi_parser.save() default writes a
+        # timestamped sibling; we want in-place edit semantics).
+        mgr.save(output_path=file_path)
+        sync = _maybe_auto_sync(file_path)
+        return {"status": "ok", "count": len(res_ids),
+                "resource_ids": res_ids, **sync}
+    except FileNotFoundError as e:
+        return {"status": "error", "error": str(e)}
+    except ValueError as e:
+        return {"status": "error", "error": str(e)}
+    except Exception as e:
+        logger.exception(f"_msp_file_add_resources failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 def main():
     """Run MCP server (stdio)."""
     mcp.run()

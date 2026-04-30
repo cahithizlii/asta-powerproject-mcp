@@ -4545,6 +4545,42 @@ def _msp_file_save_as(file_path: str, output_path: str) -> Dict[str, Any]:
         return {"status": "error", "error": str(e)}
 
 
+def _msp_file_bulk_add_assignments(file_path: str,
+                                   items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """🚀 T73 HERO — bulk write task-resource assignments to MSPDI XML.
+
+    Phase 4 success gate: 2800 assignments in <5s via single XML write
+    pass + auto-sync. Pure-Python path; no per-call COM crossing.
+
+    items: list of {task_id, resource_id, [units]} dicts.
+    Returns {status, count, elapsed_s, auto_imported, ...}.
+    """
+    import time
+    if not items:
+        return {"status": "ok", "count": 0, "elapsed_s": 0.0,
+                "auto_imported": False}
+    start = time.time()
+    try:
+        mgr = _get_msp_file_manager(file_path)
+        _ensure_xml_write_target(mgr)
+        added = mgr.bulk_add_assignments(items)
+        mgr.save(output_path=file_path)
+        elapsed = time.time() - start
+        sync = _maybe_auto_sync(file_path)
+        return {"status": "ok", "count": added,
+                "elapsed_s": round(elapsed, 3), **sync}
+    except FileNotFoundError as e:
+        return {"status": "error", "error": str(e),
+                "elapsed_s": round(time.time() - start, 3)}
+    except ValueError as e:
+        return {"status": "error", "error": str(e),
+                "elapsed_s": round(time.time() - start, 3)}
+    except Exception as e:
+        logger.exception(f"_msp_file_bulk_add_assignments failed: {e}")
+        return {"status": "error", "error": str(e),
+                "elapsed_s": round(time.time() - start, 3)}
+
+
 def _auto_sync_to_open_msp(modified_xml_path: str) -> Dict[str, Any]:
     """Auto-sync a modified MSPDI XML into the open MS Project active project.
 

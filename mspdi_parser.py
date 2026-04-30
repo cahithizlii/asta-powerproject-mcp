@@ -1280,6 +1280,147 @@ class MspdiProject:
 
         return rid
 
+    def _next_assignment_uid(self) -> int:
+        """Get next available assignment UID (starts at 0 for assignments)."""
+        max_uid = -1
+        for a in self._assignments:
+            uid = a.get("uid", -1)
+            if uid > max_uid:
+                max_uid = uid
+        return max_uid + 1
+
+    def add_assignment(self, task_id: int, resource_id: int,
+                       units: float = 1.0,
+                       work_str: str = None) -> int:
+        """Add a single task-resource assignment. T73 extension.
+
+        Returns the new assignment UID. Raises ValueError on missing IDs.
+        """
+        # Resolve task UID
+        task_uid = self._uid_by_id.get(task_id)
+        if task_uid is None:
+            raise ValueError(f"Task ID {task_id} not found")
+        # Resolve resource UID
+        resource_uid = None
+        for r in self._resources.values():
+            if r.get("id") == resource_id:
+                resource_uid = r.get("uid")
+                break
+        if resource_uid is None:
+            raise ValueError(f"Resource ID {resource_id} not found")
+
+        # Get or create <Assignments> root collection
+        assignments_elem = self._find(self.root, "Assignments")
+        if assignments_elem is None:
+            assignments_elem = ET.SubElement(self.root, self._t("Assignments"))
+
+        a_uid = self._next_assignment_uid()
+
+        # Use task's start/finish + work derived from task duration as defaults
+        task = self._tasks_by_id.get(task_id, {})
+        start = task.get("start_raw") or task.get("start") or "2026-01-01T08:00:00"
+        finish = task.get("finish_raw") or task.get("finish") or start
+        if work_str:
+            days = self._parse_duration_input(work_str)
+            work_iso = self._days_to_iso(days)
+        else:
+            # Default: same as task duration
+            work_iso = task.get("duration_raw") or "PT8H0M0S"
+
+        # Create <Assignment> element
+        a_elem = ET.Element(self._t("Assignment"))
+        fields = [
+            ("UID", str(a_uid)),
+            ("TaskUID", str(task_uid)),
+            ("ResourceUID", str(resource_uid)),
+            ("Units", f"{float(units):.2f}"),
+            ("Work", work_iso),
+            ("Start", start),
+            ("Finish", finish),
+        ]
+        for tag, val in fields:
+            sub = ET.SubElement(a_elem, self._t(tag))
+            sub.text = val
+        assignments_elem.append(a_elem)
+
+        # Update internal index
+        self._assignments.append({
+            "uid": a_uid,
+            "task_id": task_id, "task_uid": task_uid,
+            "task_name": task.get("name", ""),
+            "resource_id": resource_id, "resource_uid": resource_uid,
+            "resource_name": (self._resources.get(resource_uid) or {}).get("name", ""),
+            "units": float(units),
+            "work": work_str or task.get("duration", ""),
+            "cost": 0.0,
+        })
+        return a_uid
+
+    def bulk_add_assignments(self, items: List[dict]) -> int:
+        """Bulk add many task-resource assignments efficiently.
+
+        items: list of {task_id, resource_id, [units, work]} dicts.
+        Returns count added. T73 HERO path — single XML write at end.
+
+        Performance target: 2800 assignments < 2 seconds (pure Python,
+        no COM). Caller should call save() once after this.
+        """
+        # Pre-build resource_id -> resource_uid map (avoid O(N*M) lookups)
+        rid_to_uid: Dict[int, int] = {}
+        for r in self._resources.values():
+            rid = r.get("id")
+            uid = r.get("uid")
+            if rid is not None and uid is not None:
+                rid_to_uid[rid] = uid
+
+        assignments_elem = self._find(self.root, "Assignments")
+        if assignments_elem is None:
+            assignments_elem = ET.SubElement(self.root, self._t("Assignments"))
+
+        # Single pass — build all elements
+        next_uid = self._next_assignment_uid()
+        added = 0
+        for item in items:
+            task_id = item["task_id"]
+            resource_id = item["resource_id"]
+            task_uid = self._uid_by_id.get(task_id)
+            resource_uid = rid_to_uid.get(resource_id)
+            if task_uid is None or resource_uid is None:
+                continue  # silently skip missing IDs in bulk
+            task = self._tasks_by_id.get(task_id, {})
+            start = task.get("start_raw") or "2026-01-01T08:00:00"
+            finish = task.get("finish_raw") or start
+            work_iso = task.get("duration_raw") or "PT8H0M0S"
+            units = float(item.get("units", 1.0))
+
+            a_elem = ET.Element(self._t("Assignment"))
+            for tag, val in (
+                ("UID", str(next_uid)),
+                ("TaskUID", str(task_uid)),
+                ("ResourceUID", str(resource_uid)),
+                ("Units", f"{units:.2f}"),
+                ("Work", work_iso),
+                ("Start", start),
+                ("Finish", finish),
+            ):
+                sub = ET.SubElement(a_elem, self._t(tag))
+                sub.text = val
+            assignments_elem.append(a_elem)
+
+            self._assignments.append({
+                "uid": next_uid,
+                "task_id": task_id, "task_uid": task_uid,
+                "task_name": task.get("name", ""),
+                "resource_id": resource_id, "resource_uid": resource_uid,
+                "resource_name": (self._resources.get(resource_uid) or {}).get("name", ""),
+                "units": units,
+                "work": task.get("duration", ""),
+                "cost": 0.0,
+            })
+            next_uid += 1
+            added += 1
+        return added
+
     def update_task(self, task_id: int, name: str = None,
                     duration_str: str = None, percent_complete: float = None,
                     notes: str = None, start_date: str = None,

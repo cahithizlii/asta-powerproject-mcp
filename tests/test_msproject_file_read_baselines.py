@@ -6,12 +6,14 @@ MSP_XML = os.path.join(os.path.dirname(__file__), "fixtures", "sample_msp.xml")
 
 
 def test_read_baselines_xml_unsaved():
-    """Sample fixture has no baseline saved — returns saved_date=None."""
+    """Sample fixture has no baseline saved — returns minimal contract."""
     r = _msp_file_read_baselines(file_path=MSP_XML, baseline_number=0)
     assert r["status"] == "ok"
     assert "baseline_number" in r
     assert "saved_date" in r
-    # Either None (no baseline) or timestamp string
+    # Phase 4 minimal contract: empty tasks + informative note
+    assert r.get("tasks") == []
+    assert "msproject_baseline" in r.get("note", "")
 
 
 def test_read_baselines_invalid_baseline_number():

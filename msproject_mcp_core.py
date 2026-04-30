@@ -4099,6 +4099,16 @@ def _msp_file_read_calendars(file_path: str) -> Dict[str, Any]:
         return {"status": "error", "error": str(e)}
 
 
+def _none_if_na(v: Any) -> Any:
+    """Normalize MSPDI 'N/A' date sentinel to None.
+
+    mspdi_parser._parse_date returns the literal string 'N/A' for missing
+    dates. Convert to None for downstream EVM/query consistency (CLAUDE.md
+    RULE 5 — date comparisons must not see 'N/A' strings).
+    """
+    return None if v == "N/A" else v
+
+
 def _normalize_mspdi_progress(raw: Dict[str, Any]) -> Dict[str, Any]:
     """Translate MspdiProject task dict to unified Phase 4 progress dict.
 
@@ -4108,16 +4118,16 @@ def _normalize_mspdi_progress(raw: Dict[str, Any]) -> Dict[str, Any]:
     the underlying _tasks store (data was already parsed, just stripped by
     _task_to_list_dict — same pattern as T67 calendar `is_base` fix).
 
-    For fixtures with no progress entered, ActualWork / RemainingWork XML
-    elements are absent → mspdi_parser returns "" for those fields →
-    _parse_duration_h returns 0.0.
+    Date fields ('N/A' sentinel from mspdi_parser) are normalized to None
+    so downstream queries can use `is None` comparisons (matches MPP path
+    semantics where missing dates are absent keys).
     """
     return {
         "id": raw["id"],
         "percent_complete": float(raw.get("percent_complete", 0)),
         "actual_work_h": _parse_duration_h(raw.get("actual_work")),
-        "actual_start": raw.get("actual_start"),
-        "actual_finish": raw.get("actual_finish"),
+        "actual_start": _none_if_na(raw.get("actual_start")),
+        "actual_finish": _none_if_na(raw.get("actual_finish")),
         "remaining_work_h": _parse_duration_h(raw.get("remaining_work")),
     }
 
@@ -4147,9 +4157,9 @@ def _msp_file_read_baselines(file_path: str, baseline_number: int = 0) -> Dict[s
                 "baseline_number": baseline_number,
                 "saved_date": None,
                 "tasks": [],
-                "note": "MspdiProject has no baseline API in this version; "
-                        "Phase 4 file path returns minimal contract. "
-                        "For full baseline read, use msproject_baseline COM tool against open project.",
+                "note": "No baseline data parsed for XML files in Phase 4; "
+                        "for full baseline read, use the msproject_baseline "
+                        "COM tool against an open project.",
             }
         else:
             data = mgr.read_baselines(baseline_number)
@@ -4161,7 +4171,8 @@ def _msp_file_read_baselines(file_path: str, baseline_number: int = 0) -> Dict[s
         return {"status": "error", "error": str(e)}
 
 
-def _msp_file_read_progress(file_path: str) -> Dict[str, Any]:
+def _msp_file_read_progress(file_path: str,
+                            include_assignments: bool = False) -> Dict[str, Any]:
     """Read progress fields from a MS Project file (Phase 3b file integration).
 
     XML path: walks MspdiProject.get_all_tasks() and normalizes progress
@@ -4170,8 +4181,14 @@ def _msp_file_read_progress(file_path: str) -> Dict[str, Any]:
     Summary tasks are excluded for clean output.
     MPP path: delegates to MspMppFileManager.read_progress.
 
+    include_assignments: reserved parameter for future Phase 4 extension.
+        Phase 4 currently parses task-level progress only; per-resource
+        assignment progress is available via the separate read_assignments
+        action. Accepted for forward compat with the dispatcher contract.
+
     Returns {status, status_date, tasks: [...]}.
     """
+    _ = include_assignments  # parameter is reserved (forward compat)
     try:
         mgr = _get_msp_file_manager(file_path)
         if isinstance(mgr, MspdiProject):

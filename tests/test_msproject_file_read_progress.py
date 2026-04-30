@@ -26,3 +26,22 @@ def test_read_progress_task_count():
 def test_read_progress_invalid_file():
     r = _msp_file_read_progress(file_path="/nonexistent.xml")
     assert r["status"] == "error"
+
+
+def test_read_progress_with_assignments():
+    """include_assignments parameter accepted (forward compat per plan)."""
+    r = _msp_file_read_progress(file_path=MSP_XML, include_assignments=True)
+    assert r["status"] == "ok"
+    assert "tasks" in r
+
+
+def test_read_progress_actual_dates_normalized_to_none():
+    """Unstarted tasks should have actual_start/finish == None (not 'N/A' string).
+
+    CLAUDE.md RULE 5 — date comparisons must not see 'N/A' strings.
+    """
+    r = _msp_file_read_progress(file_path=MSP_XML)
+    for t in r["tasks"]:
+        # Fixture has no progress entered → all dates None
+        assert t["actual_start"] is None or isinstance(t["actual_start"], str) and t["actual_start"] != "N/A"
+        assert t["actual_finish"] is None or isinstance(t["actual_finish"], str) and t["actual_finish"] != "N/A"

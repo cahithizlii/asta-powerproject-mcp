@@ -4545,6 +4545,94 @@ def _msp_file_save_as(file_path: str, output_path: str) -> Dict[str, Any]:
         return {"status": "error", "error": str(e)}
 
 
+def _auto_sync_to_open_msp(modified_xml_path: str) -> Dict[str, Any]:
+    """Auto-sync a modified MSPDI XML into the open MS Project active project.
+
+    SAFETY semantics (Phase 4 conservative):
+      - If MSP COM unavailable → return {auto_imported: False, msg: ...}.
+        Caller's XML is on disk; user can manually open later.
+      - If MSP open but no project matches file_path (by FullName) →
+        skip with auto_imported=False. Never touch unrelated projects.
+      - If MSP open AND a project's FullName matches file_path →
+        FileClose(0) + FileOpen(file_path) for clean reload, then
+        ActiveProject.Reschedule().
+
+    This avoids the EditCopy/EditPaste merge complexity of
+    _msp_task_bulk_add_mspdi (which is for live COM operations on the
+    active project) — file MCP semantics are simpler: the file changed,
+    so MSP should reload it if it has the same file open.
+
+    Memory: feedback_file_mcp_auto_sync.md — write -> open -> auto import.
+    """
+    if not os.path.exists(modified_xml_path):
+        return {"auto_imported": False,
+                "error": f"XML not found: {modified_xml_path}"}
+    try:
+        pythoncom.CoInitialize()
+    except Exception:
+        pass
+    try:
+        try:
+            app = win32com.client.GetActiveObject('MSProject.Application')
+        except Exception as e:
+            return {"auto_imported": False,
+                    "msg": f"MSP closed; XML saved at {modified_xml_path}",
+                    "error": str(e)}
+        try:
+            normalized = modified_xml_path.replace("\\", "/").lower()
+            matching_proj = None
+            try:
+                count = app.Projects.Count
+            except Exception as e:
+                logger.debug(f"app.Projects.Count failed: {e}")
+                count = 0
+            for i in range(1, count + 1):
+                try:
+                    proj = app.Projects(i)
+                    if proj is None:
+                        continue
+                    full_name = (proj.FullName or "").replace("\\", "/").lower()
+                    if full_name == normalized:
+                        matching_proj = proj
+                        break
+                except Exception as e:
+                    logger.debug(f"Project enumeration failed at {i}: {e}")
+                    continue
+            if matching_proj is None:
+                return {"auto_imported": False,
+                        "msg": ("No matching project open in MSP; XML saved at "
+                                f"{modified_xml_path}. SAFETY: file MCP never "
+                                "merges into unrelated projects.")}
+            # Match found: close (no save — file already on disk) + reopen
+            try:
+                app.WindowActivate(matching_proj.Windows(1).Caption)
+                app.FileClose(0)  # 0 = pjDoNotSave
+            except Exception as e:
+                return {"auto_imported": False,
+                        "error": f"Could not close matching project: {e}"}
+            try:
+                app.FileOpen(modified_xml_path)
+            except Exception as e:
+                return {"auto_imported": False,
+                        "error": f"FileOpen of modified XML failed: {e}"}
+            reschedule_ok = False
+            try:
+                if app.ActiveProject is not None:
+                    app.ActiveProject.Reschedule()
+                    reschedule_ok = True
+            except Exception as e:
+                logger.warning(f"Reschedule failed after auto-sync: {e}")
+            return {"auto_imported": True, "reschedule_ok": reschedule_ok}
+        except Exception as e:
+            logger.exception(f"_auto_sync_to_open_msp failed: {e}")
+            return {"auto_imported": False, "error": str(e)}
+    finally:
+        try:
+            pythoncom.CoUninitialize()
+        except Exception:
+            pass
+
+
 def main():
     """Run MCP server (stdio)."""
     mcp.run()

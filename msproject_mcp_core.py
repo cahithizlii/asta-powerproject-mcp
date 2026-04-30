@@ -3997,6 +3997,109 @@ def _msp_file_read_links(file_path: str) -> Dict[str, Any]:
         return {"status": "error", "error": str(e)}
 
 
+def _normalize_mspdi_resource(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Translate MspdiProject get_resources() dict to unified Phase 4 resource dict.
+
+    Probe T67 confirms keys: id, unique_id, name, type, max_units,
+    standard_rate, cost, calendar. id=0 = system resource (filtered upstream).
+    """
+    return {
+        "id": raw["id"],
+        "name": raw["name"],
+        "type": raw.get("type", "Work"),
+        "max_units": float(raw.get("max_units", 1.0)),
+    }
+
+
+def _normalize_mspdi_assignment(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Translate MspdiProject get_resource_assignments() dict to unified Phase 4 assignment.
+
+    Probe T67 confirms keys: task_id, task_name, resource_id, resource_name,
+    units, work (Asta-style str like "1d"), cost.
+    """
+    return {
+        "task_id": raw["task_id"],
+        "resource_id": raw["resource_id"],
+        "units": float(raw.get("units", 1.0)),
+        "work_h": _parse_duration_h(raw.get("work")),
+    }
+
+
+def _normalize_mspdi_calendar(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Translate MspdiProject get_calendars() dict to unified Phase 4 calendar dict.
+
+    Probe T67 confirms keys: id, name. MspdiProject.get_calendars() does NOT
+    expose IsBaseCalendar / BaseCalendarUID (parsed internally but stripped),
+    so is_base defaults to False here. MPP path (MspMppFileManager) does
+    populate is_base via parent-calendar inspection.
+    """
+    return {
+        "name": raw["name"],
+        "is_base": False,
+    }
+
+
+def _msp_file_read_resources(file_path: str) -> Dict[str, Any]:
+    """Read all resources from a MS Project file.
+
+    Excludes system resource (id=0) for cleaner output. Returns count + list
+    of {id, name, type, max_units}.
+    """
+    try:
+        mgr = _get_msp_file_manager(file_path)
+        if isinstance(mgr, MspdiProject):
+            raw_resources = mgr.get_resources()
+            resources = [_normalize_mspdi_resource(r) for r in raw_resources]
+        else:
+            resources = mgr.read_resources()
+        # Exclude system resource (id=0) if present (MspMppFileManager already
+        # filters; MspdiProject does not).
+        resources = [r for r in resources if r.get("id", 0) != 0]
+        return {"status": "ok", "count": len(resources), "resources": resources}
+    except FileNotFoundError as e:
+        return {"status": "error", "error": str(e)}
+    except Exception as e:
+        logger.error(f"_msp_file_read_resources({file_path}) failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+def _msp_file_read_assignments(file_path: str,
+                               task_id: Optional[int] = None) -> Dict[str, Any]:
+    """Read all task-resource assignments. Optional task_id filter."""
+    try:
+        mgr = _get_msp_file_manager(file_path)
+        if isinstance(mgr, MspdiProject):
+            raw_asgs = mgr.get_resource_assignments()
+            assignments = [_normalize_mspdi_assignment(a) for a in raw_asgs]
+        else:
+            assignments = mgr.read_assignments()
+        if task_id is not None:
+            assignments = [a for a in assignments if a.get("task_id") == task_id]
+        return {"status": "ok", "count": len(assignments), "assignments": assignments}
+    except FileNotFoundError as e:
+        return {"status": "error", "error": str(e)}
+    except Exception as e:
+        logger.error(f"_msp_file_read_assignments({file_path}) failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+def _msp_file_read_calendars(file_path: str) -> Dict[str, Any]:
+    """Read all calendars defined in a MS Project file."""
+    try:
+        mgr = _get_msp_file_manager(file_path)
+        if isinstance(mgr, MspdiProject):
+            raw_cals = mgr.get_calendars()
+            calendars = [_normalize_mspdi_calendar(c) for c in raw_cals]
+        else:
+            calendars = mgr.read_calendars()
+        return {"status": "ok", "count": len(calendars), "calendars": calendars}
+    except FileNotFoundError as e:
+        return {"status": "error", "error": str(e)}
+    except Exception as e:
+        logger.error(f"_msp_file_read_calendars({file_path}) failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 def main():
     """Run MCP server (stdio)."""
     mcp.run()

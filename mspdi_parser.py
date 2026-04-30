@@ -361,6 +361,8 @@ class MspdiProject:
                 "late_finish": self._parse_date(self._text(task_elem, "LateFinish")),
                 "actual_start": self._parse_date(self._text(task_elem, "ActualStart")),
                 "actual_finish": self._parse_date(self._text(task_elem, "ActualFinish")),
+                "actual_work": self._text(task_elem, "ActualWork"),
+                "remaining_work": self._text(task_elem, "RemainingWork"),
                 "percent_complete": self._int(task_elem, "PercentComplete", 0),
                 "milestone": self._text(task_elem, "Milestone", "0") == "1",
                 "summary": self._text(task_elem, "Summary", "0") == "1",
@@ -527,6 +529,11 @@ class MspdiProject:
             "notes": task["notes"],
             "predecessors": preds,
             "successors": succs,
+            # T68: progress fields (data already in self._tasks; expose for adapter)
+            "actual_start": task.get("actual_start"),
+            "actual_finish": task.get("actual_finish"),
+            "actual_work": task.get("actual_work"),
+            "remaining_work": task.get("remaining_work"),
         }
 
     def _task_to_detail_dict(self, task: dict) -> dict:
@@ -565,6 +572,8 @@ class MspdiProject:
             "client": self._text(self.root, "Author", "N/A"),
             "start_date": self._parse_date(self._text(self.root, "StartDate")),
             "finish_date": self._parse_date(self._text(self.root, "FinishDate")),
+            "status_date": self._parse_date(self._text(self.root, "StatusDate")),
+            "current_date": self._parse_date(self._text(self.root, "CurrentDate")),
             "total_tasks": len(all_tasks),
             "summary_tasks": sum(1 for t in all_tasks if t["summary"]),
             "milestones": sum(1 for t in all_tasks if t["milestone"]),

@@ -4099,6 +4099,105 @@ def _msp_file_read_calendars(file_path: str) -> Dict[str, Any]:
         return {"status": "error", "error": str(e)}
 
 
+def _normalize_mspdi_progress(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Translate MspdiProject task dict to unified Phase 4 progress dict.
+
+    Probe T68 confirmed: get_all_tasks() exposes only `percent_complete` in
+    the original parser. The widened parser (T68) now also exposes
+    `actual_start`, `actual_finish`, `actual_work`, `remaining_work` from
+    the underlying _tasks store (data was already parsed, just stripped by
+    _task_to_list_dict — same pattern as T67 calendar `is_base` fix).
+
+    For fixtures with no progress entered, ActualWork / RemainingWork XML
+    elements are absent → mspdi_parser returns "" for those fields →
+    _parse_duration_h returns 0.0.
+    """
+    return {
+        "id": raw["id"],
+        "percent_complete": float(raw.get("percent_complete", 0)),
+        "actual_work_h": _parse_duration_h(raw.get("actual_work")),
+        "actual_start": raw.get("actual_start"),
+        "actual_finish": raw.get("actual_finish"),
+        "remaining_work_h": _parse_duration_h(raw.get("remaining_work")),
+    }
+
+
+def _msp_file_read_baselines(file_path: str, baseline_number: int = 0) -> Dict[str, Any]:
+    """Read saved baseline data from a MS Project file (Phase 3a file integration).
+
+    XML path: MspdiProject does not currently expose baseline parsing
+    (probe T68 confirmed no baseline-related methods). Returns minimal
+    contract per spec. Phase 5 may extend mspdi_parser to parse <Baseline>
+    XML elements when baselines are saved in real fixtures.
+    MPP path: delegates to MspMppFileManager.read_baselines (returns
+    placeholder per T65 — MPXJ baseline access is limited).
+
+    baseline_number: 0-10 (Baseline + Baseline1..Baseline10).
+    """
+    if baseline_number not in BASELINE_NUMBERS:
+        return {"status": "error",
+                "error": f"baseline_number must be 0-10, got {baseline_number}"}
+    try:
+        mgr = _get_msp_file_manager(file_path)
+        if isinstance(mgr, MspdiProject):
+            # MspdiProject has no get_baselines API (probe T68 confirmed).
+            # Phase 4 returns minimal contract; Phase 5 may extend parser.
+            return {
+                "status": "ok",
+                "baseline_number": baseline_number,
+                "saved_date": None,
+                "tasks": [],
+                "note": "MspdiProject has no baseline API in this version; "
+                        "Phase 4 file path returns minimal contract. "
+                        "For full baseline read, use msproject_baseline COM tool against open project.",
+            }
+        else:
+            data = mgr.read_baselines(baseline_number)
+            return {"status": "ok", **data}
+    except FileNotFoundError as e:
+        return {"status": "error", "error": str(e)}
+    except Exception as e:
+        logger.error(f"_msp_file_read_baselines({file_path}) failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+def _msp_file_read_progress(file_path: str) -> Dict[str, Any]:
+    """Read progress fields from a MS Project file (Phase 3b file integration).
+
+    XML path: walks MspdiProject.get_all_tasks() and normalizes progress
+    fields (percent_complete, actual_start, actual_finish, actual_work_h,
+    remaining_work_h). status_date is read from get_project_summary().
+    Summary tasks are excluded for clean output.
+    MPP path: delegates to MspMppFileManager.read_progress.
+
+    Returns {status, status_date, tasks: [...]}.
+    """
+    try:
+        mgr = _get_msp_file_manager(file_path)
+        if isinstance(mgr, MspdiProject):
+            tasks: List[Dict[str, Any]] = []
+            for raw in mgr.get_all_tasks():
+                if raw.get("summary"):
+                    continue
+                tasks.append(_normalize_mspdi_progress(raw))
+            status_date = None
+            try:
+                summary = mgr.get_project_summary()
+                if isinstance(summary, dict):
+                    status_date = summary.get("status_date")
+            except Exception as e:
+                logger.debug(f"get_project_summary failed: {e}")
+            return {"status": "ok", "status_date": status_date, "tasks": tasks}
+        else:
+            data = mgr.read_progress()
+            return {"status": "ok", **data}
+    except FileNotFoundError as e:
+        return {"status": "error", "error": str(e)}
+    except Exception as e:
+        logger.error(f"_msp_file_read_progress({file_path}) failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 def main():
     """Run MCP server (stdio)."""
     mcp.run()

@@ -4994,6 +4994,120 @@ def _msp_evm_summary(file_path=None, baseline_number=0):
     }
 
 
+def _evm_build_pv_curve(tasks, project_start, project_finish, bucket="week"):
+    """Build cumulative PV curve points across project duration.
+
+    tasks: list of task dicts with baseline_start/finish/work
+    project_start, project_finish: date or datetime
+    bucket: 'day'|'week'|'month' (default 'week')
+
+    Returns list of (date, cumulative_pv) tuples.
+    """
+    enriched = []
+    for t in tasks:
+        bs = _parse_iso_date(t.get("baseline_start"))
+        bf = _parse_iso_date(t.get("baseline_finish"))
+        if bs is None or bf is None:
+            continue
+        enriched.append({
+            "baseline_start": bs, "baseline_finish": bf,
+            "baseline_work": float(t.get("baseline_work") or 0),
+        })
+    delta = _dt5.timedelta(days=7) if bucket == "week" else \
+            _dt5.timedelta(days=1) if bucket == "day" else \
+            _dt5.timedelta(days=30)
+    points = []
+    if hasattr(project_start, "date"):
+        project_start = project_start.date()
+    if hasattr(project_finish, "date"):
+        project_finish = project_finish.date()
+    d = project_start
+    while d <= project_finish:
+        d += delta
+        if enriched:
+            pv_now = _evm_tp_pv(enriched, [(_dt5.date.min, d)])[0]
+        else:
+            pv_now = 0.0
+        points.append((d, pv_now))
+    return points
+
+
+def _evm_derive_project_bounds(tasks):
+    """Derive (project_start, project_finish) from baseline or current dates.
+
+    Falls back to start/finish if baseline not available.
+    Returns (None, None) if no usable dates anywhere.
+    """
+    starts = []
+    finishes = []
+    for t in tasks:
+        bs = _parse_iso_date(t.get("baseline_start") or t.get("start"))
+        bf = _parse_iso_date(t.get("baseline_finish") or t.get("finish"))
+        if bs:
+            starts.append(bs)
+        if bf:
+            finishes.append(bf)
+    if not starts or not finishes:
+        return None, None
+    return min(starts), max(finishes)
+
+
+def _msp_evm_earned_schedule(file_path=None, baseline_number=0, bucket="week"):
+    """Action 3: earned_schedule (RULE 8 Lipke 2003)."""
+    load = _evm_load_task_data(file_path=file_path)
+    if load.get("status") != "ok":
+        return load
+    tasks = load.get("tasks", []) or []
+    if not tasks:
+        return {"status": "error", "error": "No tasks loaded"}
+    project_start, project_finish = _evm_derive_project_bounds(tasks)
+    if project_start is None or project_finish is None:
+        return {"status": "error", "error": "Cannot determine project bounds"}
+    sd_str = load.get("status_date")
+    data_date = _parse_iso_date(sd_str) if sd_str else _dt5.date.today()
+    if data_date is None:
+        data_date = _dt5.date.today()
+    # Compute current EV
+    ev = sum(float(t.get("baseline_work") or 0) *
+             float(t.get("percent_complete") or 0) / 100.0
+             for t in tasks)
+    # Build PV curve
+    pv_curve = _evm_build_pv_curve(tasks, project_start, project_finish, bucket)
+    es = _evm_earned_schedule(pv_curve=pv_curve, ev_now=ev,
+                              project_start=project_start, data_date=data_date)
+    return {"status": "ok", "baseline_number": baseline_number,
+            "bucket": bucket, **es}
+
+
+def _msp_evm_progress_data_quality(file_path=None, baseline_number=0):
+    """Action 7: progress_data_quality (RULE 7)."""
+    load = _evm_load_task_data(file_path=file_path)
+    if load.get("status") != "ok":
+        return load
+    cm = _msp_evm_compute_metrics(file_path=file_path, baseline_number=baseline_number)
+    es = _msp_evm_earned_schedule(file_path=file_path,
+                                  baseline_number=baseline_number)
+    spi_h = cm.get("spi") if cm.get("status") == "ok" else None
+    spi_t = es.get("spi_t") if es.get("status") == "ok" else None
+    completion_pct = (cm.get("ev", 0) / cm["bac"] * 100.0) if cm.get("bac", 0) > 0 else 0
+    has_resources = len(load.get("resources", []) or []) > 0
+    warnings = _evm_pdq(spi_h=spi_h, spi_t=spi_t,
+                       completion_pct=completion_pct, has_resources=has_resources)
+    return {"status": "ok", "warnings": warnings,
+            "spi_h": spi_h, "spi_t": spi_t,
+            "completion_pct": round(completion_pct, 2)}
+
+
+def _msp_evm_detect_currency_mode(file_path=None):
+    """Action 13: detect_currency_mode (RULE 3)."""
+    load = _evm_load_task_data(file_path=file_path)
+    if load.get("status") != "ok":
+        return load
+    mode = _evm_detect_currency_mode(load.get("tasks", []),
+                                    load.get("resources", []))
+    return {"status": "ok", "mode": mode}
+
+
 def main():
     """Run MCP server (stdio)."""
     mcp.run()

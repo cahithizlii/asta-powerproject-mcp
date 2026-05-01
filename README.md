@@ -162,6 +162,39 @@ box; HERO 2800 assignments alone 0.07s).
 
 Tool count: **8 tools, 14 + ~52 = ~66 actions**.
 
+## Phase 5a — EVM (30 Apr 2026)
+
+`msproject_evm` tool — Earned Value Management per PMI PMBOK 8th
+§ 7.4.2 + Lipke 2003 Earned Schedule. 13 actions covering
+CLAUDE.md RULE 4-9 + RULE 12 RAG + RULE 3 currency mode auto-detect.
+Hybrid: `file_path` verilirse Phase 4 file path; yoksa Phase 1 COM.
+
+**Compute (4):** compute_metrics (SPI/CPI/SV/CV), forecast (EAC1/2/3,
+ETC, VAC, TCPI), earned_schedule (AT, ES, SV(t), SPI(t)), summary (RAG)
+
+**Time-Phased (2):** time_phased_evm (PV/EV/AC per bucket
+day/week/month), period_delta (RULE 6 haftalik delta)
+
+**Data Quality (1):** progress_data_quality (RULE 7 SPI(h) vs SPI(t))
+
+**Baseline Integration (2):** variance_to_baseline (Phase 3a),
+compare_baselines_evm (B_a vs B_b)
+
+**History (3):** save_period_snapshot, get_period_history, trend
+(JSON-backed at `~/msproject_evm_snapshots.json`)
+
+**Setup (1):** detect_currency_mode (RULE 3)
+
+Architecture: pure-math `evm_math.py` (RULE 4-9 implementations,
+MSP/COM/file independent) + I/O adapters in msproject_mcp_core.py.
+Phase 1-4 helpers DOKUNULMAZ.
+
+Acceptance: `samples/build_evm_lifecycle.py` runs 200-task CAU-style
+hero with 4 snapshots in <30s.
+
+Tool count: **9 tools, ~79 actions** (Phase 4 14 + Phase 3b 12 +
+Phase 3a 9 + Phase 2b 7 + Phase 2a 7 + Phase 1 6 + 1 progress).
+
 ## Quick Start
 
 1. Install deps: `pip install -r requirements.txt`

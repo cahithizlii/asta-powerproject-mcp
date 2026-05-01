@@ -5371,6 +5371,78 @@ def _msp_evm_trend(snapshot_path=None, project_filter=None):
     return {"status": "ok", "count": len(series), "series": series}
 
 
+@mcp.tool(
+    name="msproject_evm",
+    annotations={"title": "MS Project EVM Operations", "readOnlyHint": True},
+)
+async def msproject_evm(params: dict) -> str:
+    """Earned Value Management — PMI PMBOK 8th § 7.4.2 + Lipke 2003 ES.
+
+    Hybrid: file_path verilirse Phase 4 file path; yoksa Phase 1 COM.
+
+    Actions:
+    - compute_metrics: SPI/CPI/SV/CV (RULE 4)
+    - forecast: EAC1/2/3 + ETC + VAC + TCPI(BAC/EAC) (RULE 9)
+    - earned_schedule: AT, ES, SV(t), SPI(t) (RULE 8 Lipke)
+    - summary: RAG + completion_pct + executive (RULE 12)
+    - time_phased_evm: PV/EV/AC per period (bucket day/week/month, RULE 5)
+    - period_delta: vs prev snapshot (RULE 6)
+    - progress_data_quality: warnings (RULE 7)
+    - variance_to_baseline: vs Baseline N (Phase 3a integration)
+    - compare_baselines_evm: B_a vs B_b EVM delta
+    - save_period_snapshot: append to JSON snapshot file
+    - get_period_history: list saved snapshots (filter by project/baseline)
+    - trend: SPI/CPI/EAC trajectory series
+    - detect_currency_mode: hours vs cost (RULE 3)
+
+    Phase 5a (30 Apr 2026). Tool count 8 -> 9.
+    """
+    import json
+    action = params.get("action", "")
+    p = {k: v for k, v in params.items() if k != "action"}
+    try:
+        if action == "compute_metrics":
+            r = _msp_evm_compute_metrics(**p)
+        elif action == "forecast":
+            r = _msp_evm_forecast(**p)
+        elif action == "earned_schedule":
+            r = _msp_evm_earned_schedule(**p)
+        elif action == "summary":
+            r = _msp_evm_summary(**p)
+        elif action == "time_phased_evm":
+            r = _msp_evm_time_phased_evm(**p)
+        elif action == "period_delta":
+            r = _msp_evm_period_delta(**p)
+        elif action == "progress_data_quality":
+            r = _msp_evm_progress_data_quality(**p)
+        elif action == "variance_to_baseline":
+            r = _msp_evm_variance_to_baseline(**p)
+        elif action == "compare_baselines_evm":
+            r = _msp_evm_compare_baselines_evm(**p)
+        elif action == "save_period_snapshot":
+            r = _msp_evm_save_period_snapshot(**p)
+        elif action == "get_period_history":
+            r = _msp_evm_get_period_history(**p)
+        elif action == "trend":
+            r = _msp_evm_trend(**p)
+        elif action == "detect_currency_mode":
+            r = _msp_evm_detect_currency_mode(**p)
+        else:
+            r = {"status": "error",
+                 "error": (f"Unknown action '{action}'. Valid: "
+                          "compute_metrics/forecast/earned_schedule/summary/"
+                          "time_phased_evm/period_delta/progress_data_quality/"
+                          "variance_to_baseline/compare_baselines_evm/"
+                          "save_period_snapshot/get_period_history/trend/"
+                          "detect_currency_mode")}
+    except TypeError as e:
+        r = {"status": "error", "error": f"Invalid params for {action}: {e}"}
+    except Exception as e:
+        logger.exception(f"msproject_evm({action}) failed: {e}")
+        r = {"status": "error", "error": str(e)}
+    return json.dumps(r, default=str, ensure_ascii=False)
+
+
 def main():
     """Run MCP server (stdio)."""
     mcp.run()

@@ -5560,51 +5560,82 @@ def _dcma_collect_full_data(file_path=None, baseline_number=0):
                                     baseline_number=baseline_number)
     links = _dcma_load_links(file_path=file_path)
     tasks = base.get("tasks", []) or []
+    # Phase 5a COM path returns assignments=[] for perf — re-collect here.
+    assignments = base.get("assignments", []) or []
     # Enrich tasks with DCMA-specific fields when COM path
     if not file_path:
         try:
             app = _validate_active_project()
             proj = app.ActiveProject
-            for t_dict in tasks:
-                tid = t_dict["id"]
+            # Single proj.Tasks iteration: build O(1) map (avoid O(N^2) via
+            # _find_task_by_id per task) AND collect assignments inline
+            # (Phase 5a COM skips assignments for perf).
+            tasks_by_com_id = {}
+            com_assignments = []
+            for i in range(1, proj.Tasks.Count + 1):
                 try:
-                    com_t = _find_task_by_id(proj, tid)
+                    com_t = proj.Tasks(i)
                     if com_t is None:
                         continue
+                    tid_int = int(com_t.ID)
+                    tasks_by_com_id[tid_int] = com_t
+                    # Walk task assignments
                     try:
-                        slack_min = float(com_t.TotalSlack or 0)
-                        t_dict["total_slack_days"] = round(slack_min / 480.0, 2)
-                    except Exception:
-                        t_dict["total_slack_days"] = 0
-                    try:
-                        t_dict["critical"] = bool(com_t.Critical)
-                    except Exception:
-                        t_dict["critical"] = False
-                    try:
-                        t_dict["constraint_type"] = int(com_t.ConstraintType or 0)
-                    except Exception:
-                        t_dict["constraint_type"] = 0
-                    # Predecessors/successors as ID lists via TaskDependencies
-                    try:
-                        deps = com_t.TaskDependencies
-                        preds = []
-                        succs = []
-                        if deps:
-                            for j in range(1, deps.Count + 1):
-                                d = deps(j)
-                                if d is None:
+                        a_coll = com_t.Assignments
+                        if a_coll:
+                            for ai in range(1, a_coll.Count + 1):
+                                try:
+                                    a = a_coll(ai)
+                                    if a is None:
+                                        continue
+                                    com_assignments.append({
+                                        "task_id": tid_int,
+                                        "resource_id": int(a.ResourceID),
+                                    })
+                                except Exception:
                                     continue
-                                if d.To and d.To.ID == tid and d.From:
-                                    preds.append(d.From.ID)
-                                elif d.From and d.From.ID == tid and d.To:
-                                    succs.append(d.To.ID)
-                        t_dict["predecessors"] = preds
-                        t_dict["successors"] = succs
                     except Exception:
-                        t_dict.setdefault("predecessors", [])
-                        t_dict.setdefault("successors", [])
+                        pass
                 except Exception:
                     continue
+            assignments = com_assignments
+            for t_dict in tasks:
+                tid = int(t_dict["id"])
+                com_t = tasks_by_com_id.get(tid)
+                if com_t is None:
+                    continue
+                try:
+                    slack_min = float(com_t.TotalSlack or 0)
+                    t_dict["total_slack_days"] = round(slack_min / 480.0, 2)
+                except Exception:
+                    t_dict["total_slack_days"] = 0
+                try:
+                    t_dict["critical"] = bool(com_t.Critical)
+                except Exception:
+                    t_dict["critical"] = False
+                try:
+                    t_dict["constraint_type"] = int(com_t.ConstraintType or 0)
+                except Exception:
+                    t_dict["constraint_type"] = 0
+                # Predecessors/successors as ID lists via TaskDependencies
+                try:
+                    deps = com_t.TaskDependencies
+                    preds = []
+                    succs = []
+                    if deps:
+                        for j in range(1, deps.Count + 1):
+                            d = deps(j)
+                            if d is None:
+                                continue
+                            if d.To and d.To.ID == tid and d.From:
+                                preds.append(d.From.ID)
+                            elif d.From and d.From.ID == tid and d.To:
+                                succs.append(d.To.ID)
+                    t_dict["predecessors"] = preds
+                    t_dict["successors"] = succs
+                except Exception:
+                    t_dict.setdefault("predecessors", [])
+                    t_dict.setdefault("successors", [])
         except Exception as e:
             logger.warning(f"_dcma_collect_full_data COM enrich failed: {e}")
     # File path: Phase 4 already provides total_float, critical, constraint_type
@@ -5617,7 +5648,7 @@ def _dcma_collect_full_data(file_path=None, baseline_number=0):
         "status": "ok",
         "tasks": tasks,
         "links": links,
-        "assignments": base.get("assignments", []) or [],
+        "assignments": assignments,
         "resources": base.get("resources", []) or [],
         "baseline": bload if bload.get("status") == "ok" else None,
         "status_date": base.get("status_date"),
@@ -5652,20 +5683,28 @@ def _msp_dcma_summary(file_path=None, baseline_number=0):
 
 
 def _msp_dcma_drill_down(file_path=None, rule_id=1, baseline_number=0):
-    """Action 3: drill_down - per-rule failed task details."""
+    """Action 3: drill_down - per-rule failed task details.
+
+    Single _dcma_collect_full_data call (was 2x — Phase 5b TAIL fix to
+    avoid double COM enrichment on large projects).
+    """
     if rule_id not in range(1, 15):
         return {"status": "error",
                 "error": f"rule_id must be 1-14, got {rule_id}"}
-    full = _msp_dcma_assess_all(file_path=file_path,
-                                baseline_number=baseline_number)
-    if full.get("status") != "ok":
-        return full
-    rule = next((r for r in full["rules"] if r["id"] == rule_id), None)
-    if rule is None:
-        return {"status": "error", "error": f"Rule {rule_id} not found"}
-    # Resolve failed task names
     data = _dcma_collect_full_data(file_path=file_path,
                                    baseline_number=baseline_number)
+    if data.get("status") != "ok":
+        return data
+    result = _dcma_assess_all(
+        tasks=data["tasks"],
+        links=data["links"],
+        assignments=data["assignments"],
+        baseline=data.get("baseline"),
+        status_date=data.get("status_date"),
+    )
+    rule = next((r for r in result["rules"] if r["id"] == rule_id), None)
+    if rule is None:
+        return {"status": "error", "error": f"Rule {rule_id} not found"}
     tasks_by_id = {t["id"]: t for t in data.get("tasks", [])}
     failed_ids = rule.get("failed_task_ids", [])
     failed_tasks = []
@@ -5728,6 +5767,51 @@ def _msp_dcma_compare(file_path=None, snapshot_path=None, baseline_number=0):
         "prev": prev.get("summary") if isinstance(prev, dict) else None,
         "delta": {"rules_improved": improved, "rules_degraded": degraded},
     }
+
+
+@mcp.tool(
+    name="msproject_health",
+    annotations={
+        "title": "MS Project DCMA 14-Point Health Assessment",
+        "readOnlyHint": True,
+    },
+)
+async def msproject_health(params: dict) -> str:
+    """DCMA 14-Point Schedule Health Assessment per CLAUDE.md RULE 10.
+
+    Hybrid: file_path verilirse Phase 4 file path; yoksa Phase 1 COM.
+    Read-only - no write actions.
+
+    Actions:
+    - assess_all: All 14 rules + summary + RAG
+    - summary: Just RAG + executive text
+    - drill_down: Per-rule failed task list (rule_id 1-14)
+    - compare: Current DCMA vs prev snapshot (reuses Phase 5a snapshot file)
+
+    Phase 5b (1 May 2026). Tool count 9 -> 10.
+    """
+    import json
+    action = params.get("action", "")
+    p = {k: v for k, v in params.items() if k != "action"}
+    try:
+        if action == "assess_all":
+            r = _msp_dcma_assess_all(**p)
+        elif action == "summary":
+            r = _msp_dcma_summary(**p)
+        elif action == "drill_down":
+            r = _msp_dcma_drill_down(**p)
+        elif action == "compare":
+            r = _msp_dcma_compare(**p)
+        else:
+            r = {"status": "error",
+                 "error": (f"Unknown action '{action}'. Valid: "
+                           "assess_all/summary/drill_down/compare")}
+    except TypeError as e:
+        r = {"status": "error", "error": f"Invalid params for {action}: {e}"}
+    except Exception as e:
+        logger.exception(f"msproject_health({action}) failed: {e}")
+        r = {"status": "error", "error": str(e)}
+    return json.dumps(r, default=str, ensure_ascii=False)
 
 
 def main():

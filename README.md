@@ -195,6 +195,38 @@ hero with 4 snapshots in <30s.
 Tool count: **9 tools, ~79 actions** (Phase 4 14 + Phase 3b 12 +
 Phase 3a 9 + Phase 2b 7 + Phase 2a 7 + Phase 1 6 + 1 progress).
 
+## Phase 5b — DCMA 14-Point (1 May 2026)
+
+`msproject_health` tool — DCMA 14-Point Schedule Health Assessment per
+CLAUDE.md RULE 10. 4 actions covering all 14 rules with industry-standard
+hardcoded thresholds. Hybrid: `file_path` verilirse Phase 4 file path;
+yoksa Phase 1 COM. Read-only.
+
+**Actions:**
+- `assess_all`: 14 rules + summary + RAG (>=12 pass GREEN, 8-11 AMBER, <8 RED)
+- `summary`: RAG + executive text only
+- `drill_down(rule_id=1..14)`: per-rule failed task list
+- `compare(snapshot_path)`: DCMA delta vs prev snapshot (reuses Phase 5a snapshot file)
+
+**Rules grouped by category:**
+- Logic (1-5): no_pred, no_succ, leads, lags, fs_link
+- Constraints (6): hard_constraints
+- Float (7-8): high_float, negative_float
+- Duration (9): high_duration
+- Quality (10-11): invalid_dates, resources_missing
+- Schedule (12-14): missed_tasks, critical_path, BEI
+
+Architecture: pure-math `dcma_checks.py` (14 fixture-free check functions
++ aggregator + RAG, MSP/COM/file independent, ~82 tests) + I/O adapters
+(`_dcma_load_links`, `_dcma_collect_full_data`, 4 `_msp_dcma_*` action
+helpers) in msproject_mcp_core.py. Phase 1-5a helpers DOKUNULMAZ.
+
+Acceptance: `samples/build_dcma_lifecycle.py` runs 200-task CAU-style with
+intentional DCMA failures (12 no-predecessor + 15 high-duration + 12
+unassigned), drill-down per failing rule, in <60s.
+
+Tool count: **10 tools, ~83 actions**.
+
 ## Quick Start
 
 1. Install deps: `pip install -r requirements.txt`

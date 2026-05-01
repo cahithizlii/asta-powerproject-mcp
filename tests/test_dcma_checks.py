@@ -6,6 +6,7 @@ import pytest
 from dcma_checks import (
     DCMA_RULES, _DCMA_THRESHOLDS,
     check_no_predecessor, check_no_successor,
+    check_leads, check_lags, check_fs_link_pct,
 )
 
 
@@ -144,3 +145,123 @@ def test_check_no_successor_empty():
     r = check_no_successor([])
     assert r["status"] == "pass"
     assert r["total_count"] == 0
+
+
+# ---------- T86: Link helpers ----------
+
+def _link(from_id, to_id, type="FS", lag_days=0):
+    return {"from_id": from_id, "to_id": to_id, "type": type, "lag_days": lag_days}
+
+
+# ---------- check_leads (RULE 3: =0) ----------
+
+def test_check_leads_pass_no_leads():
+    links = [_link(1, 2, lag_days=0), _link(2, 3, lag_days=2)]
+    r = check_leads(links)
+    assert r["id"] == 3
+    assert r["status"] == "pass"
+    assert r["actual"] == 0
+
+
+def test_check_leads_fail_one_lead():
+    links = [_link(1, 2, lag_days=-3)]  # negative = lead
+    r = check_leads(links)
+    assert r["status"] == "fail"
+    assert r["actual"] == 1
+    assert r["failed_count"] == 1
+    assert len(r["failed_links"]) == 1
+
+
+def test_check_leads_fail_three_leads():
+    links = [_link(1, 2, lag_days=-3), _link(2, 3, lag_days=-1),
+             _link(3, 4, lag_days=-2), _link(4, 5, lag_days=0)]
+    r = check_leads(links)
+    assert r["status"] == "fail"
+    assert r["actual"] == 3
+
+
+def test_check_leads_empty():
+    r = check_leads([])
+    assert r["status"] == "pass"
+    assert r["actual"] == 0
+    assert r["total_count"] == 0
+
+
+# ---------- check_lags (RULE 4: <5%) ----------
+
+def test_check_lags_pass_low_pct():
+    """1 lag in 30 links = 3.3% -> PASS."""
+    links = [_link(i, i + 1, lag_days=0) for i in range(1, 30)]
+    links.append(_link(30, 31, lag_days=2))
+    r = check_lags(links)
+    assert r["id"] == 4
+    assert r["status"] == "pass"
+    assert r["actual"] < 5.0
+
+
+def test_check_lags_fail_high_pct():
+    """3 lags in 10 links = 30% -> FAIL."""
+    links = [_link(i, i + 1, lag_days=0) for i in range(1, 8)]
+    links += [_link(8, 9, lag_days=3), _link(9, 10, lag_days=2),
+              _link(10, 11, lag_days=1)]
+    r = check_lags(links)
+    assert r["status"] == "fail"
+    assert r["actual"] == pytest.approx(30.0, rel=1e-2)
+
+
+def test_check_lags_empty():
+    r = check_lags([])
+    assert r["status"] == "pass"
+    assert r["total_count"] == 0
+
+
+def test_check_lags_returns_failed_links():
+    """Drill-down: failed_links contains lag info."""
+    links = [_link(1, 2, lag_days=0), _link(2, 3, lag_days=5)]
+    r = check_lags(links)
+    assert len(r["failed_links"]) == 1
+    assert r["failed_links"][0]["lag_days"] == 5
+
+
+# ---------- check_fs_link_pct (RULE 5: >90%) ----------
+
+def test_check_fs_link_pct_pass():
+    """20 links, 19 FS = 95% -> PASS."""
+    links = [_link(i, i + 1, type="FS") for i in range(1, 20)]
+    links.append(_link(20, 21, type="SS"))  # 1 SS / 20 = 95% FS
+    r = check_fs_link_pct(links)
+    assert r["id"] == 5
+    assert r["status"] == "pass"
+    assert r["actual"] >= 90.0
+
+
+def test_check_fs_link_pct_fail_too_many_non_fs():
+    """5 of 10 = 50% FS -> FAIL."""
+    links = [_link(i, i + 1, type="FS") for i in range(1, 6)]
+    links += [_link(i, i + 1, type="SS") for i in range(6, 11)]
+    r = check_fs_link_pct(links)
+    assert r["status"] == "fail"
+    assert r["actual"] == pytest.approx(50.0, rel=1e-2)
+
+
+def test_check_fs_link_pct_empty():
+    r = check_fs_link_pct([])
+    assert r["status"] == "pass"  # vacuous
+    assert r["total_count"] == 0
+
+
+def test_check_fs_link_pct_case_insensitive():
+    """'fs' lowercase should still count as FS."""
+    links = [_link(1, 2, type="fs"), _link(2, 3, type="FS")]
+    r = check_fs_link_pct(links)
+    assert r["actual"] == 100.0
+
+
+def test_check_fs_link_pct_boundary_exactly_90():
+    """Exactly 90% should FAIL (strict >90)."""
+    links = [_link(i, i + 1, type="FS") for i in range(1, 10)]  # 9 FS
+    links.append(_link(10, 11, type="SS"))                       # 1 SS
+    # 9/10 = 90.0 — strict >90 -> FAIL
+    r = check_fs_link_pct(links)
+    assert r["actual"] == 90.0
+    assert r["status"] == "fail"

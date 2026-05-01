@@ -129,3 +129,63 @@ def check_no_successor(tasks: List[Dict[str, Any]]) -> Dict[str, Any]:
         "failed_count": failed_count, "total_count": total,
         "failed_task_ids": failed_ids,
     }
+
+
+# ---------- T86: Logic link rules ----------
+
+def check_leads(links: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """RULE 3: zero leads (negative lag) allowed.
+
+    A lead = predecessor link with negative lag (successor starts BEFORE
+    predecessor finishes). DCMA prohibits leads entirely.
+    """
+    failed_links = [l for l in links if (l.get("lag_days") or 0) < 0]
+    failed_count = len(failed_links)
+    return {
+        "id": 3, "name": "Leads", "threshold": "=0",
+        "actual": failed_count, "actual_unit": "count",
+        "status": _eval_status(3, failed_count),
+        "failed_count": failed_count, "total_count": len(links),
+        "failed_links": [{"from_id": l["from_id"], "to_id": l["to_id"],
+                          "lag_days": l["lag_days"]} for l in failed_links],
+    }
+
+
+def check_lags(links: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """RULE 4: <5% of links should have lag (positive lag_days)."""
+    total = len(links)
+    if total == 0:
+        return {"id": 4, "name": "Lags", "threshold": "<5%",
+                "actual": 0.0, "actual_unit": "%", "status": "pass",
+                "failed_count": 0, "total_count": 0, "failed_links": []}
+    failed_links = [l for l in links if (l.get("lag_days") or 0) > 0]
+    failed_count = len(failed_links)
+    actual_pct = (failed_count / total) * 100.0
+    return {
+        "id": 4, "name": "Lags", "threshold": "<5%",
+        "actual": round(actual_pct, 2), "actual_unit": "%",
+        "status": _eval_status(4, actual_pct),
+        "failed_count": failed_count, "total_count": total,
+        "failed_links": [{"from_id": l["from_id"], "to_id": l["to_id"],
+                          "lag_days": l["lag_days"]} for l in failed_links],
+    }
+
+
+def check_fs_link_pct(links: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """RULE 5: >90% of links should be Finish-to-Start (FS)."""
+    total = len(links)
+    if total == 0:
+        return {"id": 5, "name": "FS Link %", "threshold": ">90%",
+                "actual": 100.0, "actual_unit": "%", "status": "pass",
+                "failed_count": 0, "total_count": 0, "failed_links": []}
+    fs_count = sum(1 for l in links if (l.get("type") or "").upper() == "FS")
+    actual_pct = (fs_count / total) * 100.0
+    failed_links = [l for l in links if (l.get("type") or "").upper() != "FS"]
+    return {
+        "id": 5, "name": "FS Link %", "threshold": ">90%",
+        "actual": round(actual_pct, 2), "actual_unit": "%",
+        "status": _eval_status(5, actual_pct),
+        "failed_count": len(failed_links), "total_count": total,
+        "failed_links": [{"from_id": l["from_id"], "to_id": l["to_id"],
+                          "type": l["type"]} for l in failed_links],
+    }

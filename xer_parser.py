@@ -194,3 +194,64 @@ def _read_links(self):
 
 XerFile.read_tasks = _read_tasks
 XerFile.read_links = _read_links
+
+
+# ---------- T104: read_resources + read_assignments + read_calendars ----------
+
+def _read_resources(self):
+    """RSRC section -> list of {id, name, code, type, max_units}.
+
+    P6 RT_Labor/RT_Equip → MSP "Work"; RT_Mat → "Material".
+    """
+    tbl = self.tables.get("RSRC", {"rows": []})
+    out = []
+    for row in tbl["rows"]:
+        rtype = row.get("rsrc_type", "")
+        msp_type = "Material" if rtype == "RT_Mat" else "Work"
+        out.append({
+            "id": _to_int(row.get("rsrc_id")),
+            "name": row.get("rsrc_name", ""),
+            "code": row.get("rsrc_short_name", ""),
+            "type": msp_type,
+            "max_units": _to_float(row.get("max_qty_per_hr"), default=1.0),
+        })
+    return out
+
+
+def _read_assignments(self):
+    """TASKRSRC section -> list of {task_id, resource_id, target_qty,
+    actual_qty, target_cost, actual_cost}."""
+    tbl = self.tables.get("TASKRSRC", {"rows": []})
+    out = []
+    for row in tbl["rows"]:
+        out.append({
+            "task_id": _to_int(row.get("task_id")),
+            "resource_id": _to_int(row.get("rsrc_id")),
+            "target_qty": _to_float(row.get("target_qty")),
+            "actual_qty": _to_float(row.get("act_reg_qty")),
+            "target_cost": _to_float(row.get("target_cost")),
+            "actual_cost": _to_float(row.get("act_reg_cost")),
+        })
+    return out
+
+
+def _read_calendars(self):
+    """CALENDAR section -> list of {id, name, day_hr_cnt, week_hr_cnt}.
+
+    clndr_data BLOB (holiday detail) NOT extracted - Phase 6 enhancement.
+    """
+    tbl = self.tables.get("CALENDAR", {"rows": []})
+    out = []
+    for row in tbl["rows"]:
+        out.append({
+            "id": _to_int(row.get("clndr_id")),
+            "name": row.get("clndr_name", ""),
+            "day_hr_cnt": _to_float(row.get("day_hr_cnt"), default=8.0),
+            "week_hr_cnt": _to_float(row.get("week_hr_cnt"), default=40.0),
+        })
+    return out
+
+
+XerFile.read_resources = _read_resources
+XerFile.read_assignments = _read_assignments
+XerFile.read_calendars = _read_calendars

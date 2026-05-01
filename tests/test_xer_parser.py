@@ -222,3 +222,103 @@ def test_read_links_lag_conversion(tmp_path):
     links = x.read_links()
     assert links[0]["lag_days"] == 2.0  # 16 / 8
     assert links[0]["type"] == "SS"
+
+
+# ---------- T104: read_resources + read_assignments + read_calendars ----------
+
+def test_read_resources_count(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    res = x.read_resources()
+    assert len(res) == 4
+
+
+def test_read_resources_shape(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    res = x.read_resources()
+    r = res[0]
+    for k in ("id", "name", "code", "type", "max_units"):
+        assert k in r
+
+
+def test_read_resources_cow(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    res = x.read_resources()
+    cow = next(r for r in res if r["id"] == 101)
+    assert cow["name"] == "Concrete Workers"
+    assert cow["code"] == "COW"
+    assert cow["type"] == "Work"
+    assert cow["max_units"] == 10.0
+
+
+def test_read_resources_material_type_mapped(sample_cau_xer):
+    """RT_Mat (STL) -> 'Material'."""
+    x = XerFile(sample_cau_xer)
+    res = x.read_resources()
+    stl = next(r for r in res if r["id"] == 103)
+    assert stl["type"] == "Material"
+
+
+# ---- Assignments ----
+
+def test_read_assignments_count(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    a = x.read_assignments()
+    assert len(a) == 7
+
+
+def test_read_assignments_shape(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    a = x.read_assignments()
+    item = a[0]
+    for k in ("task_id", "resource_id", "target_qty", "actual_qty",
+              "target_cost", "actual_cost"):
+        assert k in item
+
+
+def test_read_assignments_task_resource_link(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    a = x.read_assignments()
+    foundation = [x for x in a if x["task_id"] == 1001]
+    assert len(foundation) == 2
+    assert {x["resource_id"] for x in foundation} == {101, 103}
+
+
+def test_read_assignments_actual_qty(sample_cau_xer):
+    """Foundation completed: actual_qty = target_qty for both res."""
+    x = XerFile(sample_cau_xer)
+    a = x.read_assignments()
+    cow_foundation = next(x for x in a if x["task_id"] == 1001 and x["resource_id"] == 101)
+    assert cow_foundation["actual_qty"] == 180.0
+    assert cow_foundation["target_qty"] == 180.0
+    # Walls not started: actual = 0
+    cow_walls = next(x for x in a if x["task_id"] == 1003 and x["resource_id"] == 101)
+    assert cow_walls["actual_qty"] == 0.0
+
+
+# ---- Calendars ----
+
+def test_read_calendars_count(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    cals = x.read_calendars()
+    assert len(cals) == 1
+
+
+def test_read_calendars_cau_9h_day(sample_cau_xer):
+    """CLAUDE.md RULE 1: CAU calendar 6x9 = 54h/week, 9h/day."""
+    x = XerFile(sample_cau_xer)
+    cals = x.read_calendars()
+    cal = cals[0]
+    assert cal["day_hr_cnt"] == 9.0
+    assert cal["week_hr_cnt"] == 54.0
+    assert cal["name"] == "CAU 6x9"
+
+
+def test_read_calendars_default_when_missing(tmp_path):
+    """Empty CALENDAR rows -> day_hr_cnt defaults handled."""
+    content = ("ERMHDR\t18.8\t2026-01-01\tu\tApp\tUSD\n"
+               "%T\tCALENDAR\n%F\tclndr_id\tclndr_name\tday_hr_cnt\tweek_hr_cnt\n%E\n")
+    path = tmp_path / "c.xer"
+    path.write_bytes(b"\xff\xfe" + content.encode("utf-16-le"))
+    x = XerFile(str(path))
+    cals = x.read_calendars()
+    assert cals == []

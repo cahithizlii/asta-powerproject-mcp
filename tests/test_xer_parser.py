@@ -94,3 +94,131 @@ def test_xer_unknown_marker_skipped(tmp_path):
     x = XerFile(str(path))
     assert "TASK" in x.tables
     assert len(x.tables["TASK"]["rows"]) == 1
+
+
+# ---------- T103: read_tasks + read_links ----------
+
+def test_read_tasks_count(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    tasks = x.read_tasks()
+    assert len(tasks) == 6
+
+
+def test_read_tasks_msp_shape(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    tasks = x.read_tasks()
+    t = tasks[0]
+    for k in ("id", "name", "code", "duration_h", "start", "finish",
+              "percent_complete", "summary", "constraint_type", "status"):
+        assert k in t
+
+
+def test_read_tasks_id_int(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    tasks = x.read_tasks()
+    assert isinstance(tasks[0]["id"], int)
+    assert tasks[0]["id"] == 1001
+
+
+def test_read_tasks_milestone_summary_flag(sample_cau_xer):
+    """TT_FinMile is a milestone, not summary."""
+    x = XerFile(sample_cau_xer)
+    tasks = x.read_tasks()
+    handover = next(t for t in tasks if t["id"] == 1006)
+    assert handover["summary"] is False
+    assert handover["task_type"] == "TT_FinMile"
+
+
+def test_read_tasks_constraint_type_mapped(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    tasks = x.read_tasks()
+    handover = next(t for t in tasks if t["id"] == 1006)
+    assert handover["constraint_type"] == 3  # CS_MFO -> 3
+    foundation = next(t for t in tasks if t["id"] == 1001)
+    assert foundation["constraint_type"] == 0  # CS_ASAP -> 0
+
+
+def test_read_tasks_percent_complete(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    tasks = x.read_tasks()
+    foundation = next(t for t in tasks if t["id"] == 1001)
+    assert foundation["percent_complete"] == 100.0
+    frame = next(t for t in tasks if t["id"] == 1002)
+    assert frame["percent_complete"] == 75.0
+
+
+def test_read_tasks_total_float_days_default_8h(sample_cau_xer):
+    """Default day_hr_cnt=8: 72h / 8 = 9 days."""
+    x = XerFile(sample_cau_xer)
+    tasks = x.read_tasks()
+    walls = next(t for t in tasks if t["id"] == 1003)
+    assert walls["total_float"] == 9.0
+
+
+def test_read_tasks_total_float_days_cau_9h(sample_cau_xer):
+    """CAU calendar 9h/day: 72h / 9 = 8 days."""
+    x = XerFile(sample_cau_xer)
+    tasks = x.read_tasks(day_hr_cnt=9.0)
+    walls = next(t for t in tasks if t["id"] == 1003)
+    assert walls["total_float"] == 8.0
+
+
+def test_read_tasks_dates_iso(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    tasks = x.read_tasks()
+    foundation = next(t for t in tasks if t["id"] == 1001)
+    assert foundation["start"] == "2024-07-08"
+    assert foundation["finish"] == "2024-07-29"
+    assert foundation["actual_finish"] == "2024-07-29"
+    # Frame still in progress (no actual_finish)
+    frame = next(t for t in tasks if t["id"] == 1002)
+    assert frame["actual_finish"] is None
+
+
+# ---- Links ----
+
+def test_read_links_count(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    links = x.read_links()
+    assert len(links) == 5
+
+
+def test_read_links_msp_shape(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    link = x.read_links()[0]
+    for k in ("from_id", "to_id", "type", "lag_days"):
+        assert k in link
+
+
+def test_read_links_type_mapping_all_fs(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    links = x.read_links()
+    assert all(l["type"] == "FS" for l in links)
+
+
+def test_read_links_zero_lag(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    links = x.read_links()
+    assert all(l["lag_days"] == 0 for l in links)
+
+
+def test_read_links_pred_to_succ_mapping(sample_cau_xer):
+    """from_id = predecessor (pred_task_id), to_id = successor (task_id)."""
+    x = XerFile(sample_cau_xer)
+    links = x.read_links()
+    first = links[0]
+    assert first["from_id"] == 1001  # Foundation predecessor
+    assert first["to_id"] == 1002    # Frame successor
+
+
+def test_read_links_lag_conversion(tmp_path):
+    """Lag in hours converted to days at 8h/day."""
+    content = ("ERMHDR\t18.8\t2026-01-01\tu\tApp\tUSD\n"
+               "%T\tTASKPRED\n%F\ttask_pred_id\ttask_id\tpred_task_id\tpred_type\tlag_hr_cnt\n"
+               "%R\t1\t2\t1\tPR_SS\t16.0\n%E\n")
+    path = tmp_path / "lag.xer"
+    path.write_bytes(b"\xff\xfe" + content.encode("utf-16-le"))
+    x = XerFile(str(path))
+    links = x.read_links()
+    assert links[0]["lag_days"] == 2.0  # 16 / 8
+    assert links[0]["type"] == "SS"

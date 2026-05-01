@@ -101,3 +101,96 @@ class XerFile:
             if line.startswith("%E"):
                 break
             # Unknown marker - skip silently (forward-compat with new P6 markers)
+
+
+# ---------- Field mapping helpers ----------
+
+CONSTRAINT_TYPE_MAP = {
+    "CS_ASAP": 0, "CS_ALAP": 1,
+    "CS_MSO": 2, "CS_MFO": 3,
+    "CS_MSOA": 4, "CS_MSOB": 5,
+    "CS_MEOA": 6, "CS_MEOB": 7,
+}
+
+LINK_TYPE_MAP = {
+    "PR_FS": "FS", "PR_SS": "SS", "PR_FF": "FF", "PR_SF": "SF",
+}
+
+# DCMA/MSP convention: Summary = WBS rollup or LOE (Level of Effort).
+# Milestones (TT_Mile, TT_FinMile) are leaf tasks, NOT summaries.
+SUMMARY_TASK_TYPES = {"TT_LOE", "TT_WBS"}
+
+
+def _to_int(s, default=None):
+    try:
+        return int(float(s)) if s else default
+    except (ValueError, TypeError):
+        return default
+
+
+def _to_float(s, default=0.0):
+    try:
+        return float(s) if s else default
+    except (ValueError, TypeError):
+        return default
+
+
+def _to_iso_date(s):
+    """XER dates are 'YYYY-MM-DD HH:MM' or empty. Return ISO date or None."""
+    if not s or not s.strip():
+        return None
+    return s[:10]  # 'YYYY-MM-DD' prefix
+
+
+# ---------- T103: read_tasks + read_links ----------
+
+def _read_tasks(self, day_hr_cnt=8.0):
+    """TASK section -> list of MSP-shape task dicts.
+
+    day_hr_cnt: hours per working day (CAU = 9.0; default 8.0). Used to
+    convert total_float_hr_cnt to days.
+    """
+    tbl = self.tables.get("TASK", {"rows": []})
+    out = []
+    for row in tbl["rows"]:
+        ttype = row.get("task_type", "")
+        out.append({
+            "id": _to_int(row.get("task_id")),
+            "name": row.get("task_name", ""),
+            "code": row.get("task_code", ""),
+            "duration_h": _to_float(row.get("target_drtn_hr_cnt")),
+            "start": _to_iso_date(row.get("target_start_date")),
+            "finish": _to_iso_date(row.get("target_end_date")),
+            "actual_start": _to_iso_date(row.get("act_start_date")),
+            "actual_finish": _to_iso_date(row.get("act_end_date")),
+            "percent_complete": _to_float(row.get("phys_complete_pct")),
+            "total_float": _to_float(row.get("total_float_hr_cnt")) / day_hr_cnt
+                           if day_hr_cnt > 0 else 0.0,
+            "summary": ttype in SUMMARY_TASK_TYPES,
+            "task_type": ttype,
+            "constraint_type": CONSTRAINT_TYPE_MAP.get(row.get("cstr_type", ""), 0),
+            "status": row.get("status_code", ""),
+        })
+    return out
+
+
+def _read_links(self):
+    """TASKPRED section -> list of {from_id, to_id, type, lag_days}.
+
+    XER `task_id` = successor; `pred_task_id` = predecessor. Map to MSP shape:
+    from_id = predecessor, to_id = successor. Lag converted hr -> day @ 8h/day.
+    """
+    tbl = self.tables.get("TASKPRED", {"rows": []})
+    out = []
+    for row in tbl["rows"]:
+        out.append({
+            "from_id": _to_int(row.get("pred_task_id")),
+            "to_id": _to_int(row.get("task_id")),
+            "type": LINK_TYPE_MAP.get(row.get("pred_type", ""), "FS"),
+            "lag_days": _to_float(row.get("lag_hr_cnt")) / 8.0,
+        })
+    return out
+
+
+XerFile.read_tasks = _read_tasks
+XerFile.read_links = _read_links

@@ -185,3 +185,79 @@ def build_summary_sheet(wb, summary):
     ws.column_dimensions['A'].width = 38
     ws.column_dimensions['B'].width = 20
     return ws
+
+
+# ---------- T96: EVM sheet builder (Compute + TimePhased) ----------
+
+EVM_COMPUTE_ROWS = [
+    ("BAC", "metrics", "BAC", "currency"),
+    ("EV (Earned Value)", "metrics", "EV", "currency"),
+    ("AC (Actual Cost)", "metrics", "AC", "currency"),
+    ("PV (Planned Value)", "metrics", "PV", "currency"),
+    ("SV (Schedule Variance)", "metrics", "SV", "currency"),
+    ("CV (Cost Variance)", "metrics", "CV", "currency"),
+    ("SPI", "metrics", "SPI", "ratio"),
+    ("CPI", "metrics", "CPI", "ratio"),
+    ("EAC1", "forecast", "EAC1", "currency"),
+    ("EAC2", "forecast", "EAC2", "currency"),
+    ("EAC3", "forecast", "EAC3", "currency"),
+    ("ETC", "forecast", "ETC", "currency"),
+    ("VAC", "forecast", "VAC", "currency"),
+    ("TCPI(BAC)", "forecast", "TCPI_BAC", "ratio"),
+    ("TCPI(EAC)", "forecast", "TCPI_EAC", "ratio"),
+    ("AT (Actual Time, weeks)", "earned_schedule", "AT", "weeks"),
+    ("ES (Earned Schedule, weeks)", "earned_schedule", "ES", "weeks"),
+    ("SV(t) (weeks)", "earned_schedule", "SVt", "weeks"),
+    ("SPI(t)", "earned_schedule", "SPIt", "ratio"),
+]
+
+
+def build_evm_sheet(wb, evm):
+    """Build EVM_Compute + EVM_TimePhased sheets from EVM data dict.
+
+    evm = {metrics, forecast?, earned_schedule?, rag, time_phased[]}
+    """
+    # Compute sheet
+    ws = _ensure_sheet(wb, "EVM_Compute")
+    ws.append(["Metric", "Value", "Unit"])
+    apply_header_style(ws, row=1)
+    row = 2
+    for label, src, key, unit in EVM_COMPUTE_ROWS:
+        section = evm.get(src) if isinstance(evm.get(src), dict) else {}
+        val = section.get(key)
+        ws.cell(row=row, column=1, value=label)
+        ws.cell(row=row, column=2, value=val if val is not None else "N/A")
+        if unit == "currency" and isinstance(val, (int, float)):
+            ws.cell(row=row, column=2).number_format = "#,##0.00"
+        elif unit == "ratio" and isinstance(val, (int, float)):
+            ws.cell(row=row, column=2).number_format = "0.000"
+        ws.cell(row=row, column=3, value=unit)
+        for col in range(1, 4):
+            apply_zebra_fill(ws.cell(row=row, column=col), row_idx=row)
+        row += 1
+    # RAG row
+    ws.cell(row=row, column=1, value="Overall RAG")
+    ws.cell(row=row, column=1).font = Font(name="Calibri", bold=True,
+                                           color=BRAND_NAVY)
+    rag = str(evm.get("rag", "")).lower()
+    ws.cell(row=row, column=2, value=rag.upper() if rag else "N/A")
+    apply_rag_fill(ws.cell(row=row, column=2), rag)
+    ws.column_dimensions['A'].width = 32
+    ws.column_dimensions['B'].width = 18
+    ws.column_dimensions['C'].width = 12
+    ws.freeze_panes = "A2"
+
+    # Time-phased sheet
+    ws_tp = _ensure_sheet(wb, "EVM_TimePhased")
+    ws_tp.append(["Period", "PV", "EV", "AC", "Cum PV", "Cum EV", "Cum AC"])
+    apply_header_style(ws_tp, row=1)
+    for idx, p in enumerate(evm.get("time_phased") or [], start=2):
+        ws_tp.cell(row=idx, column=1, value=p.get("period"))
+        for col, key in enumerate(["PV", "EV", "AC", "cum_PV", "cum_EV", "cum_AC"],
+                                  start=2):
+            ws_tp.cell(row=idx, column=col, value=p.get(key, 0))
+            ws_tp.cell(row=idx, column=col).number_format = "#,##0.00"
+        for col in range(1, 8):
+            apply_zebra_fill(ws_tp.cell(row=idx, column=col), row_idx=idx)
+    ws_tp.freeze_panes = "B2"
+    return ws, ws_tp

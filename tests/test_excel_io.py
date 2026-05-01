@@ -6,6 +6,7 @@ from excel_io import (
     ZEBRA, RAG_GREEN, RAG_AMBER, RAG_RED,
     apply_header_style, apply_rag_fill, apply_zebra_fill,
     build_tasks_sheet, read_tasks_sheet, build_summary_sheet,
+    build_evm_sheet,
 )
 
 
@@ -206,3 +207,83 @@ def test_build_summary_sheet_handles_missing_metrics():
     build_summary_sheet(wb, {})
     ws = wb["Summary"]
     assert ws.cell(row=3, column=2).value == "N/A"
+
+
+# ---------- T96: EVM sheet builder ----------
+
+def _sample_evm():
+    return {
+        "metrics": {"BAC": 1000.0, "EV": 600.0, "AC": 650.0, "PV": 700.0,
+                    "SV": -100.0, "CV": -50.0, "SPI": 0.857, "CPI": 0.923},
+        "forecast": {"EAC1": 1050.0, "EAC2": 1083.5, "EAC3": 1100.0,
+                     "ETC": 400.0, "VAC": -50.0,
+                     "TCPI_BAC": 1.14, "TCPI_EAC": 1.05},
+        "earned_schedule": {"AT": 5.0, "ES": 4.5, "SVt": -0.5, "SPIt": 0.9},
+        "rag": "amber",
+        "time_phased": [
+            {"period": "2026-W01", "PV": 100, "EV": 80, "AC": 90,
+             "cum_PV": 100, "cum_EV": 80, "cum_AC": 90},
+            {"period": "2026-W02", "PV": 200, "EV": 180, "AC": 200,
+             "cum_PV": 300, "cum_EV": 260, "cum_AC": 290},
+        ],
+    }
+
+
+def test_build_evm_sheet_creates_two_sheets():
+    wb = Workbook()
+    build_evm_sheet(wb, _sample_evm())
+    assert "EVM_Compute" in wb.sheetnames
+    assert "EVM_TimePhased" in wb.sheetnames
+
+
+def test_evm_compute_sheet_has_BAC_row():
+    wb = Workbook()
+    build_evm_sheet(wb, _sample_evm())
+    ws = wb["EVM_Compute"]
+    bac_found = any(row[0] == "BAC" and row[1] == 1000.0
+                    for row in ws.iter_rows(values_only=True))
+    assert bac_found
+
+
+def test_evm_compute_sheet_rag_colored():
+    wb = Workbook()
+    build_evm_sheet(wb, _sample_evm())
+    ws = wb["EVM_Compute"]
+    for r in range(1, ws.max_row + 1):
+        if ws.cell(row=r, column=1).value == "Overall RAG":
+            assert ws.cell(row=r, column=2).fill.start_color.value == RAG_AMBER
+            return
+    pytest.fail("Overall RAG row not found")
+
+
+def test_evm_time_phased_sheet_has_data():
+    wb = Workbook()
+    build_evm_sheet(wb, _sample_evm())
+    ws = wb["EVM_TimePhased"]
+    # header + 2 data rows
+    assert ws.max_row == 3
+    assert ws.cell(row=2, column=1).value == "2026-W01"
+
+
+def test_evm_handles_missing_time_phased():
+    wb = Workbook()
+    evm = {**_sample_evm(), "time_phased": []}
+    build_evm_sheet(wb, evm)
+    ws = wb["EVM_TimePhased"]
+    # header only
+    assert ws.max_row == 1
+
+
+def test_evm_handles_missing_forecast():
+    wb = Workbook()
+    evm = {"metrics": {"BAC": 100, "EV": 50, "AC": 60, "PV": 80,
+                       "SPI": 0.625, "CPI": 0.83}}
+    build_evm_sheet(wb, evm)
+    assert "EVM_Compute" in wb.sheetnames
+    ws = wb["EVM_Compute"]
+    # EAC1 row should have N/A
+    for r in range(1, ws.max_row + 1):
+        if ws.cell(row=r, column=1).value == "EAC1":
+            assert ws.cell(row=r, column=2).value == "N/A"
+            return
+    pytest.fail("EAC1 row not found")

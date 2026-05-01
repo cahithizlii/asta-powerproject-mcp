@@ -6026,6 +6026,75 @@ def _msp_excel_export_dcma(file_path=None, xlsx_path=None, baseline_number=0):
                              "drilldowns": sum(len(v) for v in data["dcma"].get("drilldowns", {}).values())}}
 
 
+def _msp_excel_import_tasks(xlsx_path=None, sheet_name="Tasks"):
+    """Action 5: import tasks from xlsx via Phase 1 _msp_task_bulk_add.
+
+    Reads xlsx Tasks sheet, converts each row to bulk_add items shape
+    ({name, duration:'Nd'}), then delegates. Skips rows missing 'name'.
+    """
+    if not xlsx_path:
+        return {"status": "error", "error": "xlsx_path required"}
+    if not os.path.exists(xlsx_path):
+        return {"status": "error", "error": f"File not found: {xlsx_path}"}
+    try:
+        rows = read_tasks_sheet(xlsx_path, sheet_name=sheet_name)
+    except Exception as e:
+        logger.exception(f"import_tasks read failed: {e}")
+        return {"status": "error", "error": f"Read failed: {e}"}
+    if not rows:
+        return {"status": "ok", "rows_imported": 0, "task_ids": []}
+    items = []
+    for r in rows:
+        if not r.get("name"):
+            continue
+        days = round(float(r.get("duration_h") or 0) / 8.0, 1)
+        if days <= 0:
+            days = 1.0
+        items.append({"name": r["name"], "duration": f"{days}d"})
+    if not items:
+        return {"status": "ok", "rows_imported": 0, "task_ids": []}
+    try:
+        result = _msp_task_bulk_add(items=items)
+    except Exception as e:
+        logger.exception(f"_msp_task_bulk_add failed: {e}")
+        return {"status": "error", "error": str(e)}
+    if isinstance(result, dict) and result.get("status") == "error":
+        return result
+    return {
+        "status": "ok",
+        "rows_imported": len(items),
+        "task_ids": result.get("task_ids", []) if isinstance(result, dict) else [],
+    }
+
+
+def _msp_excel_import_progress(xlsx_path=None, sheet_name="Progress"):
+    """Action 6: import progress updates from xlsx via Phase 3b bulk_update."""
+    if not xlsx_path:
+        return {"status": "error", "error": "xlsx_path required"}
+    if not os.path.exists(xlsx_path):
+        return {"status": "error", "error": f"File not found: {xlsx_path}"}
+    try:
+        rows = read_progress_sheet(xlsx_path, sheet_name=sheet_name)
+    except Exception as e:
+        logger.exception(f"import_progress read failed: {e}")
+        return {"status": "error", "error": f"Read failed: {e}"}
+    if not rows:
+        return {"status": "ok", "rows_imported": 0}
+    items = [{"task_id": r["task_id"],
+              "percent_complete": r.get("percent_complete", 0)}
+             for r in rows if r.get("task_id") is not None]
+    if not items:
+        return {"status": "ok", "rows_imported": 0}
+    try:
+        result = _msp_progress_bulk_update(items=items)
+    except Exception as e:
+        logger.exception(f"_msp_progress_bulk_update failed: {e}")
+        return {"status": "error", "error": str(e)}
+    if isinstance(result, dict) and result.get("status") == "error":
+        return result
+    return {"status": "ok", "rows_imported": len(items)}
+
+
 def main():
     """Run MCP server (stdio)."""
     mcp.run()

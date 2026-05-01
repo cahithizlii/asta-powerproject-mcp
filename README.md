@@ -256,6 +256,36 @@ workbook + roundtrip imports 10 progress updates in <90s.
 
 Tool count: **11 tools, ~89 actions**.
 
+## Phase 5d — XER Reader (1 May 2026)
+
+`msproject_xer` tool — pure-Python Primavera P6 XER file reader. 6
+read-only actions covering tasks, links, resources, assignments,
+calendars, and progress. NO `mpxj`/Java dependency (XER is text format,
+parsed natively).
+
+Bridges P6 XER projects (CAU baseline format per CLAUDE.md RULE 0/1)
+into Phase 5a EVM + Phase 5b DCMA + Phase 5c Excel pipelines.
+
+**Actions:**
+- `read_tasks(filters?, limit?)`: TASK section with optional dict filter
+- `read_links`: TASKPRED section (PR_FS/SS/FF/SF → FS/SS/FF/SF)
+- `read_resources`: RSRC section (RT_Mat → Material, else Work)
+- `read_assignments`: TASKRSRC section
+- `read_calendars`: CALENDAR section (day_hr_cnt + week_hr_cnt)
+- `read_progress`: PROJECT.last_recalc_date as status_date + per-task progress
+
+Architecture: `xer_parser.py` pure-Python module (~280 lines, NO mpxj)
+with `XerFile` class auto-detecting UTF-16-LE BOM / UTF-8 encoding,
+parsing `%T`/`%F`/`%R`/`%E` markers. I/O adapters in
+msproject_mcp_core.py Phase 5D section. 44 unit tests + 5 loader + 10
+action + 8 dispatcher = 67 Phase 5d tests, fixture-based (synthetic
+CAU-style XER in conftest).
+
+Acceptance: `samples/build_xer_lifecycle.py` parses synthetic CAU XER
+(6 tasks, 4 CAU resources, 9h/day calendar) in <0.01s.
+
+Tool count: **12 tools, ~95 actions**.
+
 ## Quick Start
 
 1. Install deps: `pip install -r requirements.txt`

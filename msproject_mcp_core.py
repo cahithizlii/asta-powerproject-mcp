@@ -5624,6 +5624,112 @@ def _dcma_collect_full_data(file_path=None, baseline_number=0):
     }
 
 
+def _msp_dcma_assess_all(file_path=None, baseline_number=0):
+    """Action 1: assess_all - full DCMA 14-Point assessment."""
+    data = _dcma_collect_full_data(file_path=file_path,
+                                   baseline_number=baseline_number)
+    if data.get("status") != "ok":
+        return data
+    result = _dcma_assess_all(
+        tasks=data["tasks"],
+        links=data["links"],
+        assignments=data["assignments"],
+        baseline=data.get("baseline"),
+        status_date=data.get("status_date"),
+    )
+    return {"status": "ok", "baseline_number": baseline_number, **result}
+
+
+def _msp_dcma_summary(file_path=None, baseline_number=0):
+    """Action 2: summary - RAG + executive text only."""
+    full = _msp_dcma_assess_all(file_path=file_path,
+                                baseline_number=baseline_number)
+    if full.get("status") != "ok":
+        return full
+    return {"status": "ok",
+            "baseline_number": baseline_number,
+            **full["summary"]}
+
+
+def _msp_dcma_drill_down(file_path=None, rule_id=1, baseline_number=0):
+    """Action 3: drill_down - per-rule failed task details."""
+    if rule_id not in range(1, 15):
+        return {"status": "error",
+                "error": f"rule_id must be 1-14, got {rule_id}"}
+    full = _msp_dcma_assess_all(file_path=file_path,
+                                baseline_number=baseline_number)
+    if full.get("status") != "ok":
+        return full
+    rule = next((r for r in full["rules"] if r["id"] == rule_id), None)
+    if rule is None:
+        return {"status": "error", "error": f"Rule {rule_id} not found"}
+    # Resolve failed task names
+    data = _dcma_collect_full_data(file_path=file_path,
+                                   baseline_number=baseline_number)
+    tasks_by_id = {t["id"]: t for t in data.get("tasks", [])}
+    failed_ids = rule.get("failed_task_ids", [])
+    failed_tasks = []
+    for tid in failed_ids:
+        t = tasks_by_id.get(tid)
+        if t:
+            failed_tasks.append({"id": tid, "name": t.get("name", "")})
+    return {
+        "status": "ok",
+        "baseline_number": baseline_number,
+        "rule": {"id": rule["id"], "name": rule["name"],
+                 "threshold": rule.get("threshold")},
+        "actual": rule.get("actual"),
+        "failed_count": rule.get("failed_count"),
+        "total_count": rule.get("total_count"),
+        "failed_tasks": failed_tasks,
+    }
+
+
+def _msp_dcma_compare(file_path=None, snapshot_path=None, baseline_number=0):
+    """Action 4: compare current DCMA vs prev snapshot.
+
+    Reuses Phase 5a _evm_snapshot_load to read prior DCMA dumps from
+    the same JSON file (snapshots can include both EVM + DCMA data).
+    """
+    current = _msp_dcma_assess_all(file_path=file_path,
+                                   baseline_number=baseline_number)
+    if current.get("status") != "ok":
+        return current
+    if not snapshot_path:
+        return {"status": "ok", "current": current["summary"], "prev": None,
+                "delta": {"rules_improved": [], "rules_degraded": []}}
+    snaps = _evm_snapshot_load(snapshot_path) if os.path.exists(snapshot_path) else []
+    # Filter snaps that have DCMA data
+    dcma_snaps = [s for s in snaps if s.get("dcma")]
+    if not dcma_snaps:
+        return {"status": "ok", "current": current["summary"], "prev": None,
+                "delta": {"rules_improved": [], "rules_degraded": []}}
+    dcma_snaps.sort(key=lambda s: s.get("saved_at", ""))
+    prev = dcma_snaps[-1].get("dcma")
+    # Compute delta
+    improved = []
+    degraded = []
+    prev_rules = {r["id"]: r for r in (prev.get("rules") or [])}
+    for cr in current["rules"]:
+        pr = prev_rules.get(cr["id"])
+        if pr is None:
+            continue
+        cur_actual = cr.get("actual", 0)
+        prev_actual = pr.get("actual", 0)
+        if pr.get("status") == "fail" and cr.get("status") == "pass":
+            improved.append({"id": cr["id"], "name": cr["name"],
+                             "from_actual": prev_actual, "to_actual": cur_actual})
+        elif pr.get("status") == "pass" and cr.get("status") == "fail":
+            degraded.append({"id": cr["id"], "name": cr["name"],
+                             "from_actual": prev_actual, "to_actual": cur_actual})
+    return {
+        "status": "ok",
+        "current": current["summary"],
+        "prev": prev.get("summary") if isinstance(prev, dict) else None,
+        "delta": {"rules_improved": improved, "rules_degraded": degraded},
+    }
+
+
 def main():
     """Run MCP server (stdio)."""
     mcp.run()

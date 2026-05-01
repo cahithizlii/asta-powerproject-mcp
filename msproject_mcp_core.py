@@ -5213,6 +5213,46 @@ def _msp_evm_period_delta(file_path=None, baseline_number=0, snapshot_path=None)
     return {"status": "ok", "current": snap_now, **delta}
 
 
+def _msp_evm_variance_to_baseline(file_path=None, baseline_number=0):
+    """Action 8: variance_to_baseline.
+
+    Wraps compute_metrics with explicit baseline_number argument.
+    Phase 3a integration — supports baselines 0-10.
+    """
+    if baseline_number not in BASELINE_NUMBERS:
+        return {"status": "error",
+                "error": f"baseline_number must be 0-10, got {baseline_number}"}
+    return _msp_evm_compute_metrics(file_path=file_path,
+                                    baseline_number=baseline_number)
+
+
+def _msp_evm_compare_baselines_evm(file_path=None,
+                                   baseline_a=0, baseline_b=1):
+    """Action 9: compare_baselines_evm — B_a vs B_b EVM delta.
+
+    Phase 3a compare_two pattern: shows EVM impact of revision plan.
+    Returns {status, baseline_a, baseline_b, delta} where delta has
+    bac_delta, spi_delta, cpi_delta keys.
+    """
+    a = _msp_evm_compute_metrics(file_path=file_path,
+                                baseline_number=baseline_a)
+    if a.get("status") != "ok":
+        return {"status": "error",
+                "error": f"baseline_a {baseline_a}: {a.get('error', 'load failed')}"}
+    b = _msp_evm_compute_metrics(file_path=file_path,
+                                baseline_number=baseline_b)
+    if b.get("status") != "ok":
+        return {"status": "error",
+                "error": f"baseline_b {baseline_b}: {b.get('error', 'load failed')}"}
+    delta = {
+        "bac_delta": b["bac"] - a["bac"],
+        "spi_delta": (b.get("spi") or 0) - (a.get("spi") or 0),
+        "cpi_delta": (b.get("cpi") or 0) - (a.get("cpi") or 0),
+    }
+    return {"status": "ok",
+            "baseline_a": a, "baseline_b": b, "delta": delta}
+
+
 def main():
     """Run MCP server (stdio)."""
     mcp.run()

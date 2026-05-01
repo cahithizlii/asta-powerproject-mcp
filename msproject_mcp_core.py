@@ -5814,6 +5814,218 @@ async def msproject_health(params: dict) -> str:
     return json.dumps(r, default=str, ensure_ascii=False)
 
 
+# ============================================================================
+# PHASE 5C - EXCEL TOOL
+# ============================================================================
+from excel_io import (
+    build_tasks_sheet, build_evm_sheet, build_dcma_sheet,
+    build_summary_sheet, build_hakedis_workbook,
+    read_tasks_sheet, read_progress_sheet,
+)
+from openpyxl import Workbook as _XlWorkbook
+
+
+def _excel_collect_full_data(file_path=None, baseline_number=0, bucket="week"):
+    """Single-collect aggregator (Phase 5b TAIL lesson) - fetch tasks + EVM
+    + DCMA once and translate Phase 5a/5b flat-lowercase shape to excel_io's
+    nested-uppercase shape.
+
+    Returns {status, tasks, evm: {metrics, forecast, earned_schedule, rag,
+             time_phased}, dcma: {rules, summary, drilldowns}}.
+    """
+    if baseline_number not in BASELINE_NUMBERS:
+        return {"status": "error",
+                "error": f"baseline_number must be 0-10, got {baseline_number}"}
+    base = _evm_load_task_data(file_path=file_path)
+    if base.get("status") != "ok":
+        return base
+    tasks = base.get("tasks", []) or []
+
+    # Phase 5a EVM compute (4 calls) - all return flat lowercase keys
+    cm = _msp_evm_compute_metrics(file_path=file_path, baseline_number=baseline_number)
+    fc = _msp_evm_forecast(file_path=file_path, baseline_number=baseline_number)
+    es = _msp_evm_earned_schedule(file_path=file_path, baseline_number=baseline_number)
+    sm = _msp_evm_summary(file_path=file_path, baseline_number=baseline_number)
+    tp = _msp_evm_time_phased_evm(file_path=file_path,
+                                  baseline_number=baseline_number, bucket=bucket)
+    if tp.get("status") != "ok":
+        return tp  # bubble up bucket validation errors
+
+    # Translate flat lowercase -> nested UPPERCASE for excel_io
+    metrics = {}
+    if cm.get("status") == "ok":
+        metrics = {"BAC": cm.get("bac"), "EV": cm.get("ev"), "AC": cm.get("ac"),
+                   "PV": cm.get("pv"), "SV": cm.get("sv"), "CV": cm.get("cv"),
+                   "SPI": cm.get("spi"), "CPI": cm.get("cpi")}
+    forecast = {}
+    if fc.get("status") == "ok":
+        forecast = {"EAC1": fc.get("eac1"), "EAC2": fc.get("eac2"),
+                    "EAC3": fc.get("eac3"), "ETC": fc.get("etc"),
+                    "VAC": fc.get("vac"),
+                    "TCPI_BAC": fc.get("tcpi_bac"), "TCPI_EAC": fc.get("tcpi_eac")}
+    earned_schedule = {}
+    if es.get("status") == "ok":
+        earned_schedule = {"AT": es.get("at"), "ES": es.get("es"),
+                           "SVt": es.get("sv_t"), "SPIt": es.get("spi_t")}
+
+    # Build time_phased with cumulative columns
+    time_phased = []
+    cum_pv = cum_ev = cum_ac = 0.0
+    for b in tp.get("buckets", []):
+        pv = float(b.get("pv") or 0)
+        ev = float(b.get("ev") or 0)
+        ac = float(b.get("ac") or 0)
+        cum_pv += pv
+        cum_ev += ev
+        cum_ac += ac
+        time_phased.append({
+            "period": str(b.get("period_start")) if b.get("period_start") else "",
+            "PV": pv, "EV": ev, "AC": ac,
+            "cum_PV": cum_pv, "cum_EV": cum_ev, "cum_AC": cum_ac,
+        })
+
+    # Phase 5b DCMA
+    dcma_full = _msp_dcma_assess_all(file_path=file_path,
+                                     baseline_number=baseline_number)
+    drilldowns = {}
+    dcma_rules = []
+    dcma_summary = {}
+    if dcma_full.get("status") == "ok":
+        dcma_rules = dcma_full.get("rules", []) or []
+        dcma_summary = dcma_full.get("summary", {}) or {}
+        for rule in dcma_rules:
+            if rule.get("status") == "fail":
+                rid = rule["id"]
+                d = _msp_dcma_drill_down(file_path=file_path, rule_id=rid,
+                                         baseline_number=baseline_number)
+                if d.get("status") == "ok":
+                    drilldowns[rid] = (d.get("failed_tasks") or [])[:10]
+
+    # RAG: prefer Phase 5b DCMA overall_rag (project health) over Phase 5a EVM
+    rag = dcma_summary.get("overall_rag") or (sm.get("rag") if sm.get("status") == "ok" else None)
+
+    return {
+        "status": "ok",
+        "tasks": tasks,
+        "evm": {
+            "metrics": metrics,
+            "forecast": forecast,
+            "earned_schedule": earned_schedule,
+            "rag": rag,
+            "time_phased": time_phased,
+        },
+        "dcma": {
+            "rules": dcma_rules,
+            "summary": dcma_summary,
+            "drilldowns": drilldowns,
+        },
+    }
+
+
+def _msp_excel_export_hakedis(file_path=None, xlsx_path=None, baseline_number=0):
+    """Action 1 (HERO): export multi-sheet hakedis workbook."""
+    if not xlsx_path:
+        return {"status": "error", "error": "xlsx_path required"}
+    data = _excel_collect_full_data(file_path=file_path,
+                                    baseline_number=baseline_number)
+    if data.get("status") != "ok":
+        return data
+    summary_for_sheet = {
+        "BAC": data["evm"]["metrics"].get("BAC"),
+        "EAC": data["evm"]["forecast"].get("EAC2"),
+        "SPI": data["evm"]["metrics"].get("SPI"),
+        "CPI": data["evm"]["metrics"].get("CPI"),
+        "rag": data["dcma"]["summary"].get("overall_rag") or data["evm"].get("rag"),
+        "executive_text": data["dcma"]["summary"].get("executive_text", ""),
+    }
+    try:
+        build_hakedis_workbook(
+            tasks=data["tasks"], evm=data["evm"], dcma=data["dcma"],
+            summary=summary_for_sheet, xlsx_path=xlsx_path,
+        )
+    except Exception as e:
+        logger.exception(f"export_hakedis failed: {e}")
+        return {"status": "error", "error": str(e)}
+    real_count = len([t for t in data["tasks"] if not t.get("summary")])
+    return {
+        "status": "ok",
+        "xlsx_path": xlsx_path,
+        "sheets_written": ["Summary", "Tasks", "EVM_Compute", "EVM_TimePhased",
+                           "DCMA_Rules", "DCMA_Failed"],
+        "rows_written": {
+            "tasks": real_count,
+            "evm_time_phased": len(data["evm"].get("time_phased", [])),
+            "dcma_rules": len(data["dcma"].get("rules", [])),
+        },
+    }
+
+
+def _msp_excel_export_tasks(file_path=None, xlsx_path=None):
+    """Action 2: export tasks-only sheet."""
+    if not xlsx_path:
+        return {"status": "error", "error": "xlsx_path required"}
+    base = _evm_load_task_data(file_path=file_path)
+    if base.get("status") != "ok":
+        return base
+    try:
+        wb = _XlWorkbook()
+        if "Sheet" in wb.sheetnames:
+            wb.remove(wb["Sheet"])
+        build_tasks_sheet(wb, base.get("tasks", []) or [], sheet_name="Tasks")
+        wb.save(xlsx_path)
+    except Exception as e:
+        logger.exception(f"export_tasks failed: {e}")
+        return {"status": "error", "error": str(e)}
+    real = len([t for t in base.get("tasks", []) if not t.get("summary")])
+    return {"status": "ok", "xlsx_path": xlsx_path, "rows_written": real}
+
+
+def _msp_excel_export_evm(file_path=None, xlsx_path=None, baseline_number=0,
+                          bucket="week"):
+    """Action 3: export EVM (Compute + TimePhased) sheets."""
+    if not xlsx_path:
+        return {"status": "error", "error": "xlsx_path required"}
+    data = _excel_collect_full_data(file_path=file_path,
+                                    baseline_number=baseline_number,
+                                    bucket=bucket)
+    if data.get("status") != "ok":
+        return data
+    try:
+        wb = _XlWorkbook()
+        if "Sheet" in wb.sheetnames:
+            wb.remove(wb["Sheet"])
+        build_evm_sheet(wb, data["evm"])
+        wb.save(xlsx_path)
+    except Exception as e:
+        logger.exception(f"export_evm failed: {e}")
+        return {"status": "error", "error": str(e)}
+    return {"status": "ok", "xlsx_path": xlsx_path,
+            "rows_written": {"compute": 19,
+                             "time_phased": len(data["evm"].get("time_phased", []))}}
+
+
+def _msp_excel_export_dcma(file_path=None, xlsx_path=None, baseline_number=0):
+    """Action 4: export DCMA (Rules + Failed) sheets."""
+    if not xlsx_path:
+        return {"status": "error", "error": "xlsx_path required"}
+    data = _excel_collect_full_data(file_path=file_path,
+                                    baseline_number=baseline_number)
+    if data.get("status") != "ok":
+        return data
+    try:
+        wb = _XlWorkbook()
+        if "Sheet" in wb.sheetnames:
+            wb.remove(wb["Sheet"])
+        build_dcma_sheet(wb, data["dcma"])
+        wb.save(xlsx_path)
+    except Exception as e:
+        logger.exception(f"export_dcma failed: {e}")
+        return {"status": "error", "error": str(e)}
+    return {"status": "ok", "xlsx_path": xlsx_path,
+            "rows_written": {"rules": len(data["dcma"].get("rules", [])),
+                             "drilldowns": sum(len(v) for v in data["dcma"].get("drilldowns", {}).values())}}
+
+
 def main():
     """Run MCP server (stdio)."""
     mcp.run()

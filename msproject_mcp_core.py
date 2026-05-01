@@ -4916,6 +4916,84 @@ def _evm_detect_currency_mode(tasks, resources):
     return "cost" if total_cost > 0 else "hours"
 
 
+def _evm_compute_pv_ev_ac(load_data, baseline_load):
+    """Aggregate BAC/EV/AC + linear-distributed PV at data_date.
+
+    BAC = sum(baseline_work) across non-summary tasks
+    PV  = linear distribution at data_date per RULE 5
+    EV  = sum(baseline_work x percent_complete / 100)
+    AC  = sum(actual_work)
+
+    Currency-agnostic: caller chose units (hours or cost) upstream.
+    """
+    tasks = load_data.get("tasks", []) or []
+    bac = sum(float(t.get("baseline_work") or 0) for t in tasks)
+    ev = sum(float(t.get("baseline_work") or 0) *
+             float(t.get("percent_complete") or 0) / 100.0
+             for t in tasks)
+    ac = sum(float(t.get("actual_work") or 0) for t in tasks)
+    # PV at data_date - use linear distribution per task
+    sd_str = load_data.get("status_date")
+    data_date = _parse_iso_date(sd_str) if sd_str else _dt5.date.today()
+    enriched = []
+    for t in tasks:
+        bs = _parse_iso_date(t.get("baseline_start"))
+        bf = _parse_iso_date(t.get("baseline_finish"))
+        if bs is None or bf is None:
+            continue
+        enriched.append({
+            "baseline_start": bs,
+            "baseline_finish": bf,
+            "baseline_work": float(t.get("baseline_work") or 0),
+        })
+    if enriched:
+        pv = _evm_tp_pv(enriched, [(_dt5.date.min, data_date)])[0]
+    else:
+        pv = 0.0
+    return bac, pv, ev, ac
+
+
+def _msp_evm_compute_metrics(file_path=None, baseline_number=0):
+    """Action 1: compute_metrics - SPI/CPI/SV/CV (RULE 4)."""
+    load = _evm_load_task_data(file_path=file_path)
+    if load.get("status") != "ok":
+        return load
+    bload = _evm_load_baseline_data(file_path=file_path, baseline_number=baseline_number)
+    if bload.get("status") != "ok":
+        return bload
+    bac, pv, ev, ac = _evm_compute_pv_ev_ac(load, bload)
+    metrics = _evm_compute(bac=bac, pv=pv, ev=ev, ac=ac)
+    return {"status": "ok", "baseline_number": baseline_number, **metrics}
+
+
+def _msp_evm_forecast(file_path=None, baseline_number=0):
+    """Action 2: forecast - EAC1/2/3, ETC, VAC, TCPI (RULE 9)."""
+    cm = _msp_evm_compute_metrics(file_path=file_path, baseline_number=baseline_number)
+    if cm.get("status") != "ok":
+        return cm
+    fc = _evm_forecast(bac=cm["bac"], ev=cm["ev"], ac=cm["ac"],
+                      cpi=cm.get("cpi"), spi=cm.get("spi"))
+    return {"status": "ok", "baseline_number": baseline_number, **fc}
+
+
+def _msp_evm_summary(file_path=None, baseline_number=0):
+    """Action 4: summary - RAG (RULE 12) + executive."""
+    cm = _msp_evm_compute_metrics(file_path=file_path, baseline_number=baseline_number)
+    if cm.get("status") != "ok":
+        return cm
+    completion_pct = (cm["ev"] / cm["bac"] * 100.0) if cm["bac"] > 0 else 0.0
+    rag = _evm_rag(spi=cm.get("spi"), completion_pct=completion_pct)
+    return {
+        "status": "ok",
+        "baseline_number": baseline_number,
+        "rag": rag,
+        "completion_pct": round(completion_pct, 2),
+        "spi": cm.get("spi"),
+        "cpi": cm.get("cpi"),
+        "schedule_health": rag,
+    }
+
+
 def main():
     """Run MCP server (stdio)."""
     mcp.run()

@@ -277,3 +277,66 @@ def check_resources_missing(tasks: List[Dict[str, Any]],
         "failed_count": failed_count, "total_count": total,
         "failed_task_ids": failed_ids,
     }
+
+
+# ---------- T88: Float / Duration rules ----------
+
+HIGH_FLOAT_THRESHOLD_DAYS = 44.0
+HIGH_DURATION_THRESHOLD_HOURS = 44.0 * 8.0  # 352h - DCMA standard 8h/day
+
+
+def check_high_float(tasks: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """RULE 7: <5% of real tasks should have total slack > 44 days."""
+    real = _real_tasks(tasks)
+    total = len(real)
+    if total == 0:
+        return {"id": 7, "name": "High Float (>44d)", "threshold": "<5%",
+                "actual": 0.0, "actual_unit": "%", "status": "pass",
+                "failed_count": 0, "total_count": 0, "failed_task_ids": []}
+    failed_ids = [t["id"] for t in real
+                  if float(t.get("total_slack_days") or 0) > HIGH_FLOAT_THRESHOLD_DAYS]
+    failed_count = len(failed_ids)
+    actual_pct = (failed_count / total) * 100.0
+    return {
+        "id": 7, "name": "High Float (>44d)", "threshold": "<5%",
+        "actual": round(actual_pct, 2), "actual_unit": "%",
+        "status": _eval_status(7, actual_pct),
+        "failed_count": failed_count, "total_count": total,
+        "failed_task_ids": failed_ids,
+    }
+
+
+def check_negative_float(tasks: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """RULE 8: zero real tasks with negative total slack."""
+    real = _real_tasks(tasks)
+    failed_ids = [t["id"] for t in real
+                  if float(t.get("total_slack_days") or 0) < 0]
+    failed_count = len(failed_ids)
+    return {
+        "id": 8, "name": "Negative Float", "threshold": "=0",
+        "actual": failed_count, "actual_unit": "count",
+        "status": _eval_status(8, failed_count),
+        "failed_count": failed_count, "total_count": len(real),
+        "failed_task_ids": failed_ids,
+    }
+
+
+def check_high_duration(tasks: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """RULE 9: <5% of real tasks should have duration > 44 working days (352h)."""
+    real = _real_tasks(tasks)
+    total = len(real)
+    if total == 0:
+        return {"id": 9, "name": "High Duration (>44d)", "threshold": "<5%",
+                "actual": 0.0, "actual_unit": "%", "status": "pass",
+                "failed_count": 0, "total_count": 0, "failed_task_ids": []}
+    failed_ids = [t["id"] for t in real
+                  if float(t.get("duration_h") or 0) > HIGH_DURATION_THRESHOLD_HOURS]
+    failed_count = len(failed_ids)
+    actual_pct = (failed_count / total) * 100.0
+    return {
+        "id": 9, "name": "High Duration (>44d)", "threshold": "<5%",
+        "actual": round(actual_pct, 2), "actual_unit": "%",
+        "status": _eval_status(9, actual_pct),
+        "failed_count": failed_count, "total_count": total,
+        "failed_task_ids": failed_ids,
+    }

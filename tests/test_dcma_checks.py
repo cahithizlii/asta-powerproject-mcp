@@ -8,6 +8,7 @@ from dcma_checks import (
     check_no_predecessor, check_no_successor,
     check_leads, check_lags, check_fs_link_pct,
     check_hard_constraints, check_invalid_dates, check_resources_missing,
+    check_high_float, check_negative_float, check_high_duration,
 )
 
 
@@ -421,3 +422,139 @@ def test_check_resources_missing_empty_assignments():
     r = check_resources_missing(tasks, [])
     assert r["actual"] == 100.0
     assert r["status"] == "fail"
+
+
+# ---------- T88: Float / Duration rules ----------
+
+def _task_with_slack(id, total_slack_days, summary=False):
+    return {"id": id, "name": f"T{id}", "summary": summary,
+            "total_slack_days": total_slack_days}
+
+
+def _task_with_dur_days(id, duration_h, summary=False):
+    return {"id": id, "name": f"T{id}", "summary": summary,
+            "duration_h": duration_h}
+
+
+# ---------- check_high_float (RULE 7: <5% with float > 44d) ----------
+
+def test_check_high_float_pass():
+    tasks = [_task_with_slack(i, 10) for i in range(1, 21)]
+    tasks.append(_task_with_slack(21, 50))  # 1 high
+    r = check_high_float(tasks)
+    assert r["id"] == 7
+    assert r["status"] == "pass"  # 1/21 = 4.76% < 5%
+    assert r["failed_count"] == 1
+
+
+def test_check_high_float_fail():
+    tasks = [_task_with_slack(i, 60) for i in range(1, 6)]   # 5 high
+    tasks += [_task_with_slack(i, 5) for i in range(6, 11)]  # 5 normal
+    r = check_high_float(tasks)
+    assert r["status"] == "fail"
+    assert r["actual"] == pytest.approx(50.0, rel=1e-2)
+
+
+def test_check_high_float_threshold_44d_strict():
+    """Boundary: exactly 44d = NOT high (strict >44 only)."""
+    tasks = [_task_with_slack(1, 44), _task_with_slack(2, 45)]
+    r = check_high_float(tasks)
+    assert r["failed_count"] == 1  # only T2
+    assert 2 in r["failed_task_ids"]
+
+
+def test_check_high_float_excludes_summaries():
+    tasks = [_task_with_slack(1, 100, summary=True),
+             _task_with_slack(2, 5)]
+    r = check_high_float(tasks)
+    assert r["status"] == "pass"
+    assert r["actual"] == 0.0
+
+
+def test_check_high_float_empty():
+    r = check_high_float([])
+    assert r["status"] == "pass"
+    assert r["total_count"] == 0
+
+
+# ---------- check_negative_float (RULE 8: =0) ----------
+
+def test_check_negative_float_pass():
+    tasks = [_task_with_slack(i, 5) for i in range(1, 11)]
+    r = check_negative_float(tasks)
+    assert r["id"] == 8
+    assert r["status"] == "pass"
+    assert r["actual"] == 0
+
+
+def test_check_negative_float_fail():
+    tasks = [_task_with_slack(1, -3), _task_with_slack(2, -1),
+             _task_with_slack(3, 5)]
+    r = check_negative_float(tasks)
+    assert r["status"] == "fail"
+    assert r["actual"] == 2
+    assert 1 in r["failed_task_ids"]
+    assert 2 in r["failed_task_ids"]
+    assert 3 not in r["failed_task_ids"]
+
+
+def test_check_negative_float_zero_slack_passes():
+    """Zero slack (exactly on critical path) is OK, only negative fails."""
+    tasks = [_task_with_slack(1, 0)]
+    r = check_negative_float(tasks)
+    assert r["status"] == "pass"
+
+
+def test_check_negative_float_excludes_summaries():
+    tasks = [_task_with_slack(1, -10, summary=True),
+             _task_with_slack(2, 5)]
+    r = check_negative_float(tasks)
+    assert r["status"] == "pass"
+    assert r["actual"] == 0
+
+
+# ---------- check_high_duration (RULE 9: <5% with duration > 352h) ----------
+
+def test_check_high_duration_pass():
+    """1 of 30 > 44d (352h) -> 3.3% PASS.
+
+    44 working days x 8h/day = 352 hours threshold (DCMA standard 8h/day).
+    """
+    tasks = [_task_with_dur_days(i, 80) for i in range(1, 30)]  # 10d each
+    tasks.append(_task_with_dur_days(30, 400))                  # 50d > 44d
+    r = check_high_duration(tasks)
+    assert r["id"] == 9
+    assert r["status"] == "pass"
+    assert r["failed_count"] == 1
+
+
+def test_check_high_duration_fail():
+    """3 of 10 > 44d -> 30% FAIL."""
+    tasks = [_task_with_dur_days(i, 400) for i in range(1, 4)]  # 50d each
+    tasks += [_task_with_dur_days(i, 80) for i in range(4, 11)]
+    r = check_high_duration(tasks)
+    assert r["status"] == "fail"
+    assert r["actual"] == pytest.approx(30.0, rel=1e-2)
+
+
+def test_check_high_duration_threshold_352h_strict():
+    """Boundary: exactly 352h (44 working days) = NOT high."""
+    tasks = [_task_with_dur_days(1, 352), _task_with_dur_days(2, 360)]
+    r = check_high_duration(tasks)
+    assert r["failed_count"] == 1
+    assert 2 in r["failed_task_ids"]
+
+
+def test_check_high_duration_excludes_summaries():
+    """Summary tasks excluded from duration count."""
+    tasks = [_task_with_dur_days(1, 1000, summary=True),
+             _task_with_dur_days(2, 80)]
+    r = check_high_duration(tasks)
+    assert r["status"] == "pass"
+    assert r["actual"] == 0.0
+
+
+def test_check_high_duration_empty():
+    r = check_high_duration([])
+    assert r["status"] == "pass"
+    assert r["total_count"] == 0

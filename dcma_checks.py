@@ -426,3 +426,62 @@ def check_bei(tasks: List[Dict[str, Any]],
         "failed_count": should_be_done - actually_done,
         "total_count": should_be_done,
     }
+
+
+# ---------- T90: Aggregator + RAG (CLAUDE.md RULE 12 industry convention) ----------
+
+def compute_overall_rag(rules: List[Dict[str, Any]]) -> str:
+    """Industry convention: pass_count >= 12 -> GREEN, 8-11 AMBER, <8 RED."""
+    pass_count = sum(1 for r in rules if r.get("status") == "pass")
+    if pass_count >= 12:
+        return "green"
+    if pass_count >= 8:
+        return "amber"
+    return "red"
+
+
+def assess_all(tasks: List[Dict[str, Any]],
+               links: List[Dict[str, Any]],
+               assignments: List[Dict[str, Any]],
+               baseline: Optional[Dict[str, Any]] = None,
+               status_date: Optional[str] = None) -> Dict[str, Any]:
+    """Run all 14 DCMA checks; return rules + summary envelope.
+
+    Returns {rules: [14 dicts], summary: {pass_count, fail_count,
+             overall_rag, executive_text}}.
+    """
+    rules = [
+        check_no_predecessor(tasks),
+        check_no_successor(tasks),
+        check_leads(links),
+        check_lags(links),
+        check_fs_link_pct(links),
+        check_hard_constraints(tasks),
+        check_high_float(tasks),
+        check_negative_float(tasks),
+        check_high_duration(tasks),
+        check_invalid_dates(tasks),
+        check_resources_missing(tasks, assignments),
+        check_missed_tasks(tasks, status_date),
+        check_critical_path(tasks),
+        check_bei(tasks, status_date),
+    ]
+    pass_count = sum(1 for r in rules if r.get("status") == "pass")
+    fail_count = 14 - pass_count
+    rag = compute_overall_rag(rules)
+    failing_names = [r["name"] for r in rules if r.get("status") == "fail"]
+    if fail_count == 0:
+        executive = "All 14 DCMA rules pass. Schedule health: GREEN."
+    else:
+        more = "..." if fail_count > 5 else ""
+        executive = (f"{pass_count}/14 DCMA rules pass. {fail_count} issues: "
+                     f"{', '.join(failing_names[:5])}{more}")
+    return {
+        "rules": rules,
+        "summary": {
+            "pass_count": pass_count,
+            "fail_count": fail_count,
+            "overall_rag": rag,
+            "executive_text": executive,
+        },
+    }

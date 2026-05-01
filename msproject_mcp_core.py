@@ -6246,6 +6246,58 @@ def _msp_xer_read_progress(file_path=None):
     return {"status": "ok", **data["progress"]}
 
 
+@mcp.tool(
+    name="msproject_xer",
+    annotations={
+        "title": "MS Project XER (Primavera P6) Reader",
+        "readOnlyHint": True,
+    },
+)
+async def msproject_xer(params: dict) -> str:
+    """Pure-Python Primavera P6 XER file reader. Read-only.
+
+    Bridges P6 XER projects (CAU baseline format) into Phase 5a EVM +
+    Phase 5b DCMA + Phase 5c Excel pipelines. NO mpxj/Java dependency.
+
+    Actions:
+    - read_tasks(filters?, limit?): TASK section with optional dict filter
+    - read_links: TASKPRED section
+    - read_resources: RSRC section
+    - read_assignments: TASKRSRC section
+    - read_calendars: CALENDAR section (day_hr_cnt + week_hr_cnt)
+    - read_progress: PROJECT.last_recalc_date + per-task progress
+
+    Phase 5d (1 May 2026). Tool count 11 -> 12.
+    """
+    import json
+    action = params.get("action", "")
+    p = {k: v for k, v in params.items() if k != "action"}
+    try:
+        if action == "read_tasks":
+            r = _msp_xer_read_tasks(**p)
+        elif action == "read_links":
+            r = _msp_xer_read_links(**p)
+        elif action == "read_resources":
+            r = _msp_xer_read_resources(**p)
+        elif action == "read_assignments":
+            r = _msp_xer_read_assignments(**p)
+        elif action == "read_calendars":
+            r = _msp_xer_read_calendars(**p)
+        elif action == "read_progress":
+            r = _msp_xer_read_progress(**p)
+        else:
+            r = {"status": "error",
+                 "error": (f"Unknown action '{action}'. Valid: "
+                           "read_tasks/read_links/read_resources/"
+                           "read_assignments/read_calendars/read_progress")}
+    except TypeError as e:
+        r = {"status": "error", "error": f"Invalid params for {action}: {e}"}
+    except Exception as e:
+        logger.exception(f"msproject_xer({action}) failed: {e}")
+        r = {"status": "error", "error": str(e)}
+    return json.dumps(r, default=str, ensure_ascii=False)
+
+
 def main():
     """Run MCP server (stdio)."""
     mcp.run()

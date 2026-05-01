@@ -6153,6 +6153,99 @@ async def msproject_excel(params: dict) -> str:
     return json.dumps(r, default=str, ensure_ascii=False)
 
 
+# ============================================================================
+# PHASE 5D - XER (PRIMAVERA P6) READER
+# ============================================================================
+from xer_parser import XerFile
+
+
+def _xer_collect_full_data(file_path):
+    """Single-collect aggregator (Phase 5b/5c TAIL lesson). Parses XER once,
+    returns all 6 read shapes from a single XerFile instance.
+
+    First calendar's day_hr_cnt drives total_float h->day conversion (CAU
+    9.0 vs default 8.0). When no CALENDAR section, defaults to 8h/day.
+    """
+    if not file_path:
+        return {"status": "error", "error": "file_path required"}
+    try:
+        xer = XerFile(file_path)
+    except FileNotFoundError as e:
+        return {"status": "error", "error": str(e)}
+    except Exception as e:
+        logger.exception(f"_xer_collect_full_data failed: {e}")
+        return {"status": "error", "error": str(e)}
+    cals = xer.read_calendars()
+    day_hr_cnt = cals[0]["day_hr_cnt"] if cals else 8.0
+    return {
+        "status": "ok",
+        "tasks": xer.read_tasks(day_hr_cnt=day_hr_cnt),
+        "links": xer.read_links(),
+        "resources": xer.read_resources(),
+        "assignments": xer.read_assignments(),
+        "calendars": cals,
+        "progress": xer.read_progress(),
+        "project": xer.read_project(),
+    }
+
+
+def _msp_xer_read_tasks(file_path=None, filters=None, limit=None):
+    """Action 1: read tasks with optional filter dict + limit."""
+    data = _xer_collect_full_data(file_path)
+    if data.get("status") != "ok":
+        return data
+    tasks = data["tasks"]
+    if filters:
+        for k, v in filters.items():
+            tasks = [t for t in tasks if t.get(k) == v]
+    if limit:
+        tasks = tasks[:int(limit)]
+    return {"status": "ok", "count": len(tasks), "tasks": tasks}
+
+
+def _msp_xer_read_links(file_path=None):
+    """Action 2: read all links."""
+    data = _xer_collect_full_data(file_path)
+    if data.get("status") != "ok":
+        return data
+    return {"status": "ok", "count": len(data["links"]), "links": data["links"]}
+
+
+def _msp_xer_read_resources(file_path=None):
+    """Action 3: read all resources."""
+    data = _xer_collect_full_data(file_path)
+    if data.get("status") != "ok":
+        return data
+    return {"status": "ok", "count": len(data["resources"]),
+            "resources": data["resources"]}
+
+
+def _msp_xer_read_assignments(file_path=None):
+    """Action 4: read all task-resource assignments."""
+    data = _xer_collect_full_data(file_path)
+    if data.get("status") != "ok":
+        return data
+    return {"status": "ok", "count": len(data["assignments"]),
+            "assignments": data["assignments"]}
+
+
+def _msp_xer_read_calendars(file_path=None):
+    """Action 5: read all calendars."""
+    data = _xer_collect_full_data(file_path)
+    if data.get("status") != "ok":
+        return data
+    return {"status": "ok", "count": len(data["calendars"]),
+            "calendars": data["calendars"]}
+
+
+def _msp_xer_read_progress(file_path=None):
+    """Action 6: read progress data (status_date + per-task progress)."""
+    data = _xer_collect_full_data(file_path)
+    if data.get("status") != "ok":
+        return data
+    return {"status": "ok", **data["progress"]}
+
+
 def main():
     """Run MCP server (stdio)."""
     mcp.run()

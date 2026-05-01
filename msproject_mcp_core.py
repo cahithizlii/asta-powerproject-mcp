@@ -4887,6 +4887,17 @@ def _evm_load_progress_data(file_path=None):
 
 
 def _evm_load_baseline_data(file_path=None, baseline_number=0):
+    """Phase 5e additive routing: file_path ending '.xer' delegates to
+    _xer_to_evm_baseline_shape (Phase 5e adapter, defined after Phase 5d).
+    Existing .xml/.mpp/COM paths unchanged.
+    """
+    if file_path and isinstance(file_path, str) and file_path.lower().endswith(".xer"):
+        from xer_parser import XerFile
+        return _xer_to_evm_baseline_shape(XerFile(file_path), baseline_number)
+    return _evm_load_baseline_data_impl(file_path, baseline_number)
+
+
+def _evm_load_baseline_data_impl(file_path=None, baseline_number=0):
     """Read baseline data per Phase 3a. Validates baseline_number 0-10."""
     if baseline_number not in BASELINE_NUMBERS:
         return {"status": "error",
@@ -6376,6 +6387,39 @@ def _xer_to_evm_task_shape(xer):
         "assignments": assignments,
         "status_date": progress.get("status_date"),
         "project_file": xer.file_path,
+    }
+
+
+def _xer_to_evm_baseline_shape(xer, baseline_number=0):
+    """Translate XerFile to Phase 5a _evm_load_baseline_data shape.
+
+    CAU pattern (cost-loaded NO): baseline = target schedule. Returns task
+    baseline fields keyed by task_id. XER has only 1 implicit baseline per
+    file (PROJECT.last_recalc_date snapshot); baseline_number ignored
+    beyond passthrough.
+    """
+    cals = xer.read_calendars()
+    day_hr_cnt = cals[0]["day_hr_cnt"] if cals else 8.0
+    raw_tasks = xer.read_tasks(day_hr_cnt=day_hr_cnt)
+    out = []
+    for t in raw_tasks:
+        if t.get("summary", False):
+            continue
+        out.append({
+            "task_id": t["id"],
+            "id": t["id"],
+            "name": t.get("name", ""),
+            "start": t.get("start"),
+            "finish": t.get("finish"),
+            "baseline_start": t.get("start"),
+            "baseline_finish": t.get("finish"),
+            "work_h": float(t.get("duration_h") or 0),
+            "baseline_work": float(t.get("duration_h") or 0),
+        })
+    return {
+        "status": "ok",
+        "baseline_number": baseline_number,
+        "tasks": out,
     }
 
 

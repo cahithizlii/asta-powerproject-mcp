@@ -5464,6 +5464,166 @@ async def msproject_evm(params: dict) -> str:
     return json.dumps(r, default=str, ensure_ascii=False)
 
 
+# ============================================================================
+# PHASE 5B - DCMA TOOL
+# ============================================================================
+from dcma_checks import (
+    DCMA_RULES,
+    check_no_predecessor as _dcma_check_1,
+    check_no_successor as _dcma_check_2,
+    check_leads as _dcma_check_3,
+    check_lags as _dcma_check_4,
+    check_fs_link_pct as _dcma_check_5,
+    check_hard_constraints as _dcma_check_6,
+    check_high_float as _dcma_check_7,
+    check_negative_float as _dcma_check_8,
+    check_high_duration as _dcma_check_9,
+    check_invalid_dates as _dcma_check_10,
+    check_resources_missing as _dcma_check_11,
+    check_missed_tasks as _dcma_check_12,
+    check_critical_path as _dcma_check_13,
+    check_bei as _dcma_check_14,
+    assess_all as _dcma_assess_all,
+    compute_overall_rag as _dcma_overall_rag,
+)
+
+
+def _dcma_load_links(file_path=None):
+    """Hybrid: file_path -> Phase 4 _msp_file_read_links;
+    None -> Phase 1 COM iter walking proj.Tasks predecessors.
+
+    Returns list of {from_id, to_id, type, lag_days}.
+    """
+    if file_path:
+        r = _msp_file_read_links(file_path=file_path)
+        if r.get("status") != "ok":
+            return []
+        return r.get("links", []) or []
+    # COM path
+    try:
+        app = _validate_active_project()
+        proj = app.ActiveProject
+        out = []
+        for i in range(1, proj.Tasks.Count + 1):
+            try:
+                t = proj.Tasks(i)
+                if t is None:
+                    continue
+                # Use TaskDependencies for richer info (type + lag)
+                try:
+                    deps = t.TaskDependencies
+                except Exception:
+                    deps = None
+                if deps:
+                    for j in range(1, deps.Count + 1):
+                        try:
+                            d = deps(j)
+                            if d is None:
+                                continue
+                            ft = d.From
+                            tt = d.To
+                            if ft is None or tt is None or tt.ID != t.ID:
+                                continue
+                            type_code = int(d.Type or 0)
+                            type_str = ["FF", "FS", "SF", "SS"][type_code] if 0 <= type_code <= 3 else "FS"
+                            lag_min = float(d.Lag or 0)
+                            lag_days = lag_min / 480.0  # 8h/day default
+                            out.append({
+                                "from_id": ft.ID, "to_id": tt.ID,
+                                "type": type_str, "lag_days": round(lag_days, 2),
+                            })
+                        except Exception:
+                            continue
+            except Exception:
+                continue
+        return out
+    except Exception as e:
+        logger.exception(f"_dcma_load_links COM path failed: {e}")
+        return []
+
+
+def _dcma_collect_full_data(file_path=None, baseline_number=0):
+    """Aggregate Phase 5a data + Phase 5b extensions.
+
+    Returns {status, tasks, links, assignments, resources, baseline,
+             status_date}. tasks already include total_slack_days,
+             critical, constraint_type fields when available (Phase 4
+             file path). COM path adds these via task property reads.
+    """
+    if baseline_number not in BASELINE_NUMBERS:
+        return {"status": "error",
+                "error": f"baseline_number must be 0-10, got {baseline_number}"}
+    base = _evm_load_task_data(file_path=file_path)
+    if base.get("status") != "ok":
+        return base
+    bload = _evm_load_baseline_data(file_path=file_path,
+                                    baseline_number=baseline_number)
+    links = _dcma_load_links(file_path=file_path)
+    tasks = base.get("tasks", []) or []
+    # Enrich tasks with DCMA-specific fields when COM path
+    if not file_path:
+        try:
+            app = _validate_active_project()
+            proj = app.ActiveProject
+            for t_dict in tasks:
+                tid = t_dict["id"]
+                try:
+                    com_t = _find_task_by_id(proj, tid)
+                    if com_t is None:
+                        continue
+                    try:
+                        slack_min = float(com_t.TotalSlack or 0)
+                        t_dict["total_slack_days"] = round(slack_min / 480.0, 2)
+                    except Exception:
+                        t_dict["total_slack_days"] = 0
+                    try:
+                        t_dict["critical"] = bool(com_t.Critical)
+                    except Exception:
+                        t_dict["critical"] = False
+                    try:
+                        t_dict["constraint_type"] = int(com_t.ConstraintType or 0)
+                    except Exception:
+                        t_dict["constraint_type"] = 0
+                    # Predecessors/successors as ID lists via TaskDependencies
+                    try:
+                        deps = com_t.TaskDependencies
+                        preds = []
+                        succs = []
+                        if deps:
+                            for j in range(1, deps.Count + 1):
+                                d = deps(j)
+                                if d is None:
+                                    continue
+                                if d.To and d.To.ID == tid and d.From:
+                                    preds.append(d.From.ID)
+                                elif d.From and d.From.ID == tid and d.To:
+                                    succs.append(d.To.ID)
+                        t_dict["predecessors"] = preds
+                        t_dict["successors"] = succs
+                    except Exception:
+                        t_dict.setdefault("predecessors", [])
+                        t_dict.setdefault("successors", [])
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.warning(f"_dcma_collect_full_data COM enrich failed: {e}")
+    # File path: Phase 4 already provides total_float, critical, constraint_type
+    else:
+        for t_dict in tasks:
+            t_dict.setdefault("total_slack_days", float(t_dict.get("total_float") or 0))
+            t_dict.setdefault("critical", t_dict.get("critical", False))
+            t_dict.setdefault("constraint_type", t_dict.get("constraint_type", 0))
+    return {
+        "status": "ok",
+        "tasks": tasks,
+        "links": links,
+        "assignments": base.get("assignments", []) or [],
+        "resources": base.get("resources", []) or [],
+        "baseline": bload if bload.get("status") == "ok" else None,
+        "status_date": base.get("status_date"),
+    }
+
+
 def main():
     """Run MCP server (stdio)."""
     mcp.run()

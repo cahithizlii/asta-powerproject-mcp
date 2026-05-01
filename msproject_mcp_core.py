@@ -220,11 +220,21 @@ def _msp_task_add_single(name: str, duration: str = "1d",
 
 
 def _find_task_by_id(proj: Any, task_id: int) -> Optional[Any]:
-    """Locate a task object by its ID. Returns None if not found."""
+    """Locate a task object by its ID. Returns None if not found.
+
+    Defensive: `t.ID` access can raise pywintypes.com_error for invalid
+    handles (e.g. tasks deleted/recycled mid-iteration). Such failures
+    are treated as "not this task" and we continue scanning rather than
+    aborting the whole lookup — Phase 5a TAIL fix (T84 acceptance script
+    intermittent COM error on bulk progress loops).
+    """
     for i in range(1, proj.Tasks.Count + 1):
-        t = proj.Tasks(i)
-        if t is not None and t.ID == task_id:
-            return t
+        try:
+            t = proj.Tasks(i)
+            if t is not None and t.ID == task_id:
+                return t
+        except Exception:
+            continue
     return None
 
 
@@ -5301,6 +5311,11 @@ def _msp_evm_save_period_snapshot(file_path=None, baseline_number=0,
     Bundles compute_metrics + forecast + earned_schedule + rag into
     a single snapshot entry. Default snapshot_path is
     ~/msproject_evm_snapshots.json.
+
+    Phase 5a TAIL fix: optimized to share a single `compute_metrics`
+    result across forecast + summary (was: 3 redundant COM iterations
+    of ~200 tasks each). earned_schedule still requires its own load
+    (PV curve build) — kept as separate call.
     """
     if not snapshot_path:
         snapshot_path = os.path.expanduser("~/msproject_evm_snapshots.json")
@@ -5308,11 +5323,16 @@ def _msp_evm_save_period_snapshot(file_path=None, baseline_number=0,
                                   baseline_number=baseline_number)
     if cm.get("status") != "ok":
         return cm
-    fc = _msp_evm_forecast(file_path=file_path, baseline_number=baseline_number)
+    # Forecast = pure math from cm; no second COM iteration
+    fc = _evm_forecast(bac=cm["bac"], ev=cm["ev"], ac=cm["ac"],
+                       cpi=cm.get("cpi"), spi=cm.get("spi"))
+    # Summary = RAG from cm; no second COM iteration
+    completion_pct = (cm["ev"] / cm["bac"] * 100.0) if cm.get("bac", 0) > 0 else 0.0
+    rag = _evm_rag(spi=cm.get("spi"), completion_pct=completion_pct)
+    # ES still needs its own load + PV curve build — Phase 6 polish would
+    # share via a unified `_evm_compute_full_snapshot` helper.
     es = _msp_evm_earned_schedule(file_path=file_path,
                                   baseline_number=baseline_number)
-    summary = _msp_evm_summary(file_path=file_path,
-                               baseline_number=baseline_number)
     snap = {
         "id": _dt5.datetime.now().strftime("%Y%m%d-%H%M%S"),
         "saved_at": _dt5.datetime.now().isoformat(),
@@ -5322,11 +5342,12 @@ def _msp_evm_save_period_snapshot(file_path=None, baseline_number=0,
                     ("bac", "pv", "ev", "ac", "spi", "cpi", "sv", "cv")},
         "forecast": {k: fc.get(k) for k in
                      ("eac_t1", "eac_t2", "eac_t3", "etc", "vac",
-                      "tcpi_bac", "tcpi_eac")} if fc.get("status") == "ok" else {},
+                      "tcpi_bac", "tcpi_eac")},
         "earned_schedule": {k: es.get(k) for k in
                             ("at", "es", "sv_t", "spi_t")}
                            if es.get("status") == "ok" else {},
-        "rag": summary.get("rag") if summary.get("status") == "ok" else None,
+        "rag": rag,
+        "completion_pct": round(completion_pct, 2),
         "tag": tag,
     }
     try:

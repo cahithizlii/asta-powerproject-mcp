@@ -4737,6 +4737,185 @@ async def msproject_file(params: dict) -> str:
     return json.dumps(r, default=str, ensure_ascii=False)
 
 
+# ============================================================================
+# PHASE 5A — EVM TOOL
+# ============================================================================
+import datetime as _dt5
+from evm_math import (
+    compute_metrics as _evm_compute,
+    forecast as _evm_forecast,
+    earned_schedule as _evm_earned_schedule,
+    time_phased_pv as _evm_tp_pv,
+    time_phased_ev as _evm_tp_ev,
+    period_delta as _evm_period_delta,
+    progress_data_quality as _evm_pdq,
+    rag_status as _evm_rag,
+)
+
+
+def _parse_iso_date(s):
+    """Parse '2026-01-01...' or 'YYYY-MM-DD'-prefix string to date.
+
+    Returns None for None/empty/'N/A'/unparseable input.
+    """
+    if not s or s == "N/A":
+        return None
+    try:
+        return _dt5.date.fromisoformat(str(s)[:10])
+    except (ValueError, TypeError):
+        return None
+
+
+def _evm_load_task_data(file_path=None):
+    """Hybrid: file_path -> Phase 4 file path; None -> Phase 1 COM path.
+
+    Returns {status, tasks: [...], resources: [...], assignments: [...],
+             status_date, project_name, project_file}.
+    Each task dict has at least: id, name, duration_h, baseline_start,
+    baseline_finish, baseline_work, percent_complete, actual_work, summary.
+    """
+    try:
+        if file_path:
+            tr = _msp_file_read_tasks(file_path=file_path)
+            if tr.get("status") != "ok":
+                return tr
+            rr = _msp_file_read_resources(file_path=file_path)
+            ar = _msp_file_read_assignments(file_path=file_path)
+            pr = _msp_file_read_progress(file_path=file_path)
+            # Merge baseline fields and progress fields into task dicts
+            tasks = tr.get("tasks", [])
+            # Read baseline 0 for default PV
+            br = _msp_file_read_baselines(file_path=file_path, baseline_number=0)
+            baseline_tasks = {bt.get("task_id"): bt
+                             for bt in (br.get("tasks", []) if br.get("status") == "ok" else [])}
+            progress_tasks = {pt.get("id"): pt
+                             for pt in (pr.get("tasks", []) if pr.get("status") == "ok" else [])}
+            for t in tasks:
+                tid = t.get("id")
+                bt = baseline_tasks.get(tid, {})
+                pt = progress_tasks.get(tid, {})
+                # Baseline fields: try a few common names
+                t.setdefault("baseline_start", bt.get("start") or bt.get("baseline_start"))
+                t.setdefault("baseline_finish", bt.get("finish") or bt.get("baseline_finish"))
+                t.setdefault("baseline_work", bt.get("work_h") or bt.get("baseline_work") or t.get("duration_h", 0))
+                t.setdefault("percent_complete", t.get("percent_complete") or pt.get("percent_complete") or 0)
+                t.setdefault("actual_work", pt.get("actual_work_h") or 0)
+            return {
+                "status": "ok",
+                "tasks": tasks,
+                "resources": rr.get("resources", []) if rr.get("status") == "ok" else [],
+                "assignments": ar.get("assignments", []) if ar.get("status") == "ok" else [],
+                "status_date": pr.get("status_date") if pr.get("status") == "ok" else None,
+                "project_file": file_path,
+            }
+        # COM path
+        app = _validate_active_project()
+        proj = app.ActiveProject
+        tasks = []
+        for i in range(1, proj.Tasks.Count + 1):
+            t = proj.Tasks(i)
+            if t is None:
+                continue
+            tasks.append({
+                "id": t.ID,
+                "name": t.Name or "",
+                "duration_h": float(t.Duration or 0) / 60.0,
+                "start": str(t.Start) if t.Start else None,
+                "finish": str(t.Finish) if t.Finish else None,
+                "percent_complete": float(t.PercentComplete or 0),
+                "summary": bool(t.Summary),
+                "baseline_start": str(t.BaselineStart) if t.BaselineStart else None,
+                "baseline_finish": str(t.BaselineFinish) if t.BaselineFinish else None,
+                "baseline_work": float(t.BaselineWork or 0) / 60.0,
+                "actual_work": float(t.ActualWork or 0) / 60.0,
+            })
+        resources = []
+        for i in range(1, proj.Resources.Count + 1):
+            r = proj.Resources(i)
+            if r is None:
+                continue
+            resources.append({
+                "id": r.ID,
+                "name": r.Name or "",
+                "type": "Work",
+                "max_units": float(r.MaxUnits or 1.0),
+            })
+        try:
+            status_date = str(proj.StatusDate) if proj.StatusDate else None
+        except Exception:
+            status_date = None
+        return {
+            "status": "ok",
+            "tasks": [t for t in tasks if not t["summary"]],
+            "resources": resources,
+            "assignments": [],  # COM path skips for perf
+            "status_date": status_date,
+            "project_name": proj.Name,
+        }
+    except Exception as e:
+        logger.exception(f"_evm_load_task_data failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+def _evm_load_progress_data(file_path=None):
+    """Read progress fields (percent_complete, actual_work, status_date).
+
+    file_path -> Phase 4 _msp_file_read_progress
+    None      -> Phase 1 _msp_progress_summary (existing helper)
+    """
+    if file_path:
+        return _msp_file_read_progress(file_path=file_path)
+    # COM path — Phase 3b summary already provides BAC/ACWP/StatusDate
+    return _msp_progress_summary()
+
+
+def _evm_load_baseline_data(file_path=None, baseline_number=0):
+    """Read baseline data per Phase 3a. Validates baseline_number 0-10."""
+    if baseline_number not in BASELINE_NUMBERS:
+        return {"status": "error",
+                "error": f"baseline_number must be 0-10, got {baseline_number}"}
+    if file_path:
+        return _msp_file_read_baselines(file_path=file_path,
+                                       baseline_number=baseline_number)
+    # COM path
+    app = _validate_active_project()
+    proj = app.ActiveProject
+    saved = _baseline_saved_date(proj, baseline_number)
+    tasks_baseline = []
+    for i in range(1, proj.Tasks.Count + 1):
+        t = proj.Tasks(i)
+        if t is None or t.Summary:
+            continue
+        b = _read_task_baseline(t, baseline_number)
+        b["task_id"] = t.ID
+        tasks_baseline.append(b)
+    return {
+        "status": "ok",
+        "baseline_number": baseline_number,
+        "saved_date": str(saved) if saved else None,
+        "tasks": tasks_baseline,
+    }
+
+
+def _evm_detect_currency_mode(tasks, resources):
+    """RULE 3 — hours vs cost loading.
+
+    'hours' if no cost data anywhere; 'cost' if any non-zero cost field found.
+    """
+    total_cost = 0.0
+    for t in tasks or []:
+        try:
+            total_cost += float(t.get("cost") or 0)
+        except (TypeError, ValueError):
+            pass
+    for r in resources or []:
+        try:
+            total_cost += float(r.get("cost") or 0)
+        except (TypeError, ValueError):
+            pass
+    return "cost" if total_cost > 0 else "hours"
+
+
 def main():
     """Run MCP server (stdio)."""
     mcp.run()

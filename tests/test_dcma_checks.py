@@ -7,6 +7,7 @@ from dcma_checks import (
     DCMA_RULES, _DCMA_THRESHOLDS,
     check_no_predecessor, check_no_successor,
     check_leads, check_lags, check_fs_link_pct,
+    check_hard_constraints, check_invalid_dates, check_resources_missing,
 )
 
 
@@ -264,4 +265,159 @@ def test_check_fs_link_pct_boundary_exactly_90():
     # 9/10 = 90.0 — strict >90 -> FAIL
     r = check_fs_link_pct(links)
     assert r["actual"] == 90.0
+    assert r["status"] == "fail"
+
+
+# ---------- T87: Task quality rules ----------
+
+# Hard constraint enum: 0=ASAP, 1=ALAP, 2=MSO, 3=MFO, 4=SNET, 5=SNLT, 6=FNET, 7=FNLT
+# DCMA hard = MSO, MFO, SNLT, FNLT = {2, 3, 5, 7}
+
+def _make_task_constraint(id, constraint_type=0, summary=False):
+    return {"id": id, "name": f"T{id}", "summary": summary,
+            "constraint_type": constraint_type}
+
+
+# ---------- check_hard_constraints (RULE 6: <5%) ----------
+
+def test_check_hard_constraints_pass():
+    """1 of 30 = 3.3% hard -> PASS."""
+    tasks = [_make_task_constraint(i, constraint_type=0) for i in range(1, 30)]
+    tasks.append(_make_task_constraint(30, constraint_type=2))  # 1 MSO
+    r = check_hard_constraints(tasks)
+    assert r["id"] == 6
+    assert r["status"] == "pass"
+    assert r["actual"] < 5.0
+
+
+def test_check_hard_constraints_fail():
+    """5 MSO + 5 ASAP = 50% hard -> FAIL."""
+    tasks = [_make_task_constraint(i, constraint_type=2) for i in range(1, 6)]
+    tasks += [_make_task_constraint(i, constraint_type=0) for i in range(6, 11)]
+    r = check_hard_constraints(tasks)
+    assert r["status"] == "fail"
+    assert r["actual"] == pytest.approx(50.0, rel=1e-2)
+
+
+def test_check_hard_constraints_all_hard_types_detected():
+    """MSO=2, MFO=3, SNLT=5, FNLT=7 each counted as hard."""
+    for ct in (2, 3, 5, 7):
+        tasks = [_make_task_constraint(1, constraint_type=ct)]
+        r = check_hard_constraints(tasks)
+        assert r["failed_count"] == 1, f"constraint_type {ct} not flagged hard"
+
+
+def test_check_hard_constraints_soft_types_not_flagged():
+    """ASAP=0, ALAP=1, SNET=4, FNET=6 are soft -> not flagged."""
+    for ct in (0, 1, 4, 6):
+        tasks = [_make_task_constraint(1, constraint_type=ct)]
+        r = check_hard_constraints(tasks)
+        assert r["failed_count"] == 0, f"soft constraint_type {ct} wrongly flagged"
+
+
+def test_check_hard_constraints_excludes_summaries():
+    tasks = [_make_task_constraint(1, constraint_type=2, summary=True),
+             _make_task_constraint(2, constraint_type=0),
+             _make_task_constraint(3, constraint_type=0)]
+    r = check_hard_constraints(tasks)
+    assert r["status"] == "pass"
+    assert r["actual"] == 0.0
+
+
+def test_check_hard_constraints_empty():
+    r = check_hard_constraints([])
+    assert r["status"] == "pass"
+    assert r["total_count"] == 0
+
+
+# ---------- check_invalid_dates (RULE 10: =0) ----------
+
+def test_check_invalid_dates_pass():
+    tasks = [{"id": 1, "name": "T1", "start": "2026-01-01",
+              "finish": "2026-01-10", "summary": False}]
+    r = check_invalid_dates(tasks)
+    assert r["id"] == 10
+    assert r["status"] == "pass"
+    assert r["actual"] == 0
+
+
+def test_check_invalid_dates_fail_start_after_finish():
+    tasks = [{"id": 1, "name": "T1", "start": "2026-01-15",
+              "finish": "2026-01-10", "summary": False}]
+    r = check_invalid_dates(tasks)
+    assert r["status"] == "fail"
+    assert r["failed_count"] == 1
+    assert 1 in r["failed_task_ids"]
+
+
+def test_check_invalid_dates_handles_none():
+    """None dates -> no validation, treat as PASS."""
+    tasks = [{"id": 1, "name": "T1", "start": None,
+              "finish": None, "summary": False}]
+    r = check_invalid_dates(tasks)
+    assert r["status"] == "pass"
+
+
+def test_check_invalid_dates_handles_iso_with_time():
+    """ISO datetime strings (full timestamp) parsed correctly."""
+    tasks = [{"id": 1, "name": "T1", "start": "2026-01-01T08:00:00",
+              "finish": "2026-01-15T17:00:00", "summary": False}]
+    r = check_invalid_dates(tasks)
+    assert r["status"] == "pass"
+
+
+def test_check_invalid_dates_equal_dates_pass():
+    """start == finish (zero-day milestone) -> PASS (not invalid)."""
+    tasks = [{"id": 1, "name": "T1", "start": "2026-01-01",
+              "finish": "2026-01-01", "summary": False}]
+    r = check_invalid_dates(tasks)
+    assert r["status"] == "pass"
+
+
+# ---------- check_resources_missing (RULE 11: <20%) ----------
+
+def _task_with_dur(id, duration_h, summary=False):
+    return {"id": id, "name": f"T{id}", "summary": summary, "duration_h": duration_h}
+
+
+def test_check_resources_missing_pass():
+    """1 of 10 has no assignment -> 10% < 20% -> PASS."""
+    tasks = [_task_with_dur(i, 8) for i in range(1, 11)]
+    assignments = [{"task_id": i, "resource_id": 1} for i in range(1, 10)]
+    r = check_resources_missing(tasks, assignments)
+    assert r["id"] == 11
+    assert r["status"] == "pass"
+    assert r["actual"] < 20.0
+
+
+def test_check_resources_missing_fail():
+    """30% of tasks without resources -> FAIL."""
+    tasks = [_task_with_dur(i, 8) for i in range(1, 11)]
+    assignments = [{"task_id": i, "resource_id": 1} for i in range(1, 8)]
+    r = check_resources_missing(tasks, assignments)
+    assert r["status"] == "fail"
+    assert r["actual"] == pytest.approx(30.0, rel=1e-2)
+
+
+def test_check_resources_missing_excludes_zero_duration():
+    """Zero-duration tasks (milestones) excluded from count."""
+    tasks = [_task_with_dur(1, 0)]
+    r = check_resources_missing(tasks, [])
+    assert r["total_count"] == 0
+    assert r["status"] == "pass"
+
+
+def test_check_resources_missing_excludes_summaries():
+    """Summary tasks excluded even with duration > 0."""
+    tasks = [{"id": 1, "name": "Sum", "summary": True, "duration_h": 100}]
+    r = check_resources_missing(tasks, [])
+    assert r["total_count"] == 0
+    assert r["status"] == "pass"
+
+
+def test_check_resources_missing_empty_assignments():
+    """All tasks unassigned -> 100% missing."""
+    tasks = [_task_with_dur(i, 8) for i in range(1, 6)]
+    r = check_resources_missing(tasks, [])
+    assert r["actual"] == 100.0
     assert r["status"] == "fail"

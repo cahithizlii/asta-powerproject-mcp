@@ -189,3 +189,91 @@ def check_fs_link_pct(links: List[Dict[str, Any]]) -> Dict[str, Any]:
         "failed_links": [{"from_id": l["from_id"], "to_id": l["to_id"],
                           "type": l["type"]} for l in failed_links],
     }
+
+
+# ---------- T87: Task quality rules ----------
+
+# Hard constraint enum (MSP / MSPDI):
+# 0=ASAP, 1=ALAP, 2=MSO (Must Start On), 3=MFO (Must Finish On),
+# 4=SNET (Start No Earlier Than), 5=SNLT (Start No Later Than),
+# 6=FNET (Finish No Earlier Than), 7=FNLT (Finish No Later Than)
+# DCMA classifies MSO, MFO, SNLT, FNLT as "hard" (rigid).
+HARD_CONSTRAINT_TYPES = {2, 3, 5, 7}
+
+
+def check_hard_constraints(tasks: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """RULE 6: <5% of real tasks should have hard constraints (MSO/MFO/SNLT/FNLT)."""
+    real = _real_tasks(tasks)
+    total = len(real)
+    if total == 0:
+        return {"id": 6, "name": "Hard Constraints", "threshold": "<5%",
+                "actual": 0.0, "actual_unit": "%", "status": "pass",
+                "failed_count": 0, "total_count": 0, "failed_task_ids": []}
+    failed_ids = [t["id"] for t in real
+                  if int(t.get("constraint_type") or 0) in HARD_CONSTRAINT_TYPES]
+    failed_count = len(failed_ids)
+    actual_pct = (failed_count / total) * 100.0
+    return {
+        "id": 6, "name": "Hard Constraints", "threshold": "<5%",
+        "actual": round(actual_pct, 2), "actual_unit": "%",
+        "status": _eval_status(6, actual_pct),
+        "failed_count": failed_count, "total_count": total,
+        "failed_task_ids": failed_ids,
+    }
+
+
+def _parse_iso_date_local(s):
+    """Local date parser - avoid circular import with msproject_mcp_core.
+
+    Accepts 'YYYY-MM-DD' or 'YYYY-MM-DDTHH:MM:SS' or None / 'N/A'.
+    """
+    if not s or s == "N/A":
+        return None
+    try:
+        return _dt.date.fromisoformat(str(s)[:10])
+    except (ValueError, TypeError):
+        return None
+
+
+def check_invalid_dates(tasks: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """RULE 10: zero invalid dates (start > finish, etc.).
+
+    None / unparseable dates skipped (vacuous - cannot validate).
+    """
+    failed_ids = []
+    for t in tasks:
+        start = _parse_iso_date_local(t.get("start"))
+        finish = _parse_iso_date_local(t.get("finish"))
+        if start and finish and start > finish:
+            failed_ids.append(t["id"])
+    failed_count = len(failed_ids)
+    return {
+        "id": 10, "name": "Invalid Dates", "threshold": "=0",
+        "actual": failed_count, "actual_unit": "count",
+        "status": _eval_status(10, failed_count),
+        "failed_count": failed_count, "total_count": len(tasks),
+        "failed_task_ids": failed_ids,
+    }
+
+
+def check_resources_missing(tasks: List[Dict[str, Any]],
+                            assignments: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """RULE 11: <20% of real tasks (with duration > 0) should lack assignments."""
+    real = _real_tasks(tasks)
+    real = [t for t in real if float(t.get("duration_h") or 0) > 0]
+    total = len(real)
+    if total == 0:
+        return {"id": 11, "name": "Resources Missing", "threshold": "<20%",
+                "actual": 0.0, "actual_unit": "%", "status": "pass",
+                "failed_count": 0, "total_count": 0, "failed_task_ids": []}
+    assigned_task_ids = {a.get("task_id") for a in (assignments or [])}
+    failed_ids = [t["id"] for t in real if t["id"] not in assigned_task_ids]
+    failed_count = len(failed_ids)
+    actual_pct = (failed_count / total) * 100.0
+    return {
+        "id": 11, "name": "Resources Missing", "threshold": "<20%",
+        "actual": round(actual_pct, 2), "actual_unit": "%",
+        "status": _eval_status(11, actual_pct),
+        "failed_count": failed_count, "total_count": total,
+        "failed_task_ids": failed_ids,
+    }

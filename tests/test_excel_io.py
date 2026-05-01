@@ -5,6 +5,7 @@ from excel_io import (
     BRAND_LACIVERT, BRAND_NAVY, BRAND_TURQUOISE, BRAND_LABEL_GRAY,
     ZEBRA, RAG_GREEN, RAG_AMBER, RAG_RED,
     apply_header_style, apply_rag_fill, apply_zebra_fill,
+    build_tasks_sheet, read_tasks_sheet, build_summary_sheet,
 )
 
 
@@ -91,3 +92,117 @@ def test_apply_zebra_fill_odd_row_no_fill():
     cell = ws.cell(row=3, column=1, value="x")
     apply_zebra_fill(cell, row_idx=3)
     assert cell.fill.fill_type in (None, "none")
+
+
+# ---------- T95: Tasks + Summary sheet builders + readers ----------
+
+def _sample_tasks():
+    return [
+        {"id": 1, "name": "Foundation", "duration_h": 80, "start": "2026-01-01",
+         "finish": "2026-01-15", "percent_complete": 100, "critical": True,
+         "summary": False},
+        {"id": 2, "name": "Frame", "duration_h": 160, "start": "2026-01-16",
+         "finish": "2026-02-15", "percent_complete": 50, "critical": False,
+         "summary": False},
+    ]
+
+
+def test_build_tasks_sheet_creates_sheet():
+    wb = Workbook()
+    build_tasks_sheet(wb, _sample_tasks(), sheet_name="Tasks")
+    assert "Tasks" in wb.sheetnames
+
+
+def test_build_tasks_sheet_header_row():
+    wb = Workbook()
+    build_tasks_sheet(wb, _sample_tasks())
+    ws = wb["Tasks"]
+    headers = [c.value for c in ws[1]]
+    assert "ID" in headers
+    assert "Name" in headers
+    assert "Duration (d)" in headers
+    assert "%Complete" in headers
+
+
+def test_build_tasks_sheet_data_rows():
+    wb = Workbook()
+    build_tasks_sheet(wb, _sample_tasks())
+    ws = wb["Tasks"]
+    assert ws.cell(row=2, column=1).value == 1
+    assert ws.cell(row=2, column=2).value == "Foundation"
+    assert ws.cell(row=2, column=3).value == 10.0  # 80h / 8 = 10d
+
+
+def test_build_tasks_sheet_excludes_summary():
+    tasks = _sample_tasks() + [{"id": 0, "name": "Sum", "summary": True,
+                                "duration_h": 0, "start": None, "finish": None,
+                                "percent_complete": 0, "critical": False}]
+    wb = Workbook()
+    build_tasks_sheet(wb, tasks)
+    ws = wb["Tasks"]
+    assert ws.max_row == 3  # header + 2 real rows
+
+
+def test_build_tasks_sheet_header_styled_lacivert():
+    wb = Workbook()
+    build_tasks_sheet(wb, _sample_tasks())
+    ws = wb["Tasks"]
+    assert ws.cell(row=1, column=1).fill.start_color.value == BRAND_LACIVERT
+
+
+def test_build_tasks_sheet_pct_format():
+    wb = Workbook()
+    build_tasks_sheet(wb, _sample_tasks())
+    ws = wb["Tasks"]
+    assert ws.cell(row=2, column=6).number_format == "0%"
+
+
+def test_read_tasks_sheet_round_trip(tmp_path):
+    wb = Workbook()
+    build_tasks_sheet(wb, _sample_tasks())
+    xlsx = tmp_path / "round.xlsx"
+    wb.save(str(xlsx))
+    rows = read_tasks_sheet(str(xlsx), sheet_name="Tasks")
+    assert len(rows) == 2
+    assert rows[0]["name"] == "Foundation"
+    assert rows[0]["duration_h"] == 80
+
+
+def test_read_tasks_sheet_missing_sheet_returns_empty(tmp_path):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Other"
+    xlsx = tmp_path / "x.xlsx"
+    wb.save(str(xlsx))
+    rows = read_tasks_sheet(str(xlsx), sheet_name="Tasks")
+    assert rows == []
+
+
+def test_build_summary_sheet():
+    wb = Workbook()
+    summary = {"BAC": 1000.0, "EAC": 1100.0, "SPI": 0.95, "CPI": 0.91,
+               "rag": "amber", "executive_text": "Project on track."}
+    build_summary_sheet(wb, summary)
+    assert "Summary" in wb.sheetnames
+    ws = wb["Summary"]
+    assert "Summary" in str(ws.cell(row=1, column=1).value)
+
+
+def test_build_summary_sheet_rag_colored():
+    wb = Workbook()
+    summary = {"rag": "red"}
+    build_summary_sheet(wb, summary)
+    ws = wb["Summary"]
+    # Find RAG row (label = "Overall RAG")
+    for r in range(1, ws.max_row + 1):
+        if ws.cell(row=r, column=1).value == "Overall RAG":
+            assert ws.cell(row=r, column=2).fill.start_color.value == RAG_RED
+            return
+    pytest.fail("Overall RAG row not found")
+
+
+def test_build_summary_sheet_handles_missing_metrics():
+    wb = Workbook()
+    build_summary_sheet(wb, {})
+    ws = wb["Summary"]
+    assert ws.cell(row=3, column=2).value == "N/A"

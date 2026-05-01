@@ -4783,8 +4783,15 @@ def _evm_load_task_data(file_path=None):
              status_date, project_name, project_file}.
     Each task dict has at least: id, name, duration_h, baseline_start,
     baseline_finish, baseline_work, percent_complete, actual_work, summary.
+
+    Phase 5e additive routing: file_path ending '.xer' delegates to
+    _xer_to_evm_task_shape (Phase 5e adapter, defined later in module).
+    Existing .xml/.mpp/COM paths unchanged.
     """
     try:
+        if file_path and isinstance(file_path, str) and file_path.lower().endswith(".xer"):
+            from xer_parser import XerFile
+            return _xer_to_evm_task_shape(XerFile(file_path))
         if file_path:
             tr = _msp_file_read_tasks(file_path=file_path)
             if tr.get("status") != "ok":
@@ -6296,6 +6303,80 @@ async def msproject_xer(params: dict) -> str:
         logger.exception(f"msproject_xer({action}) failed: {e}")
         r = {"status": "error", "error": str(e)}
     return json.dumps(r, default=str, ensure_ascii=False)
+
+
+# ============================================================================
+# PHASE 5E - XER NATIVE INTEGRATION (Phase 5a loader extensions for .xer)
+# ============================================================================
+# Wires Phase 5d msproject_xer reader into Phase 5a EVM + Phase 5b DCMA +
+# Phase 5c Excel pipelines via additive routing in _evm_load_task_data and
+# _evm_load_baseline_data (single guard line each, NO behavior change for
+# existing .xml/.mpp/COM paths). Adapters below translate XerFile output
+# to Phase 5a expected shape.
+
+
+def _xer_to_evm_task_shape(xer):
+    """Translate XerFile output to Phase 5a _evm_load_task_data shape.
+
+    CAU pattern (cost-loaded NO): baseline = target schedule. baseline_work
+    = duration_h, baseline_start/finish = target dates.
+
+    Derives: predecessors/successors lists from links, total_slack_days,
+    critical (heuristic: total_slack_days <= 0 — XER lacks explicit
+    critical flag).
+    """
+    cals = xer.read_calendars()
+    day_hr_cnt = cals[0]["day_hr_cnt"] if cals else 8.0
+    raw_tasks = xer.read_tasks(day_hr_cnt=day_hr_cnt)
+    links = xer.read_links()
+    progress = xer.read_progress()
+    assignments = xer.read_assignments()
+
+    # Pre-aggregate actual_work per task from XER assignments
+    actual_by_task = {}
+    for a in assignments:
+        tid = a.get("task_id")
+        if tid is not None:
+            actual_by_task[tid] = actual_by_task.get(tid, 0.0) + float(
+                a.get("actual_qty") or 0)
+
+    # Pre-build predecessor/successor maps from links (single O(M) pass)
+    preds_by_task = {}
+    succs_by_task = {}
+    for link in links:
+        from_id = link.get("from_id")
+        to_id = link.get("to_id")
+        if to_id is not None and from_id is not None:
+            preds_by_task.setdefault(to_id, []).append(from_id)
+            succs_by_task.setdefault(from_id, []).append(to_id)
+
+    # Build Phase 5a-shape task dicts (filter summaries)
+    out_tasks = []
+    for t in raw_tasks:
+        if t.get("summary", False):
+            continue
+        tid = t["id"]
+        slack = t.get("total_float", 0)
+        out_tasks.append({
+            **t,  # carry XER fields (id/name/code/duration_h/start/finish/...)
+            "baseline_start": t.get("start"),
+            "baseline_finish": t.get("finish"),
+            "baseline_work": float(t.get("duration_h") or 0),
+            "actual_work": actual_by_task.get(tid, 0.0),
+            "total_slack_days": slack,
+            "critical": float(slack) <= 0,
+            "predecessors": preds_by_task.get(tid, []),
+            "successors": succs_by_task.get(tid, []),
+        })
+
+    return {
+        "status": "ok",
+        "tasks": out_tasks,
+        "resources": xer.read_resources(),
+        "assignments": assignments,
+        "status_date": progress.get("status_date"),
+        "project_file": xer.file_path,
+    }
 
 
 def main():

@@ -6,7 +6,7 @@ from excel_io import (
     ZEBRA, RAG_GREEN, RAG_AMBER, RAG_RED,
     apply_header_style, apply_rag_fill, apply_zebra_fill,
     build_tasks_sheet, read_tasks_sheet, build_summary_sheet,
-    build_evm_sheet,
+    build_evm_sheet, build_dcma_sheet,
 )
 
 
@@ -287,3 +287,85 @@ def test_evm_handles_missing_forecast():
             assert ws.cell(row=r, column=2).value == "N/A"
             return
     pytest.fail("EAC1 row not found")
+
+
+# ---------- T97: DCMA sheet builder ----------
+
+def _sample_dcma():
+    return {
+        "rules": [
+            {"id": 1, "name": "No Predecessor", "threshold": "<5%", "actual": 3.5,
+             "actual_unit": "%", "status": "pass", "failed_count": 7,
+             "total_count": 200, "failed_task_ids": []},
+            {"id": 9, "name": "High Duration (>44d)", "threshold": "<5%",
+             "actual": 7.5, "actual_unit": "%", "status": "fail",
+             "failed_count": 15, "total_count": 200, "failed_task_ids": [186, 187]},
+        ],
+        "summary": {"pass_count": 13, "fail_count": 1, "overall_rag": "green",
+                    "executive_text": "13/14 pass"},
+        "drilldowns": {
+            9: [{"id": 186, "name": "H00"}, {"id": 187, "name": "H01"}],
+        },
+    }
+
+
+def test_build_dcma_sheet_creates_two_sheets():
+    wb = Workbook()
+    build_dcma_sheet(wb, _sample_dcma())
+    assert "DCMA_Rules" in wb.sheetnames
+    assert "DCMA_Failed" in wb.sheetnames
+
+
+def test_dcma_rules_sheet_lists_all_rules():
+    wb = Workbook()
+    build_dcma_sheet(wb, _sample_dcma())
+    ws = wb["DCMA_Rules"]
+    assert ws.max_row == 3  # header + 2 rules
+
+
+def test_dcma_rules_status_color():
+    wb = Workbook()
+    build_dcma_sheet(wb, _sample_dcma())
+    ws = wb["DCMA_Rules"]
+    headers = [c.value for c in ws[1]]
+    status_col = headers.index("Status") + 1
+    # Row 2 is rule 1 (pass) -> green
+    assert ws.cell(row=2, column=status_col).fill.start_color.value == RAG_GREEN
+    # Row 3 is rule 9 (fail) -> red
+    assert ws.cell(row=3, column=status_col).fill.start_color.value == RAG_RED
+
+
+def test_dcma_failed_sheet_lists_drilldowns():
+    wb = Workbook()
+    build_dcma_sheet(wb, _sample_dcma())
+    ws = wb["DCMA_Failed"]
+    assert ws.max_row >= 2
+    headers = [c.value for c in ws[1]]
+    tid_col = headers.index("Task ID") + 1
+    task_ids = [ws.cell(row=r, column=tid_col).value
+                for r in range(2, ws.max_row + 1)]
+    assert 186 in task_ids
+    assert 187 in task_ids
+
+
+def test_dcma_failed_sheet_empty_when_no_drilldowns():
+    wb = Workbook()
+    build_dcma_sheet(wb, {"rules": [], "summary": {}, "drilldowns": {}})
+    ws = wb["DCMA_Failed"]
+    assert ws.max_row == 1  # header only
+
+
+def test_dcma_failed_sheet_caps_at_10_per_rule():
+    """Drilldown limited to 10 tasks per rule (avoid huge sheets)."""
+    drilldowns = {
+        9: [{"id": i, "name": f"T{i}"} for i in range(1, 21)],  # 20 tasks
+    }
+    dcma = {"rules": [{"id": 9, "name": "High Duration", "threshold": "<5%",
+                       "actual": 100, "actual_unit": "%", "status": "fail",
+                       "failed_count": 20, "total_count": 20}],
+            "summary": {}, "drilldowns": drilldowns}
+    wb = Workbook()
+    build_dcma_sheet(wb, dcma)
+    ws = wb["DCMA_Failed"]
+    # header + 10 rows max
+    assert ws.max_row == 11

@@ -261,3 +261,60 @@ def build_evm_sheet(wb, evm):
             apply_zebra_fill(ws_tp.cell(row=idx, column=col), row_idx=idx)
     ws_tp.freeze_panes = "B2"
     return ws, ws_tp
+
+
+# ---------- T97: DCMA sheet builder (Rules + Failed) ----------
+
+def build_dcma_sheet(wb, dcma):
+    """Build DCMA_Rules + DCMA_Failed sheets.
+
+    dcma = {rules: [...], summary: {...}, drilldowns: {rule_id: [{id, name}]}}
+    """
+    # Rules sheet
+    ws = _ensure_sheet(wb, "DCMA_Rules")
+    ws.append(["Rule #", "Name", "Threshold", "Actual", "Status",
+               "Failed Count", "Total"])
+    apply_header_style(ws, row=1)
+    for idx, rule in enumerate(dcma.get("rules") or [], start=2):
+        ws.cell(row=idx, column=1, value=rule.get("id"))
+        ws.cell(row=idx, column=2, value=rule.get("name"))
+        ws.cell(row=idx, column=3, value=rule.get("threshold"))
+        actual = rule.get("actual")
+        unit = rule.get("actual_unit", "")
+        ws.cell(row=idx, column=4,
+                value=f"{actual}{unit}" if actual is not None else "N/A")
+        status = rule.get("status", "")
+        ws.cell(row=idx, column=5, value=status.upper())
+        ws.cell(row=idx, column=6, value=rule.get("failed_count", 0))
+        ws.cell(row=idx, column=7, value=rule.get("total_count", 0))
+        # Zebra all cells first; then RAG overrides status column color
+        for col in range(1, 8):
+            if col == 5:
+                continue  # status col gets RAG fill, not zebra
+            apply_zebra_fill(ws.cell(row=idx, column=col), row_idx=idx)
+        apply_rag_fill(ws.cell(row=idx, column=5), status)
+    for col, w in zip("ABCDEFG", [8, 28, 12, 14, 10, 14, 10]):
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = "A2"
+
+    # Failed drilldown sheet
+    ws_f = _ensure_sheet(wb, "DCMA_Failed")
+    ws_f.append(["Rule #", "Rule Name", "Task ID", "Task Name"])
+    apply_header_style(ws_f, row=1)
+    drills = dcma.get("drilldowns") or {}
+    rules_by_id = {r["id"]: r for r in (dcma.get("rules") or [])}
+    row = 2
+    for rid, tasks in drills.items():
+        rule_name = (rules_by_id.get(rid) or {}).get("name", "")
+        for t in (tasks or [])[:10]:
+            ws_f.cell(row=row, column=1, value=rid)
+            ws_f.cell(row=row, column=2, value=rule_name)
+            ws_f.cell(row=row, column=3, value=t.get("id"))
+            ws_f.cell(row=row, column=4, value=t.get("name", ""))
+            for col in range(1, 5):
+                apply_zebra_fill(ws_f.cell(row=row, column=col), row_idx=row)
+            row += 1
+    for col, w in zip("ABCD", [8, 28, 10, 28]):
+        ws_f.column_dimensions[col].width = w
+    ws_f.freeze_panes = "A2"
+    return ws, ws_f

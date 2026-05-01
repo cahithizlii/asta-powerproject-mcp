@@ -5893,13 +5893,20 @@ def _excel_collect_full_data(file_path=None, baseline_number=0, bucket="week"):
     if dcma_full.get("status") == "ok":
         dcma_rules = dcma_full.get("rules", []) or []
         dcma_summary = dcma_full.get("summary", {}) or {}
+        # Phase 5c TAIL fix: resolve failed_task_ids -> names from LOCAL
+        # tasks list (already loaded above) instead of calling
+        # _msp_dcma_drill_down per failed rule (each call = 1 collect = ~10s
+        # for 200 tasks COM; 7 failed rules = 70s saved).
+        tasks_by_id = {t["id"]: t for t in tasks}
         for rule in dcma_rules:
             if rule.get("status") == "fail":
                 rid = rule["id"]
-                d = _msp_dcma_drill_down(file_path=file_path, rule_id=rid,
-                                         baseline_number=baseline_number)
-                if d.get("status") == "ok":
-                    drilldowns[rid] = (d.get("failed_tasks") or [])[:10]
+                failed_ids = rule.get("failed_task_ids") or []
+                drilldowns[rid] = [
+                    {"id": tid, "name": tasks_by_id[tid].get("name", "")}
+                    for tid in failed_ids[:10]
+                    if tid in tasks_by_id
+                ]
 
     # RAG: prefer Phase 5b DCMA overall_rag (project health) over Phase 5a EVM
     rag = dcma_summary.get("overall_rag") or (sm.get("rag") if sm.get("status") == "ok" else None)
@@ -6093,6 +6100,57 @@ def _msp_excel_import_progress(xlsx_path=None, sheet_name="Progress"):
     if isinstance(result, dict) and result.get("status") == "error":
         return result
     return {"status": "ok", "rows_imported": len(items)}
+
+
+@mcp.tool(
+    name="msproject_excel",
+    annotations={
+        "title": "MS Project Excel Hakedis Workbook + Bulk Import",
+        "readOnlyHint": False,
+    },
+)
+async def msproject_excel(params: dict) -> str:
+    """Excel I/O for MSP - hakedis workbook export + bulk Excel->MSP import.
+
+    Hybrid: file_path verilirse Phase 4 file path; yoksa Phase 1 COM.
+
+    Actions:
+    - export_hakedis: Multi-sheet workbook (Summary + Tasks + EVM + DCMA)
+    - export_tasks: Tasks sheet only
+    - export_evm: EVM_Compute + EVM_TimePhased
+    - export_dcma: DCMA_Rules + DCMA_Failed
+    - import_tasks: xlsx Tasks sheet -> _msp_task_bulk_add
+    - import_progress: xlsx Progress sheet -> _msp_progress_bulk_update
+
+    Phase 5c (1 May 2026). Tool count 10 -> 11.
+    """
+    import json
+    action = params.get("action", "")
+    p = {k: v for k, v in params.items() if k != "action"}
+    try:
+        if action == "export_hakedis":
+            r = _msp_excel_export_hakedis(**p)
+        elif action == "export_tasks":
+            r = _msp_excel_export_tasks(**p)
+        elif action == "export_evm":
+            r = _msp_excel_export_evm(**p)
+        elif action == "export_dcma":
+            r = _msp_excel_export_dcma(**p)
+        elif action == "import_tasks":
+            r = _msp_excel_import_tasks(**p)
+        elif action == "import_progress":
+            r = _msp_excel_import_progress(**p)
+        else:
+            r = {"status": "error",
+                 "error": (f"Unknown action '{action}'. Valid: "
+                           "export_hakedis/export_tasks/export_evm/"
+                           "export_dcma/import_tasks/import_progress")}
+    except TypeError as e:
+        r = {"status": "error", "error": f"Invalid params for {action}: {e}"}
+    except Exception as e:
+        logger.exception(f"msproject_excel({action}) failed: {e}")
+        r = {"status": "error", "error": str(e)}
+    return json.dumps(r, default=str, ensure_ascii=False)
 
 
 def main():

@@ -227,6 +227,35 @@ unassigned), drill-down per failing rule, in <60s.
 
 Tool count: **10 tools, ~83 actions**.
 
+## Phase 5c — Excel I/O (1 May 2026)
+
+`msproject_excel` tool — multi-sheet hakediş workbook export + Excel-driven
+import. 6 actions covering Phase 5a EVM + Phase 5b DCMA → multi-sheet
+xlsx, plus bulk Excel → MSP imports for tasks and progress. MCS brand
+styling per CLAUDE.md RULE 14 (Lacivert Calibri headers, RAG color cells,
+zebra rows).
+
+**Actions:**
+- `export_hakedis`: 6-sheet workbook (Summary + Tasks + EVM_Compute +
+  EVM_TimePhased + DCMA_Rules + DCMA_Failed)
+- `export_tasks`: Tasks sheet only (filter-friendly schedule export)
+- `export_evm`: EVM_Compute (BAC/EV/AC/SPI/CPI/EAC/TCPI/ES/RAG) +
+  EVM_TimePhased (PV/EV/AC + cumulative per period)
+- `export_dcma`: DCMA_Rules (14 rule statuses with RAG color) +
+  DCMA_Failed (drill-down task list, capped 10/rule)
+- `import_tasks`: xlsx Tasks sheet → `_msp_task_bulk_add` (Phase 1)
+- `import_progress`: xlsx Progress sheet → `_msp_progress_bulk_update` (Phase 3b)
+
+Architecture: pure-Python `excel_io.py` (openpyxl 3.1.5, MSP/COM/file
+independent, 41 unit tests) + I/O adapters in msproject_mcp_core.py
+(`_excel_collect_full_data` single-collect aggregator + 6 action helpers).
+Phase 1-5b helpers DOKUNULMAZ; only read-only calls.
+
+Acceptance: `samples/build_excel_lifecycle.py` exports 200-task hakediş
+workbook + roundtrip imports 10 progress updates in <90s.
+
+Tool count: **11 tools, ~89 actions**.
+
 ## Quick Start
 
 1. Install deps: `pip install -r requirements.txt`

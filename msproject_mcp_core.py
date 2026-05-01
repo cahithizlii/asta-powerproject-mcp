@@ -5108,6 +5108,111 @@ def _msp_evm_detect_currency_mode(file_path=None):
     return {"status": "ok", "mode": mode}
 
 
+def _evm_bucket_to_delta(bucket):
+    """Map bucket name to timedelta. Returns None for invalid."""
+    if bucket == "day":
+        return _dt5.timedelta(days=1)
+    if bucket == "week":
+        return _dt5.timedelta(days=7)
+    if bucket == "month":
+        return _dt5.timedelta(days=30)
+    return None
+
+
+def _msp_evm_time_phased_evm(file_path=None, baseline_number=0, bucket="week"):
+    """Action 5: time_phased_evm — PV/EV/AC per period.
+
+    Returns {status, bucket, buckets: [{period_start, period_end, pv, ev, ac}]}.
+    Validates bucket: day/week/month only.
+
+    AC simplification: total AC distributed evenly across past buckets up to
+    data_date. True per-period AC requires Phase 3b time_phased_actual_read
+    for COM path or per-assignment work distribution for file path —
+    deferred to Phase 6.
+    """
+    delta = _evm_bucket_to_delta(bucket)
+    if delta is None:
+        return {"status": "error",
+                "error": f"bucket must be day/week/month, got '{bucket}'"}
+    load = _evm_load_task_data(file_path=file_path)
+    if load.get("status") != "ok":
+        return load
+    tasks = load.get("tasks", []) or []
+    if not tasks:
+        return {"status": "ok", "bucket": bucket, "buckets": []}
+    project_start, project_finish = _evm_derive_project_bounds(tasks)
+    if project_start is None or project_finish is None:
+        return {"status": "ok", "bucket": bucket, "buckets": []}
+    sd_str = load.get("status_date")
+    data_date = _parse_iso_date(sd_str) if sd_str and sd_str != "N/A" else None
+    if data_date is None:
+        data_date = _dt5.date.today()
+    # Build buckets and compute PV/EV
+    buckets = []
+    d = project_start
+    while d <= project_finish:
+        next_d = d + delta
+        buckets.append((d, min(next_d, project_finish + _dt5.timedelta(days=1))))
+        d = next_d
+    enriched = []
+    for t in tasks:
+        bs = _parse_iso_date(t.get("baseline_start"))
+        bf = _parse_iso_date(t.get("baseline_finish"))
+        if bs is None or bf is None:
+            continue
+        enriched.append({
+            "baseline_start": bs, "baseline_finish": bf,
+            "baseline_work": float(t.get("baseline_work") or 0),
+            "percent_complete": float(t.get("percent_complete") or 0),
+        })
+    pv = _evm_tp_pv(enriched, [(s, e) for (s, e) in buckets])
+    ev = _evm_tp_ev(enriched, [(s, e) for (s, e) in buckets], data_date=data_date)
+    # AC simplification — distribute total AC evenly across past buckets
+    total_ac = sum(float(t.get("actual_work") or 0) for t in tasks)
+    past_buckets = sum(1 for (_, e) in buckets if e <= data_date)
+    ac_per_bucket = (total_ac / past_buckets) if past_buckets > 0 else 0.0
+    ac_cum = 0.0
+    out = []
+    for i, (s, e) in enumerate(buckets):
+        if e <= data_date:
+            ac_cum += ac_per_bucket
+        out.append({
+            "period_start": s.isoformat(),
+            "period_end": e.isoformat(),
+            "pv": round(pv[i], 2),
+            "ev": round(ev[i], 2),
+            "ac": round(ac_cum, 2),
+        })
+    return {"status": "ok", "bucket": bucket, "buckets": out}
+
+
+def _msp_evm_period_delta(file_path=None, baseline_number=0, snapshot_path=None):
+    """Action 6: period_delta vs prev snapshot (RULE 6).
+
+    Loads previous snapshot from snapshot_path JSON; computes delta vs
+    current state. If snapshot_path missing or no prev snapshots,
+    returns first-period semantics (period_* = current cum values).
+    """
+    cm = _msp_evm_compute_metrics(file_path=file_path, baseline_number=baseline_number)
+    if cm.get("status") != "ok":
+        return cm
+    snap_now = {"pv": cm["pv"], "ev": cm["ev"], "ac": cm["ac"], "bac": cm["bac"]}
+    snap_prev = None
+    if snapshot_path and os.path.exists(snapshot_path):
+        try:
+            import json as _json
+            with open(snapshot_path, "r", encoding="utf-8") as f:
+                data = _json.load(f)
+            snaps = sorted(data.get("snapshots", []),
+                          key=lambda s: s.get("saved_at", ""))
+            if snaps:
+                snap_prev = snaps[-1].get("metrics", {})
+        except Exception as e:
+            logger.warning(f"period_delta: failed to load prev snapshot: {e}")
+    delta = _evm_period_delta(snap_now, snap_prev)
+    return {"status": "ok", "current": snap_now, **delta}
+
+
 def main():
     """Run MCP server (stdio)."""
     mcp.run()

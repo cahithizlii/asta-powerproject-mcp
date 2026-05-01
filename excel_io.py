@@ -318,3 +318,62 @@ def build_dcma_sheet(wb, dcma):
         ws_f.column_dimensions[col].width = w
     ws_f.freeze_panes = "A2"
     return ws, ws_f
+
+
+# ---------- T98: Hakedis workbook composer + progress reader ----------
+
+def build_hakedis_workbook(tasks, evm, dcma, summary, xlsx_path):
+    """Compose multi-sheet hakedis workbook and save to xlsx_path.
+
+    Sheets in display order: Summary, Tasks, EVM_Compute, EVM_TimePhased,
+    DCMA_Rules, DCMA_Failed. Default empty 'Sheet' removed.
+    """
+    wb = Workbook()
+    # Remove default empty sheet (composer is responsible per _ensure_sheet
+    # convention).
+    if "Sheet" in wb.sheetnames:
+        wb.remove(wb["Sheet"])
+    build_summary_sheet(wb, summary or {})
+    build_tasks_sheet(wb, tasks or [], sheet_name="Tasks")
+    build_evm_sheet(wb, evm or {})
+    build_dcma_sheet(wb, dcma or {})
+    wb.save(xlsx_path)
+    return wb
+
+
+def read_progress_sheet(xlsx_path, sheet_name="Progress"):
+    """Read Progress sheet -> [{task_id, percent_complete, actual_work_h?}].
+
+    %Complete cells: accepts 50, 50.0, or 0.5 (treats values 0<v<=1 as fraction).
+    """
+    wb = load_workbook(xlsx_path, read_only=True, data_only=True)
+    if sheet_name not in wb.sheetnames:
+        return []
+    ws = wb[sheet_name]
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        return []
+    headers = [str(h or "").strip() for h in rows[0]]
+    out = []
+    for row in rows[1:]:
+        d = {}
+        for i, val in enumerate(row):
+            if i >= len(headers):
+                continue
+            h = headers[i]
+            if h == "Task ID":
+                d["task_id"] = int(val) if val is not None else None
+            elif h == "%Complete":
+                try:
+                    pc = float(val or 0)
+                except (ValueError, TypeError):
+                    pc = 0
+                d["percent_complete"] = pc * 100.0 if 0 < pc <= 1 else pc
+            elif h == "Actual Work (h)":
+                try:
+                    d["actual_work_h"] = float(val or 0)
+                except (ValueError, TypeError):
+                    d["actual_work_h"] = 0
+        if d.get("task_id") is not None:
+            out.append(d)
+    return out

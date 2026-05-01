@@ -7,6 +7,7 @@ from excel_io import (
     apply_header_style, apply_rag_fill, apply_zebra_fill,
     build_tasks_sheet, read_tasks_sheet, build_summary_sheet,
     build_evm_sheet, build_dcma_sheet,
+    build_hakedis_workbook, read_progress_sheet,
 )
 
 
@@ -369,3 +370,92 @@ def test_dcma_failed_sheet_caps_at_10_per_rule():
     ws = wb["DCMA_Failed"]
     # header + 10 rows max
     assert ws.max_row == 11
+
+
+# ---------- T98: Hakedis composer + progress reader ----------
+
+def test_build_hakedis_workbook_creates_file(tmp_path):
+    summary = {"BAC": 1000, "EAC": 1100, "SPI": 0.95, "CPI": 0.91,
+               "rag": "amber", "executive_text": "Track."}
+    xlsx = tmp_path / "hak.xlsx"
+    wb = build_hakedis_workbook(_sample_tasks(), _sample_evm(), _sample_dcma(),
+                                summary, str(xlsx))
+    assert xlsx.exists()
+
+
+def test_build_hakedis_workbook_has_all_six_sheets(tmp_path):
+    summary = {"rag": "green"}
+    xlsx = tmp_path / "hak.xlsx"
+    wb = build_hakedis_workbook(_sample_tasks(), _sample_evm(), _sample_dcma(),
+                                summary, str(xlsx))
+    expected = {"Summary", "Tasks", "EVM_Compute", "EVM_TimePhased",
+                "DCMA_Rules", "DCMA_Failed"}
+    assert expected.issubset(set(wb.sheetnames))
+
+
+def test_build_hakedis_workbook_summary_first(tmp_path):
+    """Summary sheet should be first tab for executive readability."""
+    xlsx = tmp_path / "hak.xlsx"
+    wb = build_hakedis_workbook(_sample_tasks(), _sample_evm(), _sample_dcma(),
+                                {"rag": "green"}, str(xlsx))
+    assert wb.sheetnames[0] == "Summary"
+
+
+def test_build_hakedis_workbook_no_default_sheet(tmp_path):
+    """Default 'Sheet' should be removed by composer."""
+    xlsx = tmp_path / "hak.xlsx"
+    wb = build_hakedis_workbook(_sample_tasks(), _sample_evm(), _sample_dcma(),
+                                {"rag": "green"}, str(xlsx))
+    assert "Sheet" not in wb.sheetnames
+
+
+def test_read_progress_sheet_round_trip(tmp_path):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Progress"
+    ws.append(["Task ID", "%Complete", "Actual Work (h)"])
+    ws.append([1, 100, 80])
+    ws.append([2, 50, 80])
+    xlsx = tmp_path / "prog.xlsx"
+    wb.save(str(xlsx))
+    rows = read_progress_sheet(str(xlsx))
+    assert len(rows) == 2
+    assert rows[0]["task_id"] == 1
+    assert rows[0]["percent_complete"] == 100
+    assert rows[0]["actual_work_h"] == 80
+
+
+def test_read_progress_sheet_handles_pct_fraction(tmp_path):
+    """If %Complete is fraction (0.5) treat as 50%."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Progress"
+    ws.append(["Task ID", "%Complete"])
+    ws.append([1, 0.5])
+    xlsx = tmp_path / "prog.xlsx"
+    wb.save(str(xlsx))
+    rows = read_progress_sheet(str(xlsx))
+    assert rows[0]["percent_complete"] == 50.0
+
+
+def test_read_progress_sheet_missing_sheet_returns_empty(tmp_path):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Other"
+    xlsx = tmp_path / "x.xlsx"
+    wb.save(str(xlsx))
+    assert read_progress_sheet(str(xlsx)) == []
+
+
+def test_read_progress_sheet_skips_rows_without_task_id(tmp_path):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Progress"
+    ws.append(["Task ID", "%Complete"])
+    ws.append([None, 50])  # no task_id
+    ws.append([1, 100])
+    xlsx = tmp_path / "p.xlsx"
+    wb.save(str(xlsx))
+    rows = read_progress_sheet(str(xlsx))
+    assert len(rows) == 1
+    assert rows[0]["task_id"] == 1

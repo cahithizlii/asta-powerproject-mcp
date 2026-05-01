@@ -9,6 +9,7 @@ from dcma_checks import (
     check_leads, check_lags, check_fs_link_pct,
     check_hard_constraints, check_invalid_dates, check_resources_missing,
     check_high_float, check_negative_float, check_high_duration,
+    check_missed_tasks, check_critical_path, check_bei,
 )
 
 
@@ -558,3 +559,147 @@ def test_check_high_duration_empty():
     r = check_high_duration([])
     assert r["status"] == "pass"
     assert r["total_count"] == 0
+
+
+# ---------- T89: Schedule health rules (status_date driven) ----------
+
+def _task_baseline(id, baseline_finish, percent_complete=0, summary=False):
+    return {"id": id, "name": f"T{id}", "summary": summary,
+            "baseline_finish": baseline_finish,
+            "percent_complete": percent_complete}
+
+
+# ---------- check_missed_tasks (RULE 12: <5%) ----------
+
+def test_check_missed_tasks_pass():
+    """29 of 30 completed, 1 incomplete past baseline -> 3.3% PASS."""
+    tasks = [_task_baseline(i, "2026-04-01", percent_complete=100)
+             for i in range(1, 30)]
+    tasks.append(_task_baseline(30, "2026-04-01", percent_complete=50))
+    r = check_missed_tasks(tasks, status_date="2026-05-01")
+    assert r["id"] == 12
+    assert r["status"] == "pass"
+    assert r["actual"] < 5.0
+
+
+def test_check_missed_tasks_fail():
+    """3 of 10 past baseline incomplete -> 30% FAIL.
+
+    The other 7 have baseline 2026-06-01 (in future, not yet due).
+    """
+    tasks = [_task_baseline(i, "2026-04-01", percent_complete=50)
+             for i in range(1, 4)]
+    tasks += [_task_baseline(i, "2026-06-01", percent_complete=0)
+              for i in range(4, 11)]
+    r = check_missed_tasks(tasks, status_date="2026-05-01")
+    assert r["status"] == "fail"
+    assert r["actual"] == pytest.approx(30.0, rel=1e-2)
+    assert r["failed_count"] == 3
+
+
+def test_check_missed_tasks_no_status_date():
+    """status_date None -> vacuous PASS."""
+    tasks = [_task_baseline(1, "2026-01-01", percent_complete=0)]
+    r = check_missed_tasks(tasks, None)
+    assert r["status"] == "pass"
+
+
+def test_check_missed_tasks_completed_not_missed():
+    """100% complete past baseline -> NOT missed (passed)."""
+    tasks = [_task_baseline(1, "2026-01-01", percent_complete=100)]
+    r = check_missed_tasks(tasks, status_date="2026-05-01")
+    assert r["status"] == "pass"
+    assert r["failed_count"] == 0
+
+
+def test_check_missed_tasks_no_baseline_skipped():
+    """Tasks without baseline_finish are skipped (cannot judge)."""
+    tasks = [{"id": 1, "name": "T1", "summary": False,
+              "baseline_finish": None, "percent_complete": 0}]
+    r = check_missed_tasks(tasks, status_date="2026-05-01")
+    assert r["failed_count"] == 0
+
+
+# ---------- check_critical_path (RULE 13: count > 0) ----------
+
+def test_check_critical_path_pass():
+    tasks = [{"id": 1, "name": "T1", "summary": False, "critical": True},
+             {"id": 2, "name": "T2", "summary": False, "critical": False}]
+    r = check_critical_path(tasks)
+    assert r["id"] == 13
+    assert r["status"] == "pass"
+    assert r["actual"] >= 1
+    assert 1 in r["critical_task_ids"]
+
+
+def test_check_critical_path_fail_no_critical():
+    tasks = [{"id": 1, "name": "T1", "summary": False, "critical": False}]
+    r = check_critical_path(tasks)
+    assert r["status"] == "fail"
+    assert r["actual"] == 0
+
+
+def test_check_critical_path_summaries_excluded():
+    """Summary-only critical does NOT satisfy rule (need real critical)."""
+    tasks = [{"id": 1, "name": "Sum", "summary": True, "critical": True},
+             {"id": 2, "name": "T2", "summary": False, "critical": False}]
+    r = check_critical_path(tasks)
+    assert r["status"] == "fail"
+    assert r["actual"] == 0
+
+
+def test_check_critical_path_empty():
+    r = check_critical_path([])
+    assert r["status"] == "fail"
+    assert r["actual"] == 0
+
+
+# ---------- check_bei (RULE 14: BEI > 95%) ----------
+
+def _task_bei(id, baseline_finish, completed=False, summary=False):
+    return {"id": id, "name": f"T{id}", "summary": summary,
+            "baseline_finish": baseline_finish,
+            "percent_complete": 100 if completed else 0}
+
+
+def test_check_bei_pass():
+    """All baseline-due tasks completed: BEI = 100% PASS."""
+    tasks = [_task_bei(i, "2026-04-01", completed=True) for i in range(1, 11)]
+    r = check_bei(tasks, status_date="2026-05-01")
+    assert r["id"] == 14
+    assert r["status"] == "pass"
+    assert r["actual"] == 100.0
+
+
+def test_check_bei_fail():
+    """5 of 10 baseline-due tasks completed -> 50% BEI FAIL."""
+    tasks = [_task_bei(i, "2026-04-01", completed=True) for i in range(1, 6)]
+    tasks += [_task_bei(i, "2026-04-01", completed=False) for i in range(6, 11)]
+    r = check_bei(tasks, status_date="2026-05-01")
+    assert r["status"] == "fail"
+    assert r["actual"] == pytest.approx(50.0, rel=1e-2)
+
+
+def test_check_bei_no_baseline_due_tasks():
+    """No tasks scheduled to be done by status_date -> vacuous BEI=100% PASS."""
+    tasks = [_task_bei(1, "2026-12-01", completed=False)]
+    r = check_bei(tasks, status_date="2026-05-01")
+    assert r["status"] == "pass"
+    assert r["actual"] == 100.0
+
+
+def test_check_bei_no_status_date():
+    """status_date None -> vacuous PASS."""
+    tasks = [_task_bei(1, "2026-01-01", completed=False)]
+    r = check_bei(tasks, status_date=None)
+    assert r["status"] == "pass"
+    assert r["actual"] == 100.0
+
+
+def test_check_bei_borderline_96_percent():
+    """24/25 = 96% > 95 -> PASS."""
+    tasks = [_task_bei(i, "2026-04-01", completed=True) for i in range(1, 25)]
+    tasks.append(_task_bei(25, "2026-04-01", completed=False))
+    r = check_bei(tasks, status_date="2026-05-01")
+    assert r["actual"] == pytest.approx(96.0, rel=1e-2)
+    assert r["status"] == "pass"

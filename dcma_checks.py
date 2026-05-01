@@ -340,3 +340,89 @@ def check_high_duration(tasks: List[Dict[str, Any]]) -> Dict[str, Any]:
         "failed_count": failed_count, "total_count": total,
         "failed_task_ids": failed_ids,
     }
+
+
+# ---------- T89: Schedule health rules (status_date driven) ----------
+
+def check_missed_tasks(tasks: List[Dict[str, Any]],
+                       status_date: Optional[str]) -> Dict[str, Any]:
+    """RULE 12: <5% of real tasks should be past baseline_finish without completion.
+
+    Vacuous PASS when status_date None or unparseable (cannot judge).
+    """
+    real = _real_tasks(tasks)
+    total = len(real)
+    sd = _parse_iso_date_local(status_date) if status_date else None
+    if total == 0 or sd is None:
+        return {"id": 12, "name": "Missed Tasks", "threshold": "<5%",
+                "actual": 0.0, "actual_unit": "%", "status": "pass",
+                "failed_count": 0, "total_count": total, "failed_task_ids": []}
+    failed_ids = []
+    for t in real:
+        bf = _parse_iso_date_local(t.get("baseline_finish"))
+        if bf is None:
+            continue
+        pct = float(t.get("percent_complete") or 0)
+        if bf < sd and pct < 100:
+            failed_ids.append(t["id"])
+    failed_count = len(failed_ids)
+    actual_pct = (failed_count / total) * 100.0
+    return {
+        "id": 12, "name": "Missed Tasks", "threshold": "<5%",
+        "actual": round(actual_pct, 2), "actual_unit": "%",
+        "status": _eval_status(12, actual_pct),
+        "failed_count": failed_count, "total_count": total,
+        "failed_task_ids": failed_ids,
+    }
+
+
+def check_critical_path(tasks: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """RULE 13: project must have a defined critical path (>0 critical real tasks)."""
+    real = _real_tasks(tasks)
+    crit_ids = [t["id"] for t in real if t.get("critical", False)]
+    crit_count = len(crit_ids)
+    return {
+        "id": 13, "name": "Critical Path", "threshold": ">0",
+        "actual": crit_count, "actual_unit": "count",
+        "status": _eval_status(13, crit_count),
+        "failed_count": 0 if crit_count > 0 else 1,
+        "total_count": len(real),
+        "critical_task_ids": crit_ids,
+    }
+
+
+def check_bei(tasks: List[Dict[str, Any]],
+              status_date: Optional[str]) -> Dict[str, Any]:
+    """RULE 14: BEI > 95% (Baseline Execution Index).
+
+    BEI = count(actually_completed_through_status_date) /
+          count(should_have_been_completed_per_baseline) * 100
+
+    Vacuous PASS (BEI=100%) when status_date None or no baseline-due tasks.
+    """
+    real = _real_tasks(tasks)
+    sd = _parse_iso_date_local(status_date) if status_date else None
+    if sd is None:
+        return {"id": 14, "name": "BEI", "threshold": ">95%",
+                "actual": 100.0, "actual_unit": "%", "status": "pass",
+                "failed_count": 0, "total_count": len(real)}
+    should_be_done = 0
+    actually_done = 0
+    for t in real:
+        bf = _parse_iso_date_local(t.get("baseline_finish"))
+        if bf is None or bf > sd:
+            continue
+        should_be_done += 1
+        if float(t.get("percent_complete") or 0) >= 100:
+            actually_done += 1
+    if should_be_done == 0:
+        bei = 100.0
+    else:
+        bei = (actually_done / should_be_done) * 100.0
+    return {
+        "id": 14, "name": "BEI", "threshold": ">95%",
+        "actual": round(bei, 2), "actual_unit": "%",
+        "status": _eval_status(14, bei),
+        "failed_count": should_be_done - actually_done,
+        "total_count": should_be_done,
+    }

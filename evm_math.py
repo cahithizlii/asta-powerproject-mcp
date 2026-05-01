@@ -71,3 +71,81 @@ def rag_status(spi: Optional[float], completion_pct: float) -> str:
     if spi < 0.7:
         return "AMBER"
     return "GREEN"
+
+
+def _task_pv_at_date(task: Dict[str, Any], eval_date: _dt.date) -> float:
+    """RULE 5 — Linear distribution per task. Hours OR cost (caller decides)."""
+    bs = task.get("baseline_start")
+    bf = task.get("baseline_finish")
+    bw = float(task.get("baseline_work") or 0)
+    if bs is None or bf is None or bw == 0:
+        return 0.0
+    # Coerce datetime to date if needed
+    if hasattr(bs, "date"):
+        bs = bs.date()
+    if hasattr(bf, "date"):
+        bf = bf.date()
+    if bf <= eval_date:
+        return bw  # task fully baseline-completed
+    if bs >= eval_date:
+        return 0.0  # not yet baseline-started
+    duration_days = max((bf - bs).days, 1)
+    elapsed_days = max((eval_date - bs).days, 0)
+    return bw * elapsed_days / duration_days
+
+
+def time_phased_pv(tasks: List[Dict[str, Any]],
+                   buckets: List[Tuple[_dt.date, _dt.date]]) -> List[float]:
+    """RULE 5 — Cumulative PV at each bucket end (linear distribution)."""
+    return [sum(_task_pv_at_date(t, bucket_end) for t in tasks)
+            for (_, bucket_end) in buckets]
+
+
+def time_phased_ev(tasks: List[Dict[str, Any]],
+                   buckets: List[Tuple[_dt.date, _dt.date]],
+                   data_date: _dt.date) -> List[float]:
+    """Cumulative EV at each bucket end. Future buckets capped at data_date.
+
+    EV uses current percent_complete x baseline_work, but only counts tasks
+    that have baseline-started by min(bucket_end, data_date). This avoids
+    double-counting future periods (EV doesn't grow beyond data_date).
+    """
+    if hasattr(data_date, "date"):
+        data_date = data_date.date()
+    out = []
+    for (_, bucket_end) in buckets:
+        if hasattr(bucket_end, "date"):
+            bucket_end = bucket_end.date()
+        eval_at = min(bucket_end, data_date)
+        ev = 0.0
+        for t in tasks:
+            bs = t.get("baseline_start")
+            if bs is None:
+                continue
+            if hasattr(bs, "date"):
+                bs = bs.date()
+            if bs > eval_at:
+                continue
+            bw = float(t.get("baseline_work") or 0)
+            pct = float(t.get("percent_complete") or 0) / 100.0
+            ev += bw * pct
+        out.append(ev)
+    return out
+
+
+def period_delta(snap_now: Dict[str, Any],
+                 snap_prev: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """RULE 6 — Haftalik/aylik delta. period_BAC = 0 (sabit)."""
+    if snap_prev is None:
+        return {
+            "period_pv": float(snap_now.get("pv") or 0),
+            "period_ev": float(snap_now.get("ev") or 0),
+            "period_ac": float(snap_now.get("ac") or 0),
+            "period_bac": 0.0,
+        }
+    return {
+        "period_pv": float(snap_now.get("pv") or 0) - float(snap_prev.get("pv") or 0),
+        "period_ev": float(snap_now.get("ev") or 0) - float(snap_prev.get("ev") or 0),
+        "period_ac": float(snap_now.get("ac") or 0) - float(snap_prev.get("ac") or 0),
+        "period_bac": 0.0,
+    }

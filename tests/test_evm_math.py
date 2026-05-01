@@ -87,3 +87,104 @@ def test_rag_status_red_zero_progress():
 
 def test_rag_status_red_spi_none():
     assert rag_status(spi=None, completion_pct=10) == "RED"
+
+
+import datetime as dt
+from evm_math import time_phased_pv, time_phased_ev, period_delta
+
+
+# ---------- time_phased_pv (RULE 5) ----------
+
+def _make_task(name, bs, bf, bw):
+    return {"name": name, "baseline_start": bs, "baseline_finish": bf, "baseline_work": bw}
+
+
+def test_time_phased_pv_task_fully_within_bucket():
+    """Task baseline completed before bucket end -> full BW counts."""
+    tasks = [_make_task("T1", dt.date(2026, 1, 1), dt.date(2026, 1, 10), 80.0)]
+    buckets = [(dt.date(2026, 1, 1), dt.date(2026, 1, 31))]
+    pv = time_phased_pv(tasks, buckets)
+    assert pv == [80.0]
+
+
+def test_time_phased_pv_task_not_started():
+    """Task baseline_start after bucket end -> 0 PV."""
+    tasks = [_make_task("T2", dt.date(2026, 2, 1), dt.date(2026, 2, 10), 80.0)]
+    buckets = [(dt.date(2026, 1, 1), dt.date(2026, 1, 31))]
+    pv = time_phased_pv(tasks, buckets)
+    assert pv == [0.0]
+
+
+def test_time_phased_pv_task_partial():
+    """Task spans bucket end - linear distribution."""
+    # T3: 10 day baseline (Jan 5 - Jan 15), 100h. Bucket ends Jan 10 = 50% way -> 50h.
+    tasks = [_make_task("T3", dt.date(2026, 1, 5), dt.date(2026, 1, 15), 100.0)]
+    buckets = [(dt.date(2026, 1, 1), dt.date(2026, 1, 10))]
+    pv = time_phased_pv(tasks, buckets)
+    assert pv[0] == pytest.approx(50.0, rel=1e-2)
+
+
+def test_time_phased_pv_multi_bucket_cumulative():
+    """PV per bucket is cumulative as of bucket end (not per-period delta)."""
+    tasks = [_make_task("T4", dt.date(2026, 1, 1), dt.date(2026, 1, 30), 300.0)]
+    buckets = [
+        (dt.date(2026, 1, 1), dt.date(2026, 1, 10)),
+        (dt.date(2026, 1, 1), dt.date(2026, 1, 20)),
+        (dt.date(2026, 1, 1), dt.date(2026, 1, 31)),
+    ]
+    pv = time_phased_pv(tasks, buckets)
+    # Linear: ~10/29 days = 34.5%, ~20/29 = 69%, finished
+    assert pv[0] == pytest.approx(300 * 9 / 29, rel=1e-2)
+    assert pv[1] == pytest.approx(300 * 19 / 29, rel=1e-2)
+    assert pv[2] == 300.0
+
+
+# ---------- time_phased_ev ----------
+
+def _make_task_ev(name, bs, bf, bw, pct):
+    return {"name": name, "baseline_start": bs, "baseline_finish": bf,
+            "baseline_work": bw, "percent_complete": pct}
+
+
+def test_time_phased_ev_capped_at_data_date():
+    """EV future buckets repeat current EV (capped at data_date)."""
+    tasks = [_make_task_ev("T1", dt.date(2026, 1, 1), dt.date(2026, 1, 30), 100.0, 50)]
+    data_date = dt.date(2026, 1, 15)
+    buckets = [
+        (dt.date(2026, 1, 1), dt.date(2026, 1, 10)),
+        (dt.date(2026, 1, 1), dt.date(2026, 1, 20)),
+        (dt.date(2026, 1, 1), dt.date(2026, 1, 31)),
+    ]
+    ev = time_phased_ev(tasks, buckets, data_date)
+    # All 3 buckets see the same EV = 100 * 50% = 50 because data_date caps any bucket past it
+    assert ev[0] == pytest.approx(50.0, rel=1e-2)
+    assert ev[1] == pytest.approx(50.0, rel=1e-2)
+    assert ev[2] == pytest.approx(50.0, rel=1e-2)
+
+
+def test_time_phased_ev_excludes_unstarted_tasks():
+    tasks = [_make_task_ev("T1", dt.date(2026, 2, 1), dt.date(2026, 2, 10), 100.0, 50)]
+    buckets = [(dt.date(2026, 1, 1), dt.date(2026, 1, 31))]
+    ev = time_phased_ev(tasks, buckets, data_date=dt.date(2026, 1, 31))
+    assert ev[0] == 0.0  # task hasn't baseline-started yet
+
+
+# ---------- period_delta (RULE 6) ----------
+
+def test_period_delta_basic():
+    snap_now = {"pv": 1000, "ev": 800, "ac": 850}
+    snap_prev = {"pv": 700, "ev": 500, "ac": 550}
+    r = period_delta(snap_now, snap_prev)
+    assert r["period_pv"] == 300
+    assert r["period_ev"] == 300
+    assert r["period_ac"] == 300
+    assert r["period_bac"] == 0  # BAC sabit
+
+
+def test_period_delta_first_period():
+    """No prev snapshot -> period values = current cum values."""
+    snap_now = {"pv": 1000, "ev": 800, "ac": 850}
+    r = period_delta(snap_now, None)
+    assert r["period_pv"] == 1000
+    assert r["period_ev"] == 800
+    assert r["period_ac"] == 850

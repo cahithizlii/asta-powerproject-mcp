@@ -149,3 +149,80 @@ def period_delta(snap_now: Dict[str, Any],
         "period_ac": float(snap_now.get("ac") or 0) - float(snap_prev.get("ac") or 0),
         "period_bac": 0.0,
     }
+
+
+def earned_schedule(pv_curve: List[Tuple[_dt.date, float]],
+                    ev_now: float,
+                    project_start: _dt.date,
+                    data_date: _dt.date) -> Dict[str, Any]:
+    """RULE 8 (Lipke 2003) — Earned Schedule.
+
+    pv_curve: list of (date, cumulative_pv) sorted ascending by date.
+    Returns AT (weeks since project_start), ES (interpolated time where
+    cumulative PV equals ev_now), SV(t)=ES-AT, SPI(t)=ES/AT.
+    """
+    if hasattr(project_start, "date"):
+        project_start = project_start.date()
+    if hasattr(data_date, "date"):
+        data_date = data_date.date()
+    at_weeks = max((data_date - project_start).days / 7.0, 1e-9)
+    if not pv_curve:
+        return {"at": at_weeks, "es": None, "sv_t": None, "spi_t": None}
+
+    es_days: Optional[float] = None  # days since project_start
+
+    # Below first point — clamp to 0
+    first_date, first_pv = pv_curve[0]
+    if ev_now <= first_pv:
+        if first_pv > 0:
+            frac = ev_now / first_pv
+        else:
+            frac = 0.0
+        es_days = (first_date - project_start).days * frac
+
+    # Search adjacent pair
+    if es_days is None:
+        for i in range(1, len(pv_curve)):
+            t_prev, pv_prev = pv_curve[i - 1]
+            t_curr, pv_curr = pv_curve[i]
+            if pv_prev <= ev_now <= pv_curr:
+                if pv_curr - pv_prev > 1e-9:
+                    frac = (ev_now - pv_prev) / (pv_curr - pv_prev)
+                else:
+                    frac = 0.0
+                delta_days = (t_curr - t_prev).days * frac
+                es_days = (t_prev - project_start).days + delta_days
+                break
+
+    # Above last point — clamp to last
+    if es_days is None:
+        es_days = (pv_curve[-1][0] - project_start).days
+
+    es_weeks = max(es_days / 7.0, 0.0)
+    sv_t = es_weeks - at_weeks
+    spi_t = es_weeks / at_weeks if at_weeks > 0 else None
+    return {"at": at_weeks, "es": es_weeks, "sv_t": sv_t, "spi_t": spi_t}
+
+
+def progress_data_quality(spi_h: Optional[float],
+                          spi_t: Optional[float],
+                          completion_pct: float,
+                          has_resources: bool) -> List[Dict[str, Any]]:
+    """RULE 7 — Progress data quality warnings.
+
+    Returns list of {warning, severity}. Severity: 'high'|'medium'|'low'.
+    """
+    warnings: List[Dict[str, Any]] = []
+    if spi_h is not None and spi_t is not None:
+        if abs(spi_h - spi_t) > 0.15:
+            warnings.append({
+                "warning": "SPI(h) vs SPI(t) divergence > 0.15 — EV input quality concern",
+                "severity": "high",
+                "spi_h": spi_h, "spi_t": spi_t,
+            })
+    if completion_pct > 0 and not has_resources:
+        warnings.append({
+            "warning": "Progress entered but no resource assignments — silent EV (Phase 3b pattern)",
+            "severity": "high",
+        })
+    return warnings

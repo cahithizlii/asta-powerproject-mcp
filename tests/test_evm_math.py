@@ -188,3 +188,82 @@ def test_period_delta_first_period():
     assert r["period_pv"] == 1000
     assert r["period_ev"] == 800
     assert r["period_ac"] == 850
+
+
+from evm_math import earned_schedule, progress_data_quality
+
+
+# ---------- earned_schedule (RULE 8 Lipke 2003) ----------
+
+def test_earned_schedule_on_track():
+    """ev_now exactly matches a curve point -> es == that t."""
+    project_start = dt.date(2026, 1, 1)
+    pv_curve = [
+        (dt.date(2026, 1, 8),  100.0),
+        (dt.date(2026, 1, 15), 200.0),
+        (dt.date(2026, 1, 22), 300.0),
+    ]
+    data_date = dt.date(2026, 1, 22)  # AT = 3 weeks
+    r = earned_schedule(pv_curve, ev_now=200.0, project_start=project_start,
+                        data_date=data_date)
+    assert r["at"] == pytest.approx(3.0, rel=1e-2)
+    assert r["es"] == pytest.approx(2.0, rel=1e-2)
+    assert r["sv_t"] == pytest.approx(-1.0, rel=1e-2)
+    assert r["spi_t"] == pytest.approx(2.0 / 3.0, rel=1e-2)
+
+
+def test_earned_schedule_interpolation():
+    """ev_now between two points -> linear interp."""
+    project_start = dt.date(2026, 1, 1)
+    pv_curve = [
+        (dt.date(2026, 1, 8),  100.0),  # 1 week
+        (dt.date(2026, 1, 15), 200.0),  # 2 weeks
+    ]
+    data_date = dt.date(2026, 1, 15)  # AT = 2 weeks
+    # ev=150 -> halfway between 100 and 200 -> es = 1.5 weeks
+    r = earned_schedule(pv_curve, ev_now=150.0, project_start=project_start,
+                        data_date=data_date)
+    assert r["es"] == pytest.approx(1.5, rel=1e-2)
+
+
+def test_earned_schedule_ev_below_first_point():
+    """ev_now < first PV -> es ~= 0 (clamped)."""
+    project_start = dt.date(2026, 1, 1)
+    pv_curve = [(dt.date(2026, 1, 8), 100.0), (dt.date(2026, 1, 15), 200.0)]
+    r = earned_schedule(pv_curve, ev_now=10.0, project_start=project_start,
+                        data_date=dt.date(2026, 1, 15))
+    assert r["es"] is not None
+    assert r["es"] >= 0.0
+
+
+def test_earned_schedule_ev_above_last_point():
+    """ev_now > last PV -> es clamped to last point."""
+    project_start = dt.date(2026, 1, 1)
+    pv_curve = [(dt.date(2026, 1, 8), 100.0), (dt.date(2026, 1, 15), 200.0)]
+    r = earned_schedule(pv_curve, ev_now=999.0, project_start=project_start,
+                        data_date=dt.date(2026, 1, 15))
+    # es should be at least 2 weeks (last curve point)
+    assert r["es"] >= 2.0
+
+
+# ---------- progress_data_quality (RULE 7) ----------
+
+def test_pdq_no_warnings_on_clean_data():
+    warnings = progress_data_quality(spi_h=0.85, spi_t=0.83,
+                                    completion_pct=50, has_resources=True)
+    assert warnings == []
+
+
+def test_pdq_spi_divergence_warning():
+    """abs(spi_h - spi_t) > 0.15 -> warning."""
+    warnings = progress_data_quality(spi_h=0.85, spi_t=0.50,
+                                    completion_pct=50, has_resources=True)
+    assert any("divergence" in w["warning"].lower() or "ev input" in w["warning"].lower()
+               for w in warnings)
+
+
+def test_pdq_no_resources_warning():
+    """has_resources=False with progress entered -> silent EV pattern."""
+    warnings = progress_data_quality(spi_h=0.85, spi_t=0.85,
+                                    completion_pct=50, has_resources=False)
+    assert any("resource" in w["warning"].lower() for w in warnings)

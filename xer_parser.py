@@ -255,3 +255,57 @@ def _read_calendars(self):
 XerFile.read_resources = _read_resources
 XerFile.read_assignments = _read_assignments
 XerFile.read_calendars = _read_calendars
+
+
+# ---------- T105: read_progress + status_date + project metadata ----------
+
+def _read_project(self):
+    """PROJECT section -> first row dict (typically only 1 project per XER)."""
+    tbl = self.tables.get("PROJECT", {"rows": []})
+    if not tbl["rows"]:
+        return {}
+    row = tbl["rows"][0]
+    return {
+        "proj_id": _to_int(row.get("proj_id")),
+        "proj_short_name": row.get("proj_short_name", ""),
+        "plan_start_date": _to_iso_date(row.get("plan_start_date")),
+        "plan_end_date": _to_iso_date(row.get("plan_end_date")),
+        "last_recalc_date": _to_iso_date(row.get("last_recalc_date")),
+    }
+
+
+def _read_progress(self):
+    """Return {status_date, tasks: [{id, percent_complete, actual_work_h}]}.
+
+    status_date = PROJECT.last_recalc_date (P6 convention — XER files do
+    not track a separate 'data date' field, last recalc is the de-facto
+    status date).
+
+    actual_work_h: aggregate sum of TASKRSRC.act_reg_qty per task (XER
+    stores actuals at assignment level, not task level).
+    """
+    proj = _read_project(self)
+    # Pre-aggregate actual work per task from TASKRSRC
+    actual_by_task = {}
+    for asgn in self.tables.get("TASKRSRC", {"rows": []})["rows"]:
+        tid = _to_int(asgn.get("task_id"))
+        if tid is None:
+            continue
+        actual_by_task[tid] = actual_by_task.get(tid, 0.0) + _to_float(
+            asgn.get("act_reg_qty"))
+    progress_tasks = []
+    for row in self.tables.get("TASK", {"rows": []})["rows"]:
+        tid = _to_int(row.get("task_id"))
+        progress_tasks.append({
+            "id": tid,
+            "percent_complete": _to_float(row.get("phys_complete_pct")),
+            "actual_work_h": actual_by_task.get(tid, 0.0),
+        })
+    return {
+        "status_date": (proj or {}).get("last_recalc_date"),
+        "tasks": progress_tasks,
+    }
+
+
+XerFile.read_project = _read_project
+XerFile.read_progress = _read_progress

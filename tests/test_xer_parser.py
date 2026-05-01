@@ -322,3 +322,71 @@ def test_read_calendars_default_when_missing(tmp_path):
     x = XerFile(str(path))
     cals = x.read_calendars()
     assert cals == []
+
+
+# ---------- T105: read_progress + status_date + project metadata ----------
+
+def test_read_project_metadata(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    proj = x.read_project()
+    assert proj["proj_id"] == 1
+    assert proj["proj_short_name"] == "CAU"
+    assert proj["plan_start_date"] == "2024-07-08"
+    assert proj["plan_end_date"] == "2028-06-20"
+    assert proj["last_recalc_date"] == "2026-05-01"
+
+
+def test_read_project_empty_when_no_section(tmp_path):
+    """Missing PROJECT section -> empty dict (no crash)."""
+    content = ("ERMHDR\t18.8\t2026-01-01\tu\tApp\tUSD\n"
+               "%T\tTASK\n%F\ttask_id\ttask_name\n%R\t1\tT1\n%E\n")
+    path = tmp_path / "n.xer"
+    path.write_bytes(b"\xff\xfe" + content.encode("utf-16-le"))
+    x = XerFile(str(path))
+    assert x.read_project() == {}
+
+
+def test_read_progress_status_date(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    p = x.read_progress()
+    assert p["status_date"] == "2026-05-01"
+
+
+def test_read_progress_task_count(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    p = x.read_progress()
+    assert len(p["tasks"]) == 6
+
+
+def test_read_progress_percent_complete(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    p = x.read_progress()
+    foundation = next(t for t in p["tasks"] if t["id"] == 1001)
+    assert foundation["percent_complete"] == 100.0
+
+
+def test_read_progress_actual_work_aggregated(sample_cau_xer):
+    """actual_work_h = sum of TASKRSRC.act_reg_qty per task."""
+    x = XerFile(sample_cau_xer)
+    p = x.read_progress()
+    # Foundation: COW 180 + STL 1000 = 1180
+    foundation = next(t for t in p["tasks"] if t["id"] == 1001)
+    assert foundation["actual_work_h"] == 1180.0
+    # Frame: COW 270 + CAR 135 = 405
+    frame = next(t for t in p["tasks"] if t["id"] == 1002)
+    assert frame["actual_work_h"] == 405.0
+    # Walls: not started, all 0
+    walls = next(t for t in p["tasks"] if t["id"] == 1003)
+    assert walls["actual_work_h"] == 0.0
+
+
+def test_read_progress_no_project_table(tmp_path):
+    """XER without PROJECT -> status_date None."""
+    content = ("ERMHDR\t18.8\t2026-01-01\tu\tApp\tUSD\n"
+               "%T\tTASK\n%F\ttask_id\ttask_name\n%R\t1\tT1\n%E\n")
+    path = tmp_path / "n.xer"
+    path.write_bytes(b"\xff\xfe" + content.encode("utf-16-le"))
+    x = XerFile(str(path))
+    p = x.read_progress()
+    assert p["status_date"] is None
+    assert len(p["tasks"]) == 1

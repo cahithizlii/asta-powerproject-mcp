@@ -5253,6 +5253,124 @@ def _msp_evm_compare_baselines_evm(file_path=None,
             "baseline_a": a, "baseline_b": b, "delta": delta}
 
 
+def _evm_snapshot_save(snapshot_path, snapshot):
+    """Append snapshot dict to JSON file. Creates file with empty array if missing.
+
+    Schema: {"snapshots": [<snapshot>, ...]} where snapshot has saved_at,
+    metrics, forecast, earned_schedule, rag, tag, etc.
+    """
+    import json as _json
+    if os.path.exists(snapshot_path):
+        with open(snapshot_path, "r", encoding="utf-8") as f:
+            data = _json.load(f)
+    else:
+        data = {"snapshots": []}
+    data.setdefault("snapshots", []).append(snapshot)
+    parent = os.path.dirname(snapshot_path) or "."
+    if parent and parent != "." and not os.path.exists(parent):
+        os.makedirs(parent, exist_ok=True)
+    with open(snapshot_path, "w", encoding="utf-8") as f:
+        _json.dump(data, f, indent=2, default=str)
+
+
+def _evm_snapshot_load(snapshot_path, project_filter=None, baseline_filter=None):
+    """Load snapshots from JSON file with optional filters.
+
+    project_filter: substring match against project_name or project_file
+    baseline_filter: exact baseline_number match (int)
+    """
+    import json as _json
+    if not os.path.exists(snapshot_path):
+        return []
+    with open(snapshot_path, "r", encoding="utf-8") as f:
+        data = _json.load(f)
+    snaps = data.get("snapshots", []) or []
+    if project_filter:
+        snaps = [s for s in snaps
+                 if project_filter in (s.get("project_name") or
+                                       s.get("project_file") or "")]
+    if baseline_filter is not None:
+        snaps = [s for s in snaps if s.get("baseline_number") == baseline_filter]
+    return snaps
+
+
+def _msp_evm_save_period_snapshot(file_path=None, baseline_number=0,
+                                  snapshot_path=None, tag=None):
+    """Action 10: save_period_snapshot — append to JSON file.
+
+    Bundles compute_metrics + forecast + earned_schedule + rag into
+    a single snapshot entry. Default snapshot_path is
+    ~/msproject_evm_snapshots.json.
+    """
+    if not snapshot_path:
+        snapshot_path = os.path.expanduser("~/msproject_evm_snapshots.json")
+    cm = _msp_evm_compute_metrics(file_path=file_path,
+                                  baseline_number=baseline_number)
+    if cm.get("status") != "ok":
+        return cm
+    fc = _msp_evm_forecast(file_path=file_path, baseline_number=baseline_number)
+    es = _msp_evm_earned_schedule(file_path=file_path,
+                                  baseline_number=baseline_number)
+    summary = _msp_evm_summary(file_path=file_path,
+                               baseline_number=baseline_number)
+    snap = {
+        "id": _dt5.datetime.now().strftime("%Y%m%d-%H%M%S"),
+        "saved_at": _dt5.datetime.now().isoformat(),
+        "project_file": file_path,
+        "baseline_number": baseline_number,
+        "metrics": {k: cm.get(k) for k in
+                    ("bac", "pv", "ev", "ac", "spi", "cpi", "sv", "cv")},
+        "forecast": {k: fc.get(k) for k in
+                     ("eac_t1", "eac_t2", "eac_t3", "etc", "vac",
+                      "tcpi_bac", "tcpi_eac")} if fc.get("status") == "ok" else {},
+        "earned_schedule": {k: es.get(k) for k in
+                            ("at", "es", "sv_t", "spi_t")}
+                           if es.get("status") == "ok" else {},
+        "rag": summary.get("rag") if summary.get("status") == "ok" else None,
+        "tag": tag,
+    }
+    try:
+        _evm_snapshot_save(snapshot_path, snap)
+        return {"status": "ok", "snapshot_path": snapshot_path,
+                "snapshot_id": snap["id"]}
+    except Exception as e:
+        logger.exception(f"save_period_snapshot failed: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+def _msp_evm_get_period_history(snapshot_path=None,
+                                project_filter=None,
+                                baseline_filter=None):
+    """Action 11: get_period_history — list saved snapshots."""
+    if not snapshot_path:
+        snapshot_path = os.path.expanduser("~/msproject_evm_snapshots.json")
+    snaps = _evm_snapshot_load(snapshot_path,
+                              project_filter=project_filter,
+                              baseline_filter=baseline_filter)
+    return {"status": "ok", "count": len(snaps), "snapshots": snaps}
+
+
+def _msp_evm_trend(snapshot_path=None, project_filter=None):
+    """Action 12: trend — period-over-period series for SPI/CPI/EAC."""
+    if not snapshot_path:
+        snapshot_path = os.path.expanduser("~/msproject_evm_snapshots.json")
+    snaps = _evm_snapshot_load(snapshot_path, project_filter=project_filter)
+    snaps_sorted = sorted(snaps, key=lambda s: s.get("saved_at", ""))
+    series = []
+    for s in snaps_sorted:
+        m = s.get("metrics", {}) or {}
+        f = s.get("forecast", {}) or {}
+        series.append({
+            "saved_at": s.get("saved_at"),
+            "tag": s.get("tag"),
+            "spi": m.get("spi"),
+            "cpi": m.get("cpi"),
+            "eac_t3": f.get("eac_t3"),
+            "rag": s.get("rag"),
+        })
+    return {"status": "ok", "count": len(series), "series": series}
+
+
 def main():
     """Run MCP server (stdio)."""
     mcp.run()

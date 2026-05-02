@@ -157,6 +157,62 @@ def test_write_baseline_unknown_uid_skipped_silently():
                 pass
 
 
+# === Phase 9.1 — auto-sync integration ===
+
+def test_write_baseline_includes_auto_imported_field():
+    """Phase 9.1: response must include auto_imported (bool) and
+    reschedule_ok fields, populated by _maybe_auto_sync(output_path)."""
+    src = _copy_to_tmp("p91_autosync_field.xml")
+    out = src.replace(".xml", "_out.xml")
+    try:
+        proj = MspdiProject(src)
+        uid = next(iter(proj._task_elems.keys()))
+        del proj
+        r = _call("write_baseline", file_path=src, baseline_number=0,
+                  baseline_data=[{
+                      "task_uid": uid,
+                      "baseline_start": "2026-07-01T08:00:00",
+                      "baseline_finish": "2026-07-31T17:00:00",
+                  }],
+                  output_path=out)
+        assert r["status"] == "ok"
+        assert "auto_imported" in r
+        assert "reschedule_ok" in r
+        assert isinstance(r["auto_imported"], bool)
+    finally:
+        for p in (src, out):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
+def test_write_baseline_auto_sync_safe_when_no_match():
+    """When output_path doesn't match any open MSP project,
+    auto_imported should be False (no error, no crash)."""
+    src = _copy_to_tmp("p91_no_match.xml")
+    # Use a unique output path unlikely to match any open project
+    out = os.path.join(tempfile.gettempdir(),
+                       "p91_unique_no_msp_match_baseline.xml")
+    try:
+        proj = MspdiProject(src)
+        uid = next(iter(proj._task_elems.keys()))
+        del proj
+        r = _call("write_baseline", file_path=src, baseline_number=0,
+                  baseline_data=[{"task_uid": uid,
+                                  "baseline_start": "2026-08-01T08:00:00"}],
+                  output_path=out)
+        assert r["status"] == "ok"
+        # MSP not running OR output_path isn't open in MSP -> False
+        assert r["auto_imported"] is False
+    finally:
+        for p in (src, out):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
 # === dispatcher action listing ===
 
 def test_dispatcher_unknown_action_lists_write_baseline():

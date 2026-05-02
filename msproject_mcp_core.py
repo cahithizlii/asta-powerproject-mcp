@@ -4686,14 +4686,21 @@ def _msp_file_write_baseline(file_path: str = None,
                               baseline_number: int = 0,
                               baseline_data: List[Dict[str, Any]] = None,
                               output_path: str = None) -> Dict[str, Any]:
-    """Phase 8.2 — Write baseline elements to an MSPDI XML file.
+    """Phase 8.2 + Phase 9.1 — Write baseline elements to MSPDI XML.
 
     Exposes Phase 6.3 MspdiProject.write_baseline + save() through the
-    file MCP. Requires output_path (no in-place write — caller controls
-    naming for safety).
+    file MCP using the standard Phase 4 manager pattern. Requires
+    output_path (no in-place write — caller controls naming).
+
+    Phase 9.1: integrates `_maybe_auto_sync(output_path)` so that if
+    MS Project is open and a project's FullName matches output_path,
+    the modified file is auto-reloaded (FileClose + FileOpen +
+    Reschedule). This is default behavior, not opt-in — matches the
+    file_mcp_auto_sync feedback rule.
 
     Args:
-        file_path: source MSPDI (.xml/.mspdi). .mpp not supported.
+        file_path: source MSPDI (.xml/.mspdi). .mpp not supported
+            (Microsoft proprietary binary).
         baseline_number: 0=primary baseline, 1-10=numbered baselines.
         baseline_data: list of {task_uid (required), baseline_start,
             baseline_finish, baseline_duration_h, baseline_work_h}.
@@ -4701,7 +4708,8 @@ def _msp_file_write_baseline(file_path: str = None,
         output_path: target .xml/.mspdi path.
 
     Returns:
-        {status, tasks_written, output_path, baseline_number}.
+        {status, tasks_written, output_path, baseline_number,
+         auto_imported, reschedule_ok}.
     """
     if not file_path:
         return {"status": "error", "error": "file_path required"}
@@ -4720,26 +4728,31 @@ def _msp_file_write_baseline(file_path: str = None,
         return {"status": "error",
                 "error": (f"output_path must end in .xml or .mspdi "
                           f"(got '{out_ext}')")}
-    from mspdi_parser import MspdiProject
     try:
-        proj = MspdiProject(file_path)
+        mgr = _get_msp_file_manager(file_path)
+        _ensure_xml_write_target(mgr)
     except FileNotFoundError as e:
         return {"status": "error", "error": str(e)}
+    except ValueError as e:
+        return {"status": "error", "error": str(e)}
     except Exception as e:
-        return {"status": "error", "error": f"failed to parse: {e}"}
+        return {"status": "error", "error": f"failed to open: {e}"}
     try:
-        n = proj.write_baseline(baseline_number, baseline_data)
+        n = mgr.write_baseline(baseline_number, baseline_data)
     except Exception as e:
         return {"status": "error", "error": f"write_baseline failed: {e}"}
     try:
-        actual_path = proj.save(output_path)
+        actual_path = mgr.save(output_path)
     except Exception as e:
         return {"status": "error", "error": f"save failed: {e}"}
+    sync = _maybe_auto_sync(actual_path)
     return {
         "status": "ok",
         "tasks_written": n,
         "output_path": actual_path,
         "baseline_number": baseline_number,
+        "auto_imported": sync.get("auto_imported", False),
+        "reschedule_ok": sync.get("reschedule_ok"),
     }
 
 

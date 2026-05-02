@@ -3934,7 +3934,30 @@ def _msp_file_read_tasks(file_path: str,
         NOTE: summary tasks are stripped BEFORE filters apply, so
         ``filters={"summary": True}`` will always return 0 results.
     limit: cap returned task count after filtering.
+
+    Phase 5f additive routing: file_path ending '.xer' delegates to
+    XerFile.read_tasks (Phase 5d reader). Existing .xml/.mpp paths
+    unchanged.
     """
+    if file_path and isinstance(file_path, str) and file_path.lower().endswith(".xer"):
+        try:
+            from xer_parser import XerFile
+            xer = XerFile(file_path)
+            cals = xer.read_calendars()
+            day_hr_cnt = cals[0]["day_hr_cnt"] if cals else 8.0
+            tasks = xer.read_tasks(day_hr_cnt=day_hr_cnt)
+            tasks = [t for t in tasks if not t.get("summary", False)]
+            if filters:
+                for k, v in filters.items():
+                    tasks = [t for t in tasks if t.get(k) == v]
+            if limit and limit > 0:
+                tasks = tasks[:limit]
+            return {"status": "ok", "count": len(tasks), "tasks": tasks}
+        except FileNotFoundError as e:
+            return {"status": "error", "error": str(e)}
+        except Exception as e:
+            logger.error(f"_msp_file_read_tasks({file_path}) XER failed: {e}")
+            return {"status": "error", "error": str(e)}
     try:
         mgr = _get_msp_file_manager(file_path)
         if isinstance(mgr, MspdiProject):
@@ -3992,7 +4015,20 @@ def _msp_file_read_links(file_path: str) -> Dict[str, Any]:
 
     For MspdiProject (XML): walks tasks and extracts predecessor entries.
     For MspMppFileManager (MPP): delegates to its read_links().
+
+    Phase 5f additive routing: file_path ending '.xer' delegates to
+    XerFile.read_links. Existing .xml/.mpp paths unchanged.
     """
+    if file_path and isinstance(file_path, str) and file_path.lower().endswith(".xer"):
+        try:
+            from xer_parser import XerFile
+            links = XerFile(file_path).read_links()
+            return {"status": "ok", "count": len(links), "links": links}
+        except FileNotFoundError as e:
+            return {"status": "error", "error": str(e)}
+        except Exception as e:
+            logger.error(f"_msp_file_read_links({file_path}) XER failed: {e}")
+            return {"status": "error", "error": str(e)}
     try:
         mgr = _get_msp_file_manager(file_path)
         if isinstance(mgr, MspdiProject):
@@ -4052,7 +4088,20 @@ def _msp_file_read_resources(file_path: str) -> Dict[str, Any]:
 
     Excludes system resource (id=0) for cleaner output. Returns count + list
     of {id, name, type, max_units}.
+
+    Phase 5f additive routing: file_path ending '.xer' delegates to
+    XerFile.read_resources. Existing .xml/.mpp paths unchanged.
     """
+    if file_path and isinstance(file_path, str) and file_path.lower().endswith(".xer"):
+        try:
+            from xer_parser import XerFile
+            resources = XerFile(file_path).read_resources()
+            return {"status": "ok", "count": len(resources), "resources": resources}
+        except FileNotFoundError as e:
+            return {"status": "error", "error": str(e)}
+        except Exception as e:
+            logger.error(f"_msp_file_read_resources({file_path}) XER failed: {e}")
+            return {"status": "error", "error": str(e)}
     try:
         mgr = _get_msp_file_manager(file_path)
         if isinstance(mgr, MspdiProject):
@@ -4073,7 +4122,23 @@ def _msp_file_read_resources(file_path: str) -> Dict[str, Any]:
 
 def _msp_file_read_assignments(file_path: str,
                                task_id: Optional[int] = None) -> Dict[str, Any]:
-    """Read all task-resource assignments. Optional task_id filter."""
+    """Read all task-resource assignments. Optional task_id filter.
+
+    Phase 5f additive routing: file_path ending '.xer' delegates to
+    XerFile.read_assignments. Existing .xml/.mpp paths unchanged.
+    """
+    if file_path and isinstance(file_path, str) and file_path.lower().endswith(".xer"):
+        try:
+            from xer_parser import XerFile
+            assignments = XerFile(file_path).read_assignments()
+            if task_id is not None:
+                assignments = [a for a in assignments if a["task_id"] == task_id]
+            return {"status": "ok", "count": len(assignments), "assignments": assignments}
+        except FileNotFoundError as e:
+            return {"status": "error", "error": str(e)}
+        except Exception as e:
+            logger.error(f"_msp_file_read_assignments({file_path}) XER failed: {e}")
+            return {"status": "error", "error": str(e)}
     try:
         mgr = _get_msp_file_manager(file_path)
         if isinstance(mgr, MspdiProject):
@@ -4093,7 +4158,21 @@ def _msp_file_read_assignments(file_path: str,
 
 
 def _msp_file_read_calendars(file_path: str) -> Dict[str, Any]:
-    """Read all calendars defined in a MS Project file."""
+    """Read all calendars defined in a MS Project file.
+
+    Phase 5f additive routing: file_path ending '.xer' delegates to
+    XerFile.read_calendars. Existing .xml/.mpp paths unchanged.
+    """
+    if file_path and isinstance(file_path, str) and file_path.lower().endswith(".xer"):
+        try:
+            from xer_parser import XerFile
+            calendars = XerFile(file_path).read_calendars()
+            return {"status": "ok", "count": len(calendars), "calendars": calendars}
+        except FileNotFoundError as e:
+            return {"status": "error", "error": str(e)}
+        except Exception as e:
+            logger.error(f"_msp_file_read_calendars({file_path}) XER failed: {e}")
+            return {"status": "error", "error": str(e)}
     try:
         mgr = _get_msp_file_manager(file_path)
         if isinstance(mgr, MspdiProject):
@@ -4157,6 +4236,41 @@ def _msp_file_read_baselines(file_path: str, baseline_number: int = 0) -> Dict[s
     if baseline_number not in BASELINE_NUMBERS:
         return {"status": "error",
                 "error": f"baseline_number must be 0-10, got {baseline_number}"}
+    # Phase 5f additive routing: .xer baseline = target schedule (CAU pattern).
+    if file_path and isinstance(file_path, str) and file_path.lower().endswith(".xer"):
+        try:
+            from xer_parser import XerFile
+            xer = XerFile(file_path)
+            proj = xer.read_project()
+            cals = xer.read_calendars()
+            day_hr_cnt = cals[0]["day_hr_cnt"] if cals else 8.0
+            raw_tasks = xer.read_tasks(day_hr_cnt=day_hr_cnt)
+            baseline_tasks = []
+            for t in raw_tasks:
+                if t.get("summary", False):
+                    continue
+                baseline_tasks.append({
+                    "task_id": t["id"],
+                    "id": t["id"],
+                    "name": t.get("name", ""),
+                    "start": t.get("start"),
+                    "finish": t.get("finish"),
+                    "baseline_start": t.get("start"),
+                    "baseline_finish": t.get("finish"),
+                    "work_h": float(t.get("duration_h") or 0),
+                    "baseline_work": float(t.get("duration_h") or 0),
+                })
+            return {
+                "status": "ok",
+                "baseline_number": baseline_number,
+                "saved_date": (proj or {}).get("last_recalc_date"),
+                "tasks": baseline_tasks,
+            }
+        except FileNotFoundError as e:
+            return {"status": "error", "error": str(e)}
+        except Exception as e:
+            logger.error(f"_msp_file_read_baselines({file_path}) XER failed: {e}")
+            return {"status": "error", "error": str(e)}
     try:
         mgr = _get_msp_file_manager(file_path)
         if isinstance(mgr, MspdiProject):
@@ -4199,6 +4313,19 @@ def _msp_file_read_progress(file_path: str,
     Returns {status, status_date, tasks: [...]}.
     """
     _ = include_assignments  # parameter is reserved (forward compat)
+    # Phase 5f additive routing: .xer delegates to XerFile.read_progress.
+    if file_path and isinstance(file_path, str) and file_path.lower().endswith(".xer"):
+        try:
+            from xer_parser import XerFile
+            prog = XerFile(file_path).read_progress()
+            return {"status": "ok",
+                    "status_date": prog["status_date"],
+                    "tasks": prog["tasks"]}
+        except FileNotFoundError as e:
+            return {"status": "error", "error": str(e)}
+        except Exception as e:
+            logger.error(f"_msp_file_read_progress({file_path}) XER failed: {e}")
+            return {"status": "error", "error": str(e)}
     try:
         mgr = _get_msp_file_manager(file_path)
         if isinstance(mgr, MspdiProject):

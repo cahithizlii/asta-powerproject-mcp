@@ -6625,6 +6625,159 @@ def _xer_to_evm_baseline_shape(xer, baseline_number=0):
     }
 
 
+# ============================================================================
+# PHASE 7 - msproject_compare (XER vs XER / MSPDI vs MSPDI delta analysis)
+# ============================================================================
+# Bridges xer_compare pure module into a new tool. Reuses Phase 5a
+# _evm_load_task_data + Phase 5b _dcma_load_links + _msp_evm_compute_metrics
+# read-only — no DOKUNULMAZ contract changes. Tool count 12 -> 13.
+from xer_compare import (
+    diff_tasks as _xc_diff_tasks,
+    diff_links as _xc_diff_links,
+    diff_progress as _xc_diff_progress,
+    diff_evm as _xc_diff_evm,
+    summarize_compare as _xc_summarize,
+)
+
+
+def _msp_compare_tasks(file_path_a=None, file_path_b=None, fields=None):
+    """Phase 7 Action 1: task_delta — added/removed/changed tasks."""
+    a = _evm_load_task_data(file_path=file_path_a)
+    if a.get("status") != "ok":
+        return {"status": "error",
+                "error": f"file_a load failed: {a.get('error')}"}
+    b = _evm_load_task_data(file_path=file_path_b)
+    if b.get("status") != "ok":
+        return {"status": "error",
+                "error": f"file_b load failed: {b.get('error')}"}
+    diff = _xc_diff_tasks(a.get("tasks", []), b.get("tasks", []),
+                          fields=fields)
+    return {"status": "ok", **diff}
+
+
+def _msp_compare_links(file_path_a=None, file_path_b=None):
+    """Phase 7 Action 2: link_delta — added/removed/changed links."""
+    links_a = _dcma_load_links(file_path=file_path_a)
+    links_b = _dcma_load_links(file_path=file_path_b)
+    if not isinstance(links_a, list):
+        return {"status": "error",
+                "error": f"file_a links unavailable: {links_a}"}
+    if not isinstance(links_b, list):
+        return {"status": "error",
+                "error": f"file_b links unavailable: {links_b}"}
+    diff = _xc_diff_links(links_a, links_b)
+    return {"status": "ok", **diff}
+
+
+def _msp_compare_progress(file_path_a=None, file_path_b=None):
+    """Phase 7 Action 3: progress_delta — per-task pct + actual_work."""
+    a = _evm_load_task_data(file_path=file_path_a)
+    if a.get("status") != "ok":
+        return {"status": "error",
+                "error": f"file_a load failed: {a.get('error')}"}
+    b = _evm_load_task_data(file_path=file_path_b)
+    if b.get("status") != "ok":
+        return {"status": "error",
+                "error": f"file_b load failed: {b.get('error')}"}
+    progress_a = {"status_date": a.get("status_date"),
+                  "tasks": a.get("tasks", [])}
+    progress_b = {"status_date": b.get("status_date"),
+                  "tasks": b.get("tasks", [])}
+    diff = _xc_diff_progress(progress_a, progress_b)
+    return {"status": "ok", **diff}
+
+
+def _msp_compare_evm(file_path_a=None, file_path_b=None, baseline_number=0):
+    """Phase 7 Action 4: evm_delta — BAC/PV/EV/AC/SPI/CPI snapshot delta."""
+    a = _msp_evm_compute_metrics(file_path=file_path_a,
+                                 baseline_number=baseline_number)
+    if a.get("status") != "ok":
+        return {"status": "error",
+                "error": f"file_a EVM failed: {a.get('error')}"}
+    b = _msp_evm_compute_metrics(file_path=file_path_b,
+                                 baseline_number=baseline_number)
+    if b.get("status") != "ok":
+        return {"status": "error",
+                "error": f"file_b EVM failed: {b.get('error')}"}
+    diff = _xc_diff_evm(a, b)
+    return {"status": "ok", **diff}
+
+
+def _msp_compare_summary(file_path_a=None, file_path_b=None,
+                         baseline_number=0):
+    """Phase 7 Action 5: summary — aggregate all delta types in one call."""
+    task_d = _msp_compare_tasks(file_path_a, file_path_b)
+    if task_d.get("status") != "ok":
+        return task_d
+    link_d = _msp_compare_links(file_path_a, file_path_b)
+    if link_d.get("status") != "ok":
+        return link_d
+    progress_d = _msp_compare_progress(file_path_a, file_path_b)
+    if progress_d.get("status") != "ok":
+        return progress_d
+    evm_d = _msp_compare_evm(file_path_a, file_path_b,
+                             baseline_number=baseline_number)
+    if evm_d.get("status") != "ok":
+        return evm_d
+    s = _xc_summarize(task_d, link_d, progress_d, evm_d)
+    return {"status": "ok", **s}
+
+
+@mcp.tool(
+    name="msproject_compare",
+    annotations={
+        "title": "MS Project Snapshot Comparison",
+        "readOnlyHint": True,
+    },
+)
+async def msproject_compare(params: dict) -> str:
+    """Compare two project file snapshots (XER or MSPDI) for delta analysis.
+
+    Use case: CAU monthly hakediş — last month's baseline XER vs this
+    month's progress XER. Reports added/removed/changed tasks, link
+    deltas, progress jumps, EVM (BAC/PV/EV/AC/SPI/CPI) deltas.
+
+    Actions:
+    - task_delta: added/removed/changed tasks (custom fields=[...] OK)
+    - link_delta: added/removed/changed links (FS/FF/SS/SF + lag)
+    - progress_delta: per-task percent_complete + actual_work delta
+    - evm_delta: snapshot EVM metrics delta
+    - summary: aggregate headline + counts + EVM deltas
+
+    Phase 7 (2 May 2026). Tool count 12 -> 13.
+    """
+    import json
+    action = params.get("action", "")
+    p = {k: v for k, v in params.items() if k != "action"}
+    # Friendly param aliases: file_a/file_b -> file_path_a/file_path_b
+    if "file_a" in p:
+        p["file_path_a"] = p.pop("file_a")
+    if "file_b" in p:
+        p["file_path_b"] = p.pop("file_b")
+    try:
+        if action == "task_delta":
+            r = _msp_compare_tasks(**p)
+        elif action == "link_delta":
+            r = _msp_compare_links(**p)
+        elif action == "progress_delta":
+            r = _msp_compare_progress(**p)
+        elif action == "evm_delta":
+            r = _msp_compare_evm(**p)
+        elif action == "summary":
+            r = _msp_compare_summary(**p)
+        else:
+            r = {"status": "error",
+                 "error": (f"Unknown action '{action}'. Valid: "
+                           "task_delta/link_delta/progress_delta/"
+                           "evm_delta/summary")}
+    except TypeError as e:
+        r = {"status": "error", "error": f"Invalid params for {action}: {e}"}
+    except Exception as e:
+        logger.exception(f"msproject_compare({action}) failed: {e}")
+        r = {"status": "error", "error": str(e)}
+    return json.dumps(r, default=str, ensure_ascii=False)
+
+
 def main():
     """Run MCP server (stdio)."""
     mcp.run()

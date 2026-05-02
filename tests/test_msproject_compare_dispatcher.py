@@ -207,3 +207,47 @@ def test_dispatcher_missing_file_a_returns_error():
     r = _call("task_delta", file_a="/totally/missing/file.xer",
               file_b="/also/missing.xer")
     assert r["status"] == "error"
+
+
+# === Phase 8.1 monthly_report ===
+
+def test_dispatcher_monthly_report_bundles_compare_and_evm(xer_pair):
+    a, b = xer_pair
+    r = _call("monthly_report", file_a=a, file_b=b)
+    assert r["status"] == "ok"
+    assert "compare_summary" in r
+    assert "evm_a" in r
+    assert "evm_b" in r
+    # EVM summary fields
+    for key in ("rag", "completion_pct", "spi", "cpi"):
+        assert key in r["evm_a"]
+        assert key in r["evm_b"]
+
+
+def test_dispatcher_monthly_report_headline_includes_rag(xer_pair):
+    a, b = xer_pair
+    r = _call("monthly_report", file_a=a, file_b=b)
+    assert "RAG" in r["headline"]
+
+
+def test_dispatcher_monthly_report_no_excel_path_when_omitted(xer_pair):
+    a, b = xer_pair
+    r = _call("monthly_report", file_a=a, file_b=b)
+    assert r["excel_path"] is None
+    assert r["excel_export"] is None
+
+
+def test_dispatcher_monthly_report_writes_excel_when_path_given(xer_pair, tmp_path):
+    a, b = xer_pair
+    xlsx = str(tmp_path / "hakedis.xlsx")
+    r = _call("monthly_report", file_a=a, file_b=b, output_excel=xlsx)
+    assert r["status"] == "ok"
+    assert r["excel_path"] == xlsx
+    assert r["excel_export"] is not None
+    assert r["excel_export"]["status"] == "ok"
+    assert os.path.exists(xlsx)
+
+
+def test_dispatcher_monthly_report_listed_in_unknown_action_error():
+    r = _call("definitely_not_an_action")
+    assert "monthly_report" in r["error"]

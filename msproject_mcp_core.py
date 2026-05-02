@@ -4682,6 +4682,67 @@ def _msp_file_save_as(file_path: str, output_path: str) -> Dict[str, Any]:
         return {"status": "error", "error": str(e)}
 
 
+def _msp_file_write_baseline(file_path: str = None,
+                              baseline_number: int = 0,
+                              baseline_data: List[Dict[str, Any]] = None,
+                              output_path: str = None) -> Dict[str, Any]:
+    """Phase 8.2 — Write baseline elements to an MSPDI XML file.
+
+    Exposes Phase 6.3 MspdiProject.write_baseline + save() through the
+    file MCP. Requires output_path (no in-place write — caller controls
+    naming for safety).
+
+    Args:
+        file_path: source MSPDI (.xml/.mspdi). .mpp not supported.
+        baseline_number: 0=primary baseline, 1-10=numbered baselines.
+        baseline_data: list of {task_uid (required), baseline_start,
+            baseline_finish, baseline_duration_h, baseline_work_h}.
+            Tasks with unknown UID are skipped silently.
+        output_path: target .xml/.mspdi path.
+
+    Returns:
+        {status, tasks_written, output_path, baseline_number}.
+    """
+    if not file_path:
+        return {"status": "error", "error": "file_path required"}
+    if not output_path:
+        return {"status": "error", "error": "output_path required"}
+    if not baseline_data:
+        return {"status": "error",
+                "error": "baseline_data required (non-empty list)"}
+    src_ext = os.path.splitext(file_path)[1].lower()
+    if src_ext not in (".xml", ".mspdi"):
+        return {"status": "error",
+                "error": (f"write_baseline supports .xml/.mspdi only "
+                          f"(got '{src_ext}'). .mpp/.xer not supported.")}
+    out_ext = os.path.splitext(output_path)[1].lower()
+    if out_ext not in (".xml", ".mspdi"):
+        return {"status": "error",
+                "error": (f"output_path must end in .xml or .mspdi "
+                          f"(got '{out_ext}')")}
+    from mspdi_parser import MspdiProject
+    try:
+        proj = MspdiProject(file_path)
+    except FileNotFoundError as e:
+        return {"status": "error", "error": str(e)}
+    except Exception as e:
+        return {"status": "error", "error": f"failed to parse: {e}"}
+    try:
+        n = proj.write_baseline(baseline_number, baseline_data)
+    except Exception as e:
+        return {"status": "error", "error": f"write_baseline failed: {e}"}
+    try:
+        actual_path = proj.save(output_path)
+    except Exception as e:
+        return {"status": "error", "error": f"save failed: {e}"}
+    return {
+        "status": "ok",
+        "tasks_written": n,
+        "output_path": actual_path,
+        "baseline_number": baseline_number,
+    }
+
+
 def _msp_file_bulk_add_assignments(file_path: str,
                                    items: List[Dict[str, Any]]) -> Dict[str, Any]:
     """🚀 T73 HERO — bulk write task-resource assignments to MSPDI XML.
@@ -4859,13 +4920,16 @@ async def msproject_file(params: dict) -> str:
             r = _msp_file_update_task(**p)
         elif action == "save_as":
             r = _msp_file_save_as(**p)
+        elif action == "write_baseline":
+            r = _msp_file_write_baseline(**p)
         else:
             r = {"status": "error",
                  "error": (f"Unknown action '{action}'. Valid: read_tasks/"
                            "read_links/read_resources/read_assignments/"
                            "read_calendars/read_baselines/read_progress/"
                            "query/add_tasks/add_links/add_resources/"
-                           "bulk_add_assignments/update_task/save_as")}
+                           "bulk_add_assignments/update_task/save_as/"
+                           "write_baseline")}
     except TypeError as e:
         r = {"status": "error", "error": f"Invalid params for {action}: {e}"}
     except Exception as e:
@@ -6723,6 +6787,65 @@ def _msp_compare_summary(file_path_a=None, file_path_b=None,
     return {"status": "ok", **s}
 
 
+def _msp_compare_monthly_report(file_path_a=None, file_path_b=None,
+                                baseline_number=0, output_excel=None):
+    """Phase 8.1 Action 6: monthly_report — bundles compare summary +
+    EVM(both files) + optional hakediş Excel export.
+
+    CAU monthly hakediş workflow: last_month.xer + this_month.xer →
+    one call returns delta headline, both EVM RAG/SPI/CPI snapshots,
+    and optionally writes a hakediş workbook for file_b (current).
+    """
+    summary = _msp_compare_summary(file_path_a, file_path_b,
+                                   baseline_number=baseline_number)
+    if summary.get("status") != "ok":
+        return summary
+    evm_a = _msp_evm_summary(file_path=file_path_a,
+                             baseline_number=baseline_number)
+    if evm_a.get("status") != "ok":
+        return {"status": "error",
+                "error": f"file_a EVM summary failed: {evm_a.get('error')}"}
+    evm_b = _msp_evm_summary(file_path=file_path_b,
+                             baseline_number=baseline_number)
+    if evm_b.get("status") != "ok":
+        return {"status": "error",
+                "error": f"file_b EVM summary failed: {evm_b.get('error')}"}
+    excel_result = None
+    if output_excel:
+        excel_result = _msp_excel_export_hakedis(
+            file_path=file_path_b, xlsx_path=output_excel,
+            baseline_number=baseline_number)
+        if excel_result.get("status") != "ok":
+            return {"status": "error",
+                    "error": f"Excel export failed: {excel_result.get('error')}"}
+    rag_a = evm_a.get("rag", "?")
+    rag_b = evm_b.get("rag", "?")
+    rag_segment = (f"RAG {rag_a}->{rag_b}" if rag_a != rag_b
+                   else f"RAG {rag_a}")
+    base_headline = summary.get("headline", "")
+    headline = ((base_headline + ", " + rag_segment).strip(", ")
+                if base_headline else rag_segment)
+    return {
+        "status": "ok",
+        "headline": headline,
+        "compare_summary": summary,
+        "evm_a": {
+            "rag": evm_a.get("rag"),
+            "completion_pct": evm_a.get("completion_pct"),
+            "spi": evm_a.get("spi"),
+            "cpi": evm_a.get("cpi"),
+        },
+        "evm_b": {
+            "rag": evm_b.get("rag"),
+            "completion_pct": evm_b.get("completion_pct"),
+            "spi": evm_b.get("spi"),
+            "cpi": evm_b.get("cpi"),
+        },
+        "excel_path": output_excel if excel_result else None,
+        "excel_export": excel_result,
+    }
+
+
 @mcp.tool(
     name="msproject_compare",
     annotations={
@@ -6765,11 +6888,13 @@ async def msproject_compare(params: dict) -> str:
             r = _msp_compare_evm(**p)
         elif action == "summary":
             r = _msp_compare_summary(**p)
+        elif action == "monthly_report":
+            r = _msp_compare_monthly_report(**p)
         else:
             r = {"status": "error",
                  "error": (f"Unknown action '{action}'. Valid: "
                            "task_delta/link_delta/progress_delta/"
-                           "evm_delta/summary")}
+                           "evm_delta/summary/monthly_report")}
     except TypeError as e:
         r = {"status": "error", "error": f"Invalid params for {action}: {e}"}
     except Exception as e:

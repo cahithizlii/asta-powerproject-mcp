@@ -1823,6 +1823,87 @@ class MspdiProject:
     # SAVE
     # ==================================================================
 
+    # ------------------------------------------------------------------
+    # Phase 6.3 — baseline read/write (additive)
+    # ------------------------------------------------------------------
+
+    def read_baselines(self, baseline_number: int = 0) -> List[dict]:
+        """Read <Baseline Number=N> elements across all tasks.
+
+        Returns list of {task_uid, task_id, baseline_start,
+        baseline_finish, baseline_duration_h, baseline_work_h}.
+        Tasks without the requested baseline are omitted.
+        """
+        out = []
+        for uid, task_elem in self._task_elems.items():
+            for bl in self._findall(task_elem, "Baseline"):
+                num = self._int(bl, "Number", -1)
+                if num != baseline_number:
+                    continue
+                out.append({
+                    "task_uid": uid,
+                    "task_id": self._id_by_uid.get(uid),
+                    "baseline_start": self._text(bl, "Start"),
+                    "baseline_finish": self._text(bl, "Finish"),
+                    "baseline_duration_h": self._parse_iso_duration(
+                        self._text(bl, "Duration", "PT0H0M0S")),
+                    "baseline_work_h": self._parse_iso_duration(
+                        self._text(bl, "Work", "PT0H0M0S")),
+                })
+        return out
+
+    def write_baseline(self, baseline_number: int,
+                       baseline_data: List[dict]) -> int:
+        """Write/update <Baseline Number=N> on each task in baseline_data.
+
+        baseline_data: list of {task_uid (required), baseline_start,
+            baseline_finish, baseline_duration_h, baseline_work_h}.
+        Existing <Baseline Number=N> for the same task is updated in
+        place; otherwise a new element is appended.
+
+        Returns count of tasks written. Tasks with unknown UID skipped.
+        """
+        written = 0
+        for entry in baseline_data:
+            uid = entry.get("task_uid")
+            if uid is None:
+                continue
+            try:
+                uid_int = int(uid)
+            except (TypeError, ValueError):
+                continue
+            task_elem = self._task_elems.get(uid_int)
+            if task_elem is None:
+                continue
+            # Find existing Baseline with matching Number, else create new
+            target = None
+            for bl in self._findall(task_elem, "Baseline"):
+                if self._int(bl, "Number", -1) == baseline_number:
+                    target = bl
+                    break
+            if target is None:
+                target = self._make_elem("Baseline")
+                num_elem = self._make_elem("Number", str(baseline_number))
+                target.append(num_elem)
+                task_elem.append(target)
+            # Update / set baseline fields
+            if entry.get("baseline_start"):
+                self._set_text(target, "Start", str(entry["baseline_start"]))
+            if entry.get("baseline_finish"):
+                self._set_text(target, "Finish", str(entry["baseline_finish"]))
+            if entry.get("baseline_duration_h") is not None:
+                hours = float(entry["baseline_duration_h"])
+                self._set_text(target, "Duration",
+                               f"PT{int(hours)}H{int((hours % 1) * 60)}M0S")
+            if entry.get("baseline_work_h") is not None:
+                hours = float(entry["baseline_work_h"])
+                self._set_text(target, "Work",
+                               f"PT{int(hours)}H{int((hours % 1) * 60)}M0S")
+            written += 1
+        return written
+
+    # ------------------------------------------------------------------
+
     def save(self, output_path: str = None) -> str:
         """Save the project to MSPDI XML format.
 

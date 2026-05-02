@@ -286,6 +286,16 @@ Acceptance: `samples/build_xer_lifecycle.py` parses synthetic CAU XER
 
 Tool count: **12 tools, ~95 actions**.
 
+## Phase 5f — File MCP XER Symmetry (1 May 2026)
+
+Phase 5e wired XER into Phase 5a/5b/5c loaders; Phase 5f extends Phase 4
+file MCP itself. All 7 `_msp_file_read_*` helpers now accept `.xer` file
+paths via the same additive guard pattern. `msproject_file.read_tasks(
+file_path="cau.xer")` works directly — no need to know about the
+separate `msproject_xer` tool.
+
+**Tool surface unchanged** (Phase 5f is pure plumbing). Same 12 tools.
+
 ## Phase 5e — XER Native Integration (1 May 2026)
 
 Wires Phase 5d `msproject_xer` reader into Phase 5a EVM + Phase 5b DCMA

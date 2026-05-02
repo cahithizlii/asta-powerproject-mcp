@@ -235,10 +235,45 @@ def _read_assignments(self):
     return out
 
 
-def _read_calendars(self):
-    """CALENDAR section -> list of {id, name, day_hr_cnt, week_hr_cnt}.
+import datetime as _dt
+import re as _re
 
-    clndr_data BLOB (holiday detail) NOT extracted - Phase 6 enhancement.
+# Phase 6.4 — Primavera P6 clndr_data exception/holiday BLOB pattern.
+# P6 stores exception dates as `(d|<excel_serial>|f|<bit>)` inside the
+# clndr_data text BLOB. <bit>=0 means non-working (holiday), <bit>=1 means
+# working-day exception (override). Excel serial 1 = 1900-01-01 with the
+# off-by-2 quirk (epoch base 1899-12-30).
+_CLNDR_EXCEPT_RE = _re.compile(r"\(d\|(\d+)\|f\|(\d)")
+_CLNDR_EXCEL_EPOCH = _dt.date(1899, 12, 30)
+
+
+def _parse_clndr_data(clndr_data):
+    """Best-effort extract of exception/holiday dates from a P6 clndr_data
+    BLOB. Returns list of {date: 'YYYY-MM-DD', working: bool}.
+
+    Tolerant: empty/None input -> []. Unparseable serials skipped silently.
+    No exceptions block in BLOB -> [].
+    """
+    if not clndr_data:
+        return []
+    out = []
+    for serial_str, bit_str in _CLNDR_EXCEPT_RE.findall(clndr_data):
+        try:
+            j = int(serial_str)
+            d = _CLNDR_EXCEL_EPOCH + _dt.timedelta(days=j)
+            out.append({"date": d.isoformat(), "working": bit_str == "1"})
+        except (ValueError, OverflowError):
+            continue
+    return out
+
+
+def _read_calendars(self):
+    """CALENDAR section -> list of {id, name, day_hr_cnt, week_hr_cnt,
+    exceptions: [{date, working}]}.
+
+    Phase 6.4 — clndr_data BLOB parsed for exception/holiday dates via
+    best-effort regex (Primavera proprietary format, not publicly
+    specified). Empty BLOB or no exception block -> exceptions=[].
     """
     tbl = self.tables.get("CALENDAR", {"rows": []})
     out = []
@@ -248,6 +283,7 @@ def _read_calendars(self):
             "name": row.get("clndr_name", ""),
             "day_hr_cnt": _to_float(row.get("day_hr_cnt"), default=8.0),
             "week_hr_cnt": _to_float(row.get("week_hr_cnt"), default=40.0),
+            "exceptions": _parse_clndr_data(row.get("clndr_data", "")),
         })
     return out
 

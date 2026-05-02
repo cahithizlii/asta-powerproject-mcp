@@ -340,18 +340,64 @@ def _parse_date(date_str: str) -> _dt.date:
     return _dt.datetime.strptime(date_str, "%Y-%m-%d").date()
 
 
-# pjExceptionDaily = 7 (single fixed-date or range, non-recurring)
-PJ_EXCEPTION_DAILY = 7
+# PjExceptionType (Microsoft.Office.Interop.MSProject)
+PJ_EXCEPTION_DAILY = 7              # single fixed-date or range (non-recurring)
+PJ_EXCEPTION_RECUR_DAILY = 1        # Phase 10.2 — recurring daily
+PJ_EXCEPTION_RECUR_WEEKLY = 2       # Phase 10.2 — recurring weekly
+PJ_EXCEPTION_RECUR_MONTHLY = 4      # Phase 10.2 — monthly by day-of-month
+PJ_EXCEPTION_RECUR_YEARLY = 5       # Phase 10.2 — yearly by day-of-month
+
+# MSP DaysOfWeek bitmask (Phase 10.2)
+_DAY_OF_WEEK_BITS = {
+    "sun": 1, "sunday": 1,
+    "mon": 2, "monday": 2,
+    "tue": 4, "tuesday": 4,
+    "wed": 8, "wednesday": 8,
+    "thu": 16, "thursday": 16,
+    "fri": 32, "friday": 32,
+    "sat": 64, "saturday": 64,
+}
+
+
+def _parse_hhmm_time(s: str):
+    """Parse 'HH:MM' or 'H:MM' string -> datetime.time. Phase 10.3."""
+    parts = s.split(":")
+    if len(parts) != 2:
+        raise ValueError(f"expected HH:MM, got '{s}'")
+    return _dt.time(int(parts[0]), int(parts[1]))
 
 
 def _msp_calendar_add_exception(calendar_name: str, exception_name: str,
                                 start: str,
                                 finish: Optional[str] = None,
-                                working: bool = False) -> Dict[str, Any]:
-    """Add a non-working exception to a calendar (single date or range).
+                                working: bool = False,
+                                recurrence: Optional[str] = None,
+                                days_of_week: Optional[List[str]] = None,
+                                period: Optional[int] = None,
+                                occurrences: Optional[int] = None,
+                                working_hours_start: str = "08:00",
+                                working_hours_finish: str = "17:00") -> Dict[str, Any]:
+    """Add an exception to a calendar — Phase 2a + Phase 10.2 + Phase 10.3.
 
-    For Phase 2a: only non-recurring exceptions (Type=pjExceptionDaily=7).
-    Recurring patterns (weekly/monthly) deferred to Phase 3+.
+    Args:
+        calendar_name, exception_name: targets.
+        start: 'YYYY-MM-DD'.
+        finish: optional 'YYYY-MM-DD' (defaults to start). For recurring
+            exceptions, this is the recurrence END date.
+        working: Phase 10.3 — if True, exception is a working window
+            (overrides base calendar non-working). Default working
+            window 08:00-17:00; override via working_hours_*.
+        recurrence: Phase 10.2 — None (single date, default) or
+            'daily'/'weekly'/'monthly'/'yearly'.
+        days_of_week: Phase 10.2 — required for recurrence='weekly'.
+            Day names: mon/tue/wed/thu/fri/sat/sun (case-insensitive).
+        period: every N occurrences (e.g. 2 = every other week). Optional.
+        occurrences: total recurrence count. Optional.
+        working_hours_start/finish: Phase 10.3 — 'HH:MM' for working=True.
+
+    Pre-Phase 10.2/10.3 callers continue to work — recurrence default
+    None preserves single-date Type=7 behavior; working default False
+    preserves non-working semantics.
     """
     app = _validate_active_project()
     proj = app.ActiveProject
@@ -360,11 +406,16 @@ def _msp_calendar_add_exception(calendar_name: str, exception_name: str,
         return {"status": "error",
                 "error": f"Calendar '{calendar_name}' not found in project"}
 
-    if working:
+    rec = recurrence.lower() if recurrence else None
+    if rec is not None and rec not in ("daily", "weekly", "monthly", "yearly"):
         return {"status": "error",
-                "error": "working=True is not yet supported (Phase 3+); only non-working exceptions are supported in Phase 2a"}
+                "error": (f"recurrence must be None/daily/weekly/monthly/"
+                          f"yearly (got '{recurrence}')")}
+    if rec == "weekly" and not days_of_week:
+        return {"status": "error",
+                "error": "recurrence='weekly' requires days_of_week list"}
 
-    # Pre-flight: validate ALL inputs before any mutation (no partial writes)
+    # Pre-flight validation BEFORE mutation
     try:
         start_d = _parse_date(start)
         finish_d = _parse_date(finish) if finish else start_d
@@ -375,24 +426,84 @@ def _msp_calendar_add_exception(calendar_name: str, exception_name: str,
         return {"status": "error",
                 "error": "Start date must be <= finish date"}
 
+    if working:
+        try:
+            wh_start_t = _parse_hhmm_time(working_hours_start)
+            wh_finish_t = _parse_hhmm_time(working_hours_finish)
+        except ValueError as e:
+            return {"status": "error",
+                    "error": f"Invalid working_hours_* format: {e}"}
+    else:
+        wh_start_t = wh_finish_t = None
+
+    bitmask = 0
+    if rec == "weekly":
+        for d in days_of_week:
+            bit = _DAY_OF_WEEK_BITS.get(str(d).lower())
+            if bit is None:
+                return {"status": "error",
+                        "error": (f"Unknown day_of_week '{d}'. Valid: "
+                                  f"mon/tue/wed/thu/fri/sat/sun")}
+            bitmask |= bit
+
+    type_map = {
+        None: PJ_EXCEPTION_DAILY,
+        "daily": PJ_EXCEPTION_RECUR_DAILY,
+        "weekly": PJ_EXCEPTION_RECUR_WEEKLY,
+        "monthly": PJ_EXCEPTION_RECUR_MONTHLY,
+        "yearly": PJ_EXCEPTION_RECUR_YEARLY,
+    }
+    ex_type = type_map[rec]
+
     try:
         ex = cal.Exceptions.Add(
-            Type=PJ_EXCEPTION_DAILY,
+            Type=ex_type,
             Start=pywintypes.Time(start_d),
             Finish=pywintypes.Time(finish_d),
         )
         ex.Name = exception_name
-        # Type=PJ_EXCEPTION_DAILY=7 already implies non-working in MSP semantics;
-        # MSP 16.0 exposes shift times via ex.Shift1.Start sub-objects (not flat
-        # ShiftNStart props), so any zeroing is best handled if/when working=True
-        # support arrives in Phase 3+.
-        # NOTE: 'working' input intentionally not echoed — always False post-T21
-        # guard (working=True returns error early in pre-flight).
+        if rec == "weekly":
+            try:
+                ex.DaysOfWeek = bitmask
+            except Exception as e:
+                logger.warning(f"DaysOfWeek not settable: {e}")
+        if rec in ("monthly", "yearly"):
+            try:
+                ex.MonthDay = start_d.day
+            except Exception as e:
+                logger.warning(f"MonthDay not settable: {e}")
+            if rec == "yearly":
+                try:
+                    ex.Month = start_d.month
+                except Exception as e:
+                    logger.warning(f"Month not settable: {e}")
+        if period is not None and period > 0:
+            try:
+                ex.Period = period
+            except Exception as e:
+                logger.warning(f"Period not settable: {e}")
+        if occurrences is not None and occurrences > 0:
+            try:
+                ex.Occurrences = occurrences
+            except Exception as e:
+                logger.warning(f"Occurrences not settable: {e}")
+        if working:
+            # MSP 16: ex.Shift1.Start/Finish accepts COM Time. Combine
+            # working hours with exception start_d for a valid datetime.
+            wh_start_dt = _dt.datetime.combine(start_d, wh_start_t)
+            wh_finish_dt = _dt.datetime.combine(start_d, wh_finish_t)
+            try:
+                ex.Shift1.Start = pywintypes.Time(wh_start_dt)
+                ex.Shift1.Finish = pywintypes.Time(wh_finish_dt)
+            except Exception as e:
+                logger.warning(f"working hours (Shift1) not settable: {e}")
         return {"status": "ok",
                 "calendar_name": calendar_name,
                 "exception_name": exception_name,
                 "start": start,
-                "finish": finish or start}
+                "finish": finish or start,
+                "recurrence": rec,
+                "working": working}
     except Exception as e:
         logger.error(
             f"_msp_calendar_add_exception({calendar_name},{exception_name}) failed: {e}"
@@ -4686,11 +4797,19 @@ def _msp_file_update_task(file_path: str, task_id: int,
         if not schedule_updated and baseline_written == 0:
             return {"status": "error",
                     "error": "no fields applied (task_id may not exist)"}
+        # Phase 10.1 — read-back the task's baseline after write
+        baseline_after = None
+        if baseline_written > 0:
+            for bl in mgr.read_baselines(baseline_number):
+                if bl.get("task_id") == task_id:
+                    baseline_after = bl
+                    break
         mgr.save(output_path=file_path)
         sync = _maybe_auto_sync(file_path)
         return {"status": "ok", "task_id": task_id,
                 "schedule_updated": schedule_updated,
                 "baseline_written": baseline_written,
+                "baseline_after": baseline_after,
                 **sync}
     except FileNotFoundError as e:
         return {"status": "error", "error": str(e)}

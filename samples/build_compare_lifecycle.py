@@ -7,16 +7,13 @@ CAU monthly hakediş use case: last month vs this month delta.
 Run:
     python -m samples.build_compare_lifecycle
 """
-import asyncio
-import json
 import os
-import sys
-import tempfile
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
-
+from samples._lifecycle_common import (
+    write_synthetic_xer as _write_xer,
+    call_async_dispatcher,
+    print_section,
+)
 from msproject_mcp_core import msproject_compare
 
 
@@ -77,25 +74,12 @@ SNAPSHOT_B = """ERMHDR\t18.8\t2026-02-01\tu\tApp\tUSD
 """
 
 
-def _write_xer(content: str, name: str) -> str:
-    path = os.path.join(tempfile.gettempdir(), name)
-    with open(path, "wb") as f:
-        f.write(b"\xff\xfe")
-        f.write(content.encode("utf-16-le"))
-    return path
-
-
 def _call(action, **kw):
-    raw = asyncio.run(msproject_compare({"action": action, **kw}))
-    return json.loads(raw)
+    return call_async_dispatcher(msproject_compare, action, **kw)
 
 
 def _print_section(title: str, payload: dict, max_chars: int = 800):
-    print(f"\n{'=' * 70}\n  {title}\n{'=' * 70}")
-    s = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
-    if len(s) > max_chars:
-        s = s[:max_chars] + "\n... [truncated]"
-    print(s)
+    print_section(title, payload, max_chars=max_chars)
 
 
 def main():

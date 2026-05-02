@@ -6,21 +6,13 @@ approximation. Uses synthetic XER fixtures with predictable AC patterns.
 """
 import os
 import sys
-import tempfile
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from msproject_mcp_core import _msp_evm_time_phased_evm, _evm_load_task_data
-
-
-def _write_xer(content: str, name: str) -> str:
-    path = os.path.join(tempfile.gettempdir(), name)
-    with open(path, "wb") as f:
-        f.write(b"\xff\xfe")
-        f.write(content.encode("utf-16-le"))
-    return path
+from tests._xer_fixture_builders import write_synthetic_xer as _write_xer
 
 
 # Two completed tasks both finishing in the same early bucket — per-task

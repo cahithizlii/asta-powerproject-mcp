@@ -148,6 +148,35 @@ def test_update_task_schedule_only_response_shape(writable_xml):
     assert r["baseline_written"] == 0
 
 
+# === Phase 10.1 — baseline read-back ===
+
+def test_update_task_baseline_after_field_populated(writable_xml):
+    """Phase 10.1: baseline_after returns the persisted baseline values."""
+    r = _msp_file_update_task(file_path=writable_xml, task_id=1,
+                              fields={
+                                  "baseline_start": "2026-12-01T08:00:00",
+                                  "baseline_finish": "2026-12-31T17:00:00",
+                                  "baseline_duration_h": 240.0,
+                                  "baseline_work_h": 160.0,
+                              })
+    assert r["status"] == "ok"
+    assert r["baseline_after"] is not None
+    bl = r["baseline_after"]
+    assert bl["task_id"] == 1
+    assert bl["baseline_start"] == "2026-12-01T08:00:00"
+    assert bl["baseline_finish"] == "2026-12-31T17:00:00"
+    assert abs(bl["baseline_duration_h"] - 240.0) < 0.5
+    assert abs(bl["baseline_work_h"] - 160.0) < 0.5
+
+
+def test_update_task_baseline_after_none_when_schedule_only(writable_xml):
+    """Phase 10.1: schedule-only updates leave baseline_after as None."""
+    r = _msp_file_update_task(file_path=writable_xml, task_id=1,
+                              fields={"duration": "2d"})
+    assert r["status"] == "ok"
+    assert r["baseline_after"] is None
+
+
 def test_save_as_xml(tmp_path):
     """Save fixture to a new path; output file exists and has size."""
     dst = tmp_path / "renamed.xml"

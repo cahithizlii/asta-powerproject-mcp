@@ -100,14 +100,126 @@ def test_add_exception_actually_non_working(clean_test_project):
     )
 
 
-def test_add_exception_working_true_rejected(clean_test_project):
-    """working=True is currently rejected (Phase 3+ feature)."""
-    _msp_calendar_create(name="WorkRejectCal-Phase2a", base_calendar="Standard")
+def test_add_exception_working_true_supported_phase10_3(clean_test_project):
+    """Phase 10.3 — working=True now supported (was rejected in Phase 2a)."""
+    _msp_calendar_create(name="WorkCal-Phase10", base_calendar="Standard")
     r = _msp_calendar_add_exception(
-        calendar_name="WorkRejectCal-Phase2a",
-        exception_name="Working Day",
+        calendar_name="WorkCal-Phase10",
+        exception_name="Saturday Working Day",
         start="2026-08-01",
         working=True,
     )
+    assert r["status"] == "ok"
+    assert r["working"] is True
+
+
+def test_add_exception_working_true_custom_hours(clean_test_project):
+    """Phase 10.3 — working_hours_start/finish override default 08-17."""
+    _msp_calendar_create(name="CustomHours-Phase10", base_calendar="Standard")
+    r = _msp_calendar_add_exception(
+        calendar_name="CustomHours-Phase10",
+        exception_name="Half Day",
+        start="2026-08-15",
+        working=True,
+        working_hours_start="09:00",
+        working_hours_finish="13:00",
+    )
+    assert r["status"] == "ok"
+    assert r["working"] is True
+
+
+def test_add_exception_working_invalid_hours_format(clean_test_project):
+    _msp_calendar_create(name="BadHours-Phase10", base_calendar="Standard")
+    r = _msp_calendar_add_exception(
+        calendar_name="BadHours-Phase10",
+        exception_name="Bad",
+        start="2026-08-20",
+        working=True,
+        working_hours_start="not-a-time",
+    )
     assert r["status"] == "error"
-    assert "Phase 3" in r["error"] or "not yet supported" in r["error"]
+    assert "format" in r["error"].lower() or "expected HH:MM" in r["error"]
+
+
+# === Phase 10.2 — recurring exceptions ===
+
+def test_add_exception_recurring_weekly_requires_days(clean_test_project):
+    """recurrence='weekly' without days_of_week -> error."""
+    _msp_calendar_create(name="WeeklyNoDays-Phase10", base_calendar="Standard")
+    r = _msp_calendar_add_exception(
+        calendar_name="WeeklyNoDays-Phase10",
+        exception_name="Weekly Off",
+        start="2026-09-01",
+        finish="2026-12-31",
+        recurrence="weekly",
+    )
+    assert r["status"] == "error"
+    assert "days_of_week" in r["error"]
+
+
+def test_add_exception_recurring_weekly_with_days(clean_test_project):
+    """recurrence='weekly' + days_of_week=['fri','sat'] -> Friday+Saturday off."""
+    _msp_calendar_create(name="WeeklyOff-Phase10", base_calendar="Standard")
+    r = _msp_calendar_add_exception(
+        calendar_name="WeeklyOff-Phase10",
+        exception_name="Weekend Off",
+        start="2026-01-01",
+        finish="2026-12-31",
+        recurrence="weekly",
+        days_of_week=["fri", "sat"],
+    )
+    assert r["status"] == "ok"
+    assert r["recurrence"] == "weekly"
+
+
+def test_add_exception_recurring_monthly(clean_test_project):
+    _msp_calendar_create(name="MonthlyOff-Phase10", base_calendar="Standard")
+    r = _msp_calendar_add_exception(
+        calendar_name="MonthlyOff-Phase10",
+        exception_name="Monthly Maintenance",
+        start="2026-01-15",
+        finish="2026-12-31",
+        recurrence="monthly",
+        occurrences=12,
+    )
+    assert r["status"] == "ok"
+    assert r["recurrence"] == "monthly"
+
+
+def test_add_exception_recurring_yearly(clean_test_project):
+    _msp_calendar_create(name="YearlyOff-Phase10", base_calendar="Standard")
+    r = _msp_calendar_add_exception(
+        calendar_name="YearlyOff-Phase10",
+        exception_name="New Year Annual",
+        start="2026-01-01",
+        finish="2030-01-01",
+        recurrence="yearly",
+    )
+    assert r["status"] == "ok"
+    assert r["recurrence"] == "yearly"
+
+
+def test_add_exception_recurring_invalid_value(clean_test_project):
+    _msp_calendar_create(name="BadRec-Phase10", base_calendar="Standard")
+    r = _msp_calendar_add_exception(
+        calendar_name="BadRec-Phase10",
+        exception_name="Bad",
+        start="2026-01-01",
+        recurrence="quarterly",  # not supported
+    )
+    assert r["status"] == "error"
+    assert "recurrence" in r["error"]
+
+
+def test_add_exception_recurring_unknown_day_name(clean_test_project):
+    _msp_calendar_create(name="UnknownDay-Phase10", base_calendar="Standard")
+    r = _msp_calendar_add_exception(
+        calendar_name="UnknownDay-Phase10",
+        exception_name="Bad Day",
+        start="2026-01-01",
+        finish="2026-12-31",
+        recurrence="weekly",
+        days_of_week=["xyz"],
+    )
+    assert r["status"] == "error"
+    assert "day_of_week" in r["error"].lower() or "Valid" in r["error"]

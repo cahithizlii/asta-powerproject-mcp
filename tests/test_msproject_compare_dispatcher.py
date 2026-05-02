@@ -9,13 +9,13 @@ import asyncio
 import json
 import os
 import sys
-import tempfile
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from msproject_mcp_core import msproject_compare
+from tests._xer_fixture_builders import write_synthetic_xer as _write_xer
 
 
 SNAPSHOT_A = """ERMHDR\t18.8\t2026-01-01\tu\tApp\tUSD
@@ -75,14 +75,6 @@ SNAPSHOT_B = """ERMHDR\t18.8\t2026-02-01\tu\tApp\tUSD
 %R\t4\t1004\t101\t80.0\t0.0\t80.0\t0.0
 %E
 """
-
-
-def _write_xer(content: str, name: str) -> str:
-    path = os.path.join(tempfile.gettempdir(), name)
-    with open(path, "wb") as f:
-        f.write(b"\xff\xfe")
-        f.write(content.encode("utf-16-le"))
-    return path
 
 
 def _call(action, **kw):

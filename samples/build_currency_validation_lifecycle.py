@@ -16,16 +16,13 @@ Demonstrates that:
 Run:
     python -m samples.build_currency_validation_lifecycle
 """
-import asyncio
 import json
 import os
-import sys
-import tempfile
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
-
+from samples._lifecycle_common import (
+    write_synthetic_xer as _write_xer,
+    call_async_dispatcher,
+)
 from msproject_mcp_core import (
     _msp_evm_validate_currency_mode,
     msproject_evm,
@@ -77,14 +74,6 @@ COST_XER = """ERMHDR\t18.8\t2026-05-01\tcahit\tProject Management\tEUR
 """
 
 
-def _write_xer(content: str, name: str) -> str:
-    path = os.path.join(tempfile.gettempdir(), name)
-    with open(path, "wb") as f:
-        f.write(b"\xff\xfe")
-        f.write(content.encode("utf-16-le"))
-    return path
-
-
 def _print_validate(label: str, xer_path: str):
     print(f"\n{'=' * 70}")
     print(f"  {label}")
@@ -108,8 +97,7 @@ def _print_validate(label: str, xer_path: str):
 
 def _print_dispatcher(label: str, xer_path: str, action: str):
     print(f"\n--- dispatcher: {label} ({action}) ---")
-    raw = asyncio.run(msproject_evm({"action": action, "file_path": xer_path}))
-    r = json.loads(raw)
+    r = call_async_dispatcher(msproject_evm, action, file_path=xer_path)
     print(json.dumps(r, indent=2, ensure_ascii=False, default=str)[:600])
 
 

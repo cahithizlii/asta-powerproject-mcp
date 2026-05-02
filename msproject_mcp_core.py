@@ -5053,22 +5053,17 @@ def _evm_load_baseline_data_impl(file_path=None, baseline_number=0):
 
 
 def _evm_detect_currency_mode(tasks, resources):
-    """RULE 3 — hours vs cost loading.
+    """RULE 3 — hours vs cost loading (legacy 2-mode return).
 
-    'hours' if no cost data anywhere; 'cost' if any non-zero cost field found.
+    Phase 6.1: delegates to currency_validator pure module. Maps 4-mode
+    output -> 2-mode for backward compat with existing dispatcher action
+    `detect_currency_mode` and any caller expecting 'cost'/'hours' only:
+        cost / mixed       -> 'cost' (cost data present)
+        hours / uncertain  -> 'hours' (no cost data)
     """
-    total_cost = 0.0
-    for t in tasks or []:
-        try:
-            total_cost += float(t.get("cost") or 0)
-        except (TypeError, ValueError):
-            pass
-    for r in resources or []:
-        try:
-            total_cost += float(r.get("cost") or 0)
-        except (TypeError, ValueError):
-            pass
-    return "cost" if total_cost > 0 else "hours"
+    from currency_validator import detect_mode_from_tasks_resources
+    mode = detect_mode_from_tasks_resources(tasks, resources)
+    return "cost" if mode in ("cost", "mixed") else "hours"
 
 
 def _evm_compute_pv_ev_ac(load_data, baseline_load):
@@ -5261,6 +5256,73 @@ def _msp_evm_detect_currency_mode(file_path=None):
     mode = _evm_detect_currency_mode(load.get("tasks", []),
                                     load.get("resources", []))
     return {"status": "ok", "mode": mode}
+
+
+def _msp_evm_validate_currency_mode(file_path=None):
+    """Phase 6.1 Action 14: validate_currency_mode (RULE 3, multi-source).
+
+    Cross-validates currency mode across sources:
+        - tasks + resources cost fields (all formats)
+        - XER TASKRSRC assignments target_cost/target_qty pattern (XER only)
+        - XER ERMHDR.currency code (XER only)
+
+    4-mode primary output: 'cost'|'hours'|'mixed'|'uncertain'.
+
+    Returns:
+        {
+          status,
+          primary_mode,
+          currency_code: 'USD'|None,
+          cross_validation: {consensus_mode, confidence, conflicts,
+                             warnings, source_counts},
+          sources: {tasks_resources, xer_assignments, currency_header},
+        }
+    """
+    from currency_validator import (
+        detect_mode_from_xer_assignments,
+        detect_mode_from_tasks_resources,
+        extract_currency_code,
+        cross_validate_modes,
+    )
+    load = _evm_load_task_data(file_path=file_path)
+    if load.get("status") != "ok":
+        return load
+    sources = []
+    # Source 1: tasks + resources (all formats)
+    tr_mode = detect_mode_from_tasks_resources(
+        load.get("tasks", []), load.get("resources", []))
+    sources.append(("tasks_resources", tr_mode))
+    # Source 2: XER assignments RULE 3 pattern (XER only)
+    xer_assignments_mode = None
+    currency_code = None
+    is_xer = (file_path and isinstance(file_path, str)
+              and file_path.lower().endswith(".xer"))
+    if is_xer:
+        from xer_parser import XerFile
+        try:
+            xf = XerFile(file_path)
+            assignments = xf.read_assignments()
+            xer_assignments_mode = detect_mode_from_xer_assignments(assignments)
+            sources.append(("xer_assignments", xer_assignments_mode))
+            currency_code = extract_currency_code(xf.header_fields)
+        except Exception as e:
+            logger.warning(f"XER currency validation skipped: {e}")
+    cv = cross_validate_modes(sources)
+    primary_mode = cv["consensus_mode"]
+    # Fallback: if consensus uncertain but tr_mode is decisive, use it
+    if primary_mode == "uncertain" and tr_mode != "uncertain":
+        primary_mode = tr_mode
+    return {
+        "status": "ok",
+        "primary_mode": primary_mode,
+        "currency_code": currency_code,
+        "cross_validation": cv,
+        "sources": {
+            "tasks_resources": tr_mode,
+            "xer_assignments": xer_assignments_mode,
+            "currency_header": currency_code,
+        },
+    }
 
 
 def _evm_bucket_to_delta(bucket):
@@ -5593,6 +5655,8 @@ async def msproject_evm(params: dict) -> str:
             r = _msp_evm_trend(**p)
         elif action == "detect_currency_mode":
             r = _msp_evm_detect_currency_mode(**p)
+        elif action == "validate_currency_mode":
+            r = _msp_evm_validate_currency_mode(**p)
         else:
             r = {"status": "error",
                  "error": (f"Unknown action '{action}'. Valid: "
@@ -5600,7 +5664,7 @@ async def msproject_evm(params: dict) -> str:
                           "time_phased_evm/period_delta/progress_data_quality/"
                           "variance_to_baseline/compare_baselines_evm/"
                           "save_period_snapshot/get_period_history/trend/"
-                          "detect_currency_mode")}
+                          "detect_currency_mode/validate_currency_mode")}
     except TypeError as e:
         r = {"status": "error", "error": f"Invalid params for {action}: {e}"}
     except Exception as e:

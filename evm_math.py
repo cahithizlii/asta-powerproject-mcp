@@ -133,6 +133,72 @@ def time_phased_ev(tasks: List[Dict[str, Any]],
     return out
 
 
+def _task_ac_at_date(task: Dict[str, Any], eval_date: _dt.date) -> float:
+    """Phase 6.2 — Linear distribution of actual_work across the task's
+    actual execution window.
+
+    Logic:
+        actual_work == 0 -> 0.0
+        actual_start missing -> fall back to baseline_start (best estimate;
+            preserves cumulative AC = sum(actual_work) at project finish)
+        actual_finish missing (in-progress task):
+            distribute linearly between actual_start and eval_date
+            (full actual_work consumed by eval_date if started)
+        actual_finish present:
+            actual_finish <= eval_date -> full actual_work
+            actual_start  >  eval_date -> 0
+            otherwise -> linear interpolation start..finish
+    """
+    aw = float(task.get("actual_work") or 0)
+    if aw == 0:
+        return 0.0
+    as_ = task.get("actual_start") or task.get("baseline_start")
+    af = task.get("actual_finish")
+    if as_ is None:
+        return 0.0
+    if hasattr(as_, "date"):
+        as_ = as_.date()
+    if af is not None and hasattr(af, "date"):
+        af = af.date()
+    if as_ > eval_date:
+        return 0.0
+    if af is None:
+        # In-progress: AC accrued is what the task already consumed.
+        # If eval_date >= actual_start, the actual_work reported is what's
+        # been spent up to data_date — return full aw.
+        return aw
+    if af <= eval_date:
+        return aw
+    duration_days = max((af - as_).days, 1)
+    elapsed_days = max((eval_date - as_).days, 0)
+    return aw * elapsed_days / duration_days
+
+
+def time_phased_ac(tasks: List[Dict[str, Any]],
+                   buckets: List[Tuple[_dt.date, _dt.date]],
+                   data_date: _dt.date) -> List[float]:
+    """Phase 6.2 — Cumulative AC at each bucket end via per-task linear
+    distribution across actual_start..actual_finish (or actual_start to
+    in-progress task's eval_date).
+
+    Future buckets capped at data_date (AC doesn't grow beyond data_date),
+    matching time_phased_ev semantics.
+
+    Replaces uniform 'total_ac / past_buckets' approximation that ignored
+    when each task actually executed.
+    """
+    if hasattr(data_date, "date"):
+        data_date = data_date.date()
+    out = []
+    for (_, bucket_end) in buckets:
+        if hasattr(bucket_end, "date"):
+            bucket_end = bucket_end.date()
+        eval_at = min(bucket_end, data_date)
+        ac = sum(_task_ac_at_date(t, eval_at) for t in tasks)
+        out.append(ac)
+    return out
+
+
 def period_delta(snap_now: Dict[str, Any],
                  snap_prev: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """RULE 6 — Haftalik/aylik delta. period_BAC = 0 (sabit)."""

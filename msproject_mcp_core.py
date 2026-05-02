@@ -4884,6 +4884,7 @@ from evm_math import (
     earned_schedule as _evm_earned_schedule,
     time_phased_pv as _evm_tp_pv,
     time_phased_ev as _evm_tp_ev,
+    time_phased_ac as _evm_tp_ac,
     period_delta as _evm_period_delta,
     progress_data_quality as _evm_pdq,
     rag_status as _evm_rag,
@@ -5381,24 +5382,23 @@ def _msp_evm_time_phased_evm(file_path=None, baseline_number=0, bucket="week"):
             "baseline_start": bs, "baseline_finish": bf,
             "baseline_work": float(t.get("baseline_work") or 0),
             "percent_complete": float(t.get("percent_complete") or 0),
+            # Phase 6.2 — actual fields for per-task AC distribution
+            "actual_start": _parse_iso_date(t.get("actual_start")),
+            "actual_finish": _parse_iso_date(t.get("actual_finish")),
+            "actual_work": float(t.get("actual_work") or 0),
         })
     pv = _evm_tp_pv(enriched, [(s, e) for (s, e) in buckets])
     ev = _evm_tp_ev(enriched, [(s, e) for (s, e) in buckets], data_date=data_date)
-    # AC simplification — distribute total AC evenly across past buckets
-    total_ac = sum(float(t.get("actual_work") or 0) for t in tasks)
-    past_buckets = sum(1 for (_, e) in buckets if e <= data_date)
-    ac_per_bucket = (total_ac / past_buckets) if past_buckets > 0 else 0.0
-    ac_cum = 0.0
+    # Phase 6.2 — true per-task AC distribution (replaces uniform total/past)
+    ac = _evm_tp_ac(enriched, [(s, e) for (s, e) in buckets], data_date=data_date)
     out = []
     for i, (s, e) in enumerate(buckets):
-        if e <= data_date:
-            ac_cum += ac_per_bucket
         out.append({
             "period_start": s.isoformat(),
             "period_end": e.isoformat(),
             "pv": round(pv[i], 2),
             "ev": round(ev[i], 2),
-            "ac": round(ac_cum, 2),
+            "ac": round(ac[i], 2),
         })
     return {"status": "ok", "bucket": bucket, "buckets": out}
 

@@ -286,6 +286,35 @@ Acceptance: `samples/build_xer_lifecycle.py` parses synthetic CAU XER
 
 Tool count: **12 tools, ~95 actions**.
 
+## Phase 5e — XER Native Integration (1 May 2026)
+
+Wires Phase 5d `msproject_xer` reader into Phase 5a EVM + Phase 5b DCMA
++ Phase 5c Excel pipelines via additive `.xer` extension routing in
+Phase 5a loaders. **NO new tools** — existing `msproject_health.assess_all`
++ `msproject_excel.export_hakedis` etc. now accept `.xer` file_path
+directly.
+
+CAU XER → DCMA + hakediş Excel end-to-end:
+```
+msproject_health.assess_all(file_path="cau.xer") → 14 DCMA rules + RAG
+msproject_excel.export_hakedis(file_path="cau.xer", xlsx_path="hak.xlsx")
+                                                 → 6-sheet hakediş workbook
+```
+
+Phase 5a `_evm_load_task_data` + `_evm_load_baseline_data` get a single
+guard line each (additive, NO modification of existing logic). Phase 5b
+`_dcma_load_links` gets the same guard. Adapter helpers
+(`_xer_to_evm_task_shape`, `_xer_to_evm_baseline_shape`) translate
+XerFile output to Phase 5a expected shape including baseline_*,
+actual_work (aggregated from XER assignments), critical (heuristic:
+total_slack_days <= 0), and predecessors/successors derived from links.
+
+Acceptance: `samples/build_xer_dcma_excel_lifecycle.py` runs CAU XER
+→ DCMA assess_all + drill_down + export_dcma + export_hakedis in
+<0.2s (pure-Python, no COM).
+
+Tool count unchanged: **12 tools, ~95 actions**.
+
 ## Quick Start
 
 1. Install deps: `pip install -r requirements.txt`

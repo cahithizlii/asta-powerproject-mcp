@@ -5511,7 +5511,18 @@ def _dcma_load_links(file_path=None):
     None -> Phase 1 COM iter walking proj.Tasks predecessors.
 
     Returns list of {from_id, to_id, type, lag_days}.
+
+    Phase 5e additive routing: file_path ending '.xer' delegates to
+    XerFile.read_links (Phase 5d reader). Existing .xml/.mpp paths
+    unchanged.
     """
+    if file_path and isinstance(file_path, str) and file_path.lower().endswith(".xer"):
+        from xer_parser import XerFile
+        try:
+            return XerFile(file_path).read_links()
+        except Exception as e:
+            logger.exception(f"_dcma_load_links XER routing failed: {e}")
+            return []
     if file_path:
         r = _msp_file_read_links(file_path=file_path)
         if r.get("status") != "ok":

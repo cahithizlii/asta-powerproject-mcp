@@ -1,7 +1,8 @@
 # Construction Planning MCP Suite
 
 Three Model Context Protocol servers for construction project planning across
-Asta Powerproject and Microsoft Project.
+Asta Powerproject and Microsoft Project. Production-grade hakediş workflow:
+EVM → DCMA → multi-sheet Excel from `.xml` / `.mpp` / `.xer` / live COM.
 
 ## Servers
 
@@ -9,7 +10,56 @@ Asta Powerproject and Microsoft Project.
 |---|---|---|
 | `asta_powerproject_mcp` | `asta_mcp_core.py` | Live COM control of Asta Powerproject (8 tools): tasks, links, progress, resources, schedule, codes, views, exports. |
 | `asta_powerproject_file` | `asta_mcp_file.py` | File-based read access via MPXJ/MSPDI for Asta `.pp/.xer/.xml` (4 tools): query, resources, calendar, edit. |
-| `msproject_mcp` | `msproject_mcp_core.py` | Microsoft Project COM with hybrid bulk routing (7 tools, ~52 actions): `msproject_task`, `msproject_link`, `msproject_schedule`, `msproject_calendar`, `msproject_resource`, `msproject_baseline`, `msproject_progress`. |
+| `msproject_mcp` | `msproject_mcp_core.py` | Microsoft Project COM + file + XER (**12 tools, ~95 actions**): `msproject_task`, `link`, `schedule`, `calendar`, `resource`, `baseline`, `progress`, `file`, `evm` (Phase 5a), `health` (Phase 5b DCMA), `excel` (Phase 5c hakediş), `xer` (Phase 5d Primavera P6 reader). |
+
+## Architecture overview
+
+```
+                        msproject_mcp (12 tools)
+                               │
+   ┌───────────────────────────┼───────────────────────────┐
+   │ Phase 1-4: COM + File     │ Phase 5: Compute + I/O    │
+   │                           │                           │
+   │  task / link / schedule   │  evm    (RULE 4-9)        │
+   │  calendar / resource      │  health (RULE 10 DCMA)    │
+   │  baseline / progress      │  excel  (hakediş workbook)│
+   │  file (XML/MPP/.xer*)     │  xer    (P6 reader)       │
+   └───────────────────────────┴───────────────────────────┘
+                               │
+            ┌──────────────────┴──────────────────┐
+            │   Pure-Python compute modules        │
+            │  (Yaklaşım C — testable, fixture-free)│
+            │                                      │
+            │  evm_math.py    — EVM algorithms     │
+            │  dcma_checks.py — 14 DCMA rules      │
+            │  excel_io.py    — openpyxl builders  │
+            │  xer_parser.py  — P6 XER text parser │
+            │  mspdi_parser.py — XML reader/writer │
+            └──────────────────────────────────────┘
+
+* Phase 5e/5f: any helper accepting file_path now routes .xer transparently
+  via additive guard pattern. msproject_file.read_tasks(file_path="cau.xer")
+  works directly; msproject_health.assess_all(file_path="cau.xer") returns
+  14 DCMA rules; msproject_excel.export_hakedis() produces 6-sheet workbook.
+
+## Phase changelog (2026-04-24 → 2026-05-01)
+
+| Date | Phase | Tool | Status |
+|---|---|---|---|
+| 2026-04-24 | 1 | task/link/schedule | ✅ shipped |
+| 2026-04-27 | 2a | calendar | ✅ shipped |
+| 2026-04-28 | 2b/3a | resource/baseline | ✅ shipped |
+| 2026-04-29 | 3b | progress | ✅ shipped |
+| 2026-04-30 | 4 | file (msproject_file) | ✅ shipped |
+| 2026-04-30 | 5a | evm (msproject_evm) | ✅ shipped + TAIL fix |
+| 2026-05-01 | 5b | health (msproject_health DCMA) | ✅ shipped + TAIL fix |
+| 2026-05-01 | 5c | excel (msproject_excel) | ✅ shipped + TAIL fix |
+| 2026-05-01 | 5d | xer (msproject_xer P6 reader) | ✅ shipped |
+| 2026-05-01 | 5e | XER native integration | ✅ shipped (additive routing) |
+| 2026-05-01 | 5f | File MCP XER symmetry | ✅ shipped (additive routing) |
+
+Cumulative regression: **413 PASS**. Detailed session summary:
+[`docs/sessions/2026-05-01-marathon-summary.md`](docs/sessions/2026-05-01-marathon-summary.md).
 
 ## Phase 1 Status — MS Project MCP
 

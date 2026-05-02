@@ -152,3 +152,41 @@ def test_time_phased_ac_total_matches_sum_actual_work():
             f"Final cumulative AC ({final_ac}) != sum actual_work ({total_aw})"
     finally:
         os.remove(path)
+
+
+# === Phase 9.2 — ac_increment integration ===
+
+def test_time_phased_ac_increment_field_present():
+    """Phase 9.2: each bucket dict must include ac_increment."""
+    path = _build_staggered_xer()
+    try:
+        r = _msp_evm_time_phased_evm(file_path=path, bucket="month")
+        for b in r["buckets"]:
+            assert "ac_increment" in b
+    finally:
+        os.remove(path)
+
+
+def test_time_phased_ac_increments_sum_to_cumulative_final():
+    """Phase 9.2: sum of ac_increment == final cumulative ac."""
+    path = _build_staggered_xer()
+    try:
+        r = _msp_evm_time_phased_evm(file_path=path, bucket="month")
+        increments = [b["ac_increment"] for b in r["buckets"]]
+        final_ac = r["buckets"][-1]["ac"]
+        # Final cumulative AC may be < max if past-data-date buckets
+        # plateau, but sum of increments must match the running total
+        assert abs(sum(increments) - max(b["ac"] for b in r["buckets"])) < 0.5
+    finally:
+        os.remove(path)
+
+
+def test_time_phased_ac_increment_first_equals_first_cumulative():
+    path = _build_early_finish_xer()
+    try:
+        r = _msp_evm_time_phased_evm(file_path=path, bucket="month")
+        if r["buckets"]:
+            assert abs(r["buckets"][0]["ac_increment"]
+                       - r["buckets"][0]["ac"]) < 0.01
+    finally:
+        os.remove(path)

@@ -4620,35 +4620,78 @@ _TASK_UPDATE_FIELD_MAP = {
     "finish": "finish_date",
 }
 
+# Phase 9.3 — baseline fields routed through MspdiProject.write_baseline
+# instead of update_task (different XML element under <Task>).
+_TASK_UPDATE_BASELINE_FIELDS = (
+    "baseline_start",
+    "baseline_finish",
+    "baseline_duration_h",
+    "baseline_work_h",
+)
+
 
 def _msp_file_update_task(file_path: str, task_id: int,
-                          fields: Dict[str, Any]) -> Dict[str, Any]:
+                          fields: Dict[str, Any],
+                          baseline_number: int = 0) -> Dict[str, Any]:
     """Update a single task's fields in an XML file.
 
-    fields: unified-contract dict (keys: duration, name, percent_complete,
-    notes, start, finish). Translated to MspdiProject.update_task kwargs
-    via _TASK_UPDATE_FIELD_MAP.
+    Args:
+        fields: unified-contract dict. Schedule keys (duration, name,
+            percent_complete, notes, start, finish) routed through
+            MspdiProject.update_task. Phase 9.3 — baseline keys
+            (baseline_start, baseline_finish, baseline_duration_h,
+            baseline_work_h) routed through MspdiProject.write_baseline
+            for the same task_id.
+        baseline_number: 0=primary baseline, 1-10=numbered (Phase 9.3).
+
+    Returns:
+        {status, task_id, schedule_updated, baseline_written,
+         auto_imported, reschedule_ok}.
     """
     if not isinstance(fields, dict) or not fields:
         return {"status": "error", "error": "fields dict is required"}
     try:
         mgr = _get_msp_file_manager(file_path)
         _ensure_xml_write_target(mgr)
-        # Translate field names
-        kwargs: Dict[str, Any] = {}
+        schedule_kwargs: Dict[str, Any] = {}
+        baseline_entry: Dict[str, Any] = {}
+        valid_keys = (set(_TASK_UPDATE_FIELD_MAP.keys())
+                      | set(_TASK_UPDATE_BASELINE_FIELDS))
         for k, v in fields.items():
-            mapped = _TASK_UPDATE_FIELD_MAP.get(k)
-            if mapped is None:
+            if k in _TASK_UPDATE_FIELD_MAP:
+                schedule_kwargs[_TASK_UPDATE_FIELD_MAP[k]] = v
+            elif k in _TASK_UPDATE_BASELINE_FIELDS:
+                baseline_entry[k] = v
+            else:
                 return {"status": "error",
-                        "error": f"Unknown field '{k}'. Valid: {list(_TASK_UPDATE_FIELD_MAP.keys())}"}
-            kwargs[mapped] = v
-        result = mgr.update_task(task_id=task_id, **kwargs)
-        # mspdi_parser returns dict with 'error' key on missing task
-        if isinstance(result, dict) and "error" in result:
-            return {"status": "error", "error": result["error"]}
+                        "error": (f"Unknown field '{k}'. Valid: "
+                                  f"{sorted(valid_keys)}")}
+        # Apply schedule update first (mirrors prior behavior)
+        schedule_updated = False
+        if schedule_kwargs:
+            result = mgr.update_task(task_id=task_id, **schedule_kwargs)
+            if isinstance(result, dict) and "error" in result:
+                return {"status": "error", "error": result["error"]}
+            schedule_updated = True
+        # Phase 9.3 — apply baseline update via write_baseline
+        baseline_written = 0
+        if baseline_entry:
+            uid = mgr._uid_by_id.get(task_id)
+            if uid is None:
+                return {"status": "error",
+                        "error": f"task_id {task_id} not found"}
+            baseline_entry["task_uid"] = uid
+            baseline_written = mgr.write_baseline(baseline_number,
+                                                   [baseline_entry])
+        if not schedule_updated and baseline_written == 0:
+            return {"status": "error",
+                    "error": "no fields applied (task_id may not exist)"}
         mgr.save(output_path=file_path)
         sync = _maybe_auto_sync(file_path)
-        return {"status": "ok", "task_id": task_id, **sync}
+        return {"status": "ok", "task_id": task_id,
+                "schedule_updated": schedule_updated,
+                "baseline_written": baseline_written,
+                **sync}
     except FileNotFoundError as e:
         return {"status": "error", "error": str(e)}
     except ValueError as e:
@@ -4962,6 +5005,7 @@ from evm_math import (
     time_phased_pv as _evm_tp_pv,
     time_phased_ev as _evm_tp_ev,
     time_phased_ac as _evm_tp_ac,
+    time_phased_ac_increments as _evm_tp_ac_inc,
     period_delta as _evm_period_delta,
     progress_data_quality as _evm_pdq,
     rag_status as _evm_rag,
@@ -5468,6 +5512,9 @@ def _msp_evm_time_phased_evm(file_path=None, baseline_number=0, bucket="week"):
     ev = _evm_tp_ev(enriched, [(s, e) for (s, e) in buckets], data_date=data_date)
     # Phase 6.2 — true per-task AC distribution (replaces uniform total/past)
     ac = _evm_tp_ac(enriched, [(s, e) for (s, e) in buckets], data_date=data_date)
+    # Phase 9.2 — per-bucket AC delta (non-cumulative)
+    ac_inc = _evm_tp_ac_inc(enriched, [(s, e) for (s, e) in buckets],
+                             data_date=data_date)
     out = []
     for i, (s, e) in enumerate(buckets):
         out.append({
@@ -5476,6 +5523,7 @@ def _msp_evm_time_phased_evm(file_path=None, baseline_number=0, bucket="week"):
             "pv": round(pv[i], 2),
             "ev": round(ev[i], 2),
             "ac": round(ac[i], 2),
+            "ac_increment": round(ac_inc[i], 2),
         })
     return {"status": "ok", "bucket": bucket, "buckets": out}
 

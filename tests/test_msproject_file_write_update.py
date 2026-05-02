@@ -57,6 +57,97 @@ def test_update_task_mpp_rejected(tmp_path):
     assert ".mpp" in msg or "binary" in msg or "not supported" in msg
 
 
+# === Phase 9.3 — update_task baseline awareness ===
+
+def test_update_task_baseline_only(writable_xml):
+    """baseline_* fields routed to write_baseline (no schedule update)."""
+    r = _msp_file_update_task(file_path=writable_xml, task_id=1,
+                              fields={
+                                  "baseline_start": "2026-09-01T08:00:00",
+                                  "baseline_finish": "2026-09-30T17:00:00",
+                                  "baseline_duration_h": 200.0,
+                                  "baseline_work_h": 120.0,
+                              })
+    assert r["status"] == "ok"
+    assert r["schedule_updated"] is False
+    assert r["baseline_written"] == 1
+    # Verify the baseline persisted
+    from mspdi_parser import MspdiProject
+    proj = MspdiProject(writable_xml)
+    bls = proj.read_baselines(0)
+    assert any(b["task_id"] == 1
+               and b["baseline_start"] == "2026-09-01T08:00:00"
+               for b in bls)
+
+
+def test_update_task_mixed_schedule_and_baseline(writable_xml):
+    """Single call updates both schedule fields and baseline fields."""
+    r = _msp_file_update_task(file_path=writable_xml, task_id=1,
+                              fields={
+                                  "duration": "10d",
+                                  "baseline_start": "2026-10-01T08:00:00",
+                                  "baseline_finish": "2026-10-31T17:00:00",
+                              })
+    assert r["status"] == "ok"
+    assert r["schedule_updated"] is True
+    assert r["baseline_written"] == 1
+    # Schedule check
+    r2 = _msp_file_read_tasks(file_path=writable_xml)
+    t1 = next(t for t in r2["tasks"] if t["id"] == 1)
+    assert t1["duration_h"] == 80.0  # 10d * 8h
+    # Baseline check
+    from mspdi_parser import MspdiProject
+    proj = MspdiProject(writable_xml)
+    bls = proj.read_baselines(0)
+    assert any(b["task_id"] == 1
+               and b["baseline_finish"] == "2026-10-31T17:00:00"
+               for b in bls)
+
+
+def test_update_task_unknown_field_error_lists_baseline_keys(writable_xml):
+    """Error message for unknown field must include baseline_* in valid list."""
+    r = _msp_file_update_task(file_path=writable_xml, task_id=1,
+                              fields={"not_a_field": "x"})
+    assert r["status"] == "error"
+    assert "baseline_start" in r["error"]
+
+
+def test_update_task_baseline_unknown_task_id(writable_xml):
+    """Baseline-only update on missing task_id returns clear error."""
+    r = _msp_file_update_task(file_path=writable_xml, task_id=99_999_999,
+                              fields={"baseline_start": "2026-01-01T08:00:00"})
+    assert r["status"] == "error"
+
+
+def test_update_task_baseline_number_param(writable_xml):
+    """baseline_number=1 writes to a numbered baseline, not primary."""
+    r = _msp_file_update_task(file_path=writable_xml, task_id=1,
+                              fields={"baseline_start": "2026-11-01T08:00:00"},
+                              baseline_number=1)
+    assert r["status"] == "ok"
+    assert r["baseline_written"] == 1
+    from mspdi_parser import MspdiProject
+    proj = MspdiProject(writable_xml)
+    # Number 0 should still be empty for this field; number 1 has the data
+    bls0 = proj.read_baselines(0)
+    bls1 = proj.read_baselines(1)
+    assert not any(b["task_id"] == 1
+                   and b["baseline_start"] == "2026-11-01T08:00:00"
+                   for b in bls0)
+    assert any(b["task_id"] == 1
+               and b["baseline_start"] == "2026-11-01T08:00:00"
+               for b in bls1)
+
+
+def test_update_task_schedule_only_response_shape(writable_xml):
+    """Phase 9.3 adds schedule_updated/baseline_written fields to response."""
+    r = _msp_file_update_task(file_path=writable_xml, task_id=1,
+                              fields={"duration": "3d"})
+    assert r["status"] == "ok"
+    assert r["schedule_updated"] is True
+    assert r["baseline_written"] == 0
+
+
 def test_save_as_xml(tmp_path):
     """Save fixture to a new path; output file exists and has size."""
     dst = tmp_path / "renamed.xml"

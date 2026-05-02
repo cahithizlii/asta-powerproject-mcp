@@ -199,6 +199,28 @@ def time_phased_ac(tasks: List[Dict[str, Any]],
     return out
 
 
+def time_phased_ac_increments(tasks: List[Dict[str, Any]],
+                              buckets: List[Tuple[_dt.date, _dt.date]],
+                              data_date: _dt.date) -> List[float]:
+    """Phase 9.2 — Per-bucket AC delta (non-cumulative).
+
+    Each value is the AC accrued during that period only:
+        increments[0] = cumulative[0]
+        increments[i] = cumulative[i] - cumulative[i-1]   (for i > 0)
+
+    Sum of all increments equals cumulative AC at the final bucket
+    (modulo float precision). Useful for monthly hakediş where each
+    period's spend (not running total) is reported.
+    """
+    cum = time_phased_ac(tasks, buckets, data_date)
+    if not cum:
+        return []
+    out = [cum[0]]
+    for i in range(1, len(cum)):
+        out.append(cum[i] - cum[i - 1])
+    return out
+
+
 def period_delta(snap_now: Dict[str, Any],
                  snap_prev: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """RULE 6 — Haftalik/aylik delta. period_BAC = 0 (sabit)."""

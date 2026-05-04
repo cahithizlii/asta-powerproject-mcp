@@ -211,3 +211,66 @@ def test_cross_validate_source_counts_present():
     assert r["source_counts"]["cost"] == 2
     assert r["source_counts"]["hours"] == 1
     assert r["source_counts"]["uncertain"] == 1
+
+
+# === Phase 11.1 T141: gap-fill for non-numeric / missing fields ===
+
+def test_xer_assignments_skips_non_numeric_qty_or_cost():
+    """Rows with target_qty=None or target_cost='abc' are skipped (line 62 continue)."""
+    assignments = [
+        {"task_id": 1, "target_qty": None, "target_cost": 100.0},      # qty None -> skip
+        {"task_id": 2, "target_qty": 100.0, "target_cost": None},      # cost None -> skip
+        {"task_id": 3, "target_qty": "not-a-number", "target_cost": 0},  # qty non-numeric -> skip
+        {"task_id": 4, "target_qty": 50.0, "target_cost": "bad"},      # cost non-numeric -> skip
+    ]
+    # All rows skipped -> uncertain
+    assert detect_mode_from_xer_assignments(assignments) == "uncertain"
+
+
+def test_xer_assignments_zero_qty_zero_cost_skipped():
+    """target_qty=0 and target_cost=0 -> no signal (skipped from else branch)."""
+    assignments = [
+        {"task_id": 1, "target_qty": 0.0, "target_cost": 0.0},
+        {"task_id": 2, "target_qty": 0.0, "target_cost": 0.0},
+    ]
+    assert detect_mode_from_xer_assignments(assignments) == "uncertain"
+
+
+def test_xer_assignments_zero_qty_positive_cost_signals_cost():
+    """target_qty=0 with target_cost>0 -> cost signal."""
+    assignments = [
+        {"task_id": 1, "target_qty": 0.0, "target_cost": 500.0},
+    ]
+    assert detect_mode_from_xer_assignments(assignments) == "cost"
+
+
+def test_tasks_resources_skips_non_numeric_resource_cost():
+    """Resource entries with cost=None are skipped (line 107 continue)."""
+    tasks = [{"id": 1, "cost": 1000.0}]
+    resources = [
+        {"id": "R1", "cost": None},          # None -> skip
+        {"id": "R2", "cost": "not-numeric"},  # bad str -> skip
+        {"id": "R3", "cost": 500.0},
+    ]
+    # tasks: 1 cost_signal; resources: R3 -> cost_signal -> 'cost'
+    assert detect_mode_from_tasks_resources(tasks, resources) == "cost"
+
+
+def test_tasks_resources_skips_non_numeric_task_cost():
+    """Task entries with cost=None or non-numeric are skipped (line 99 continue)."""
+    tasks = [
+        {"id": 1, "cost": None},
+        {"id": 2, "cost": "abc"},
+    ]
+    # No signals at all -> uncertain
+    assert detect_mode_from_tasks_resources(tasks, None) == "uncertain"
+
+
+def test_extract_currency_code_strips_whitespace():
+    """Whitespace-only currency value normalized to None after strip."""
+    assert extract_currency_code({"currency": "   "}) is None
+
+
+def test_extract_currency_code_strips_real_value():
+    """Currency value with surrounding whitespace gets stripped to clean code."""
+    assert extract_currency_code({"currency": "  USD  "}) == "USD"

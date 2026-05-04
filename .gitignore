@@ -4,6 +4,12 @@ __pycache__/
 *.pyo
 .env
 
+# Coverage artifacts (Phase 11.1)
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
 # Backups
 *.bak
 *.backup

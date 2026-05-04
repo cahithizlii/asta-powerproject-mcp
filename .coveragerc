@@ -1,0 +1,24 @@
+[run]
+source = .
+omit =
+    tests/*
+    samples/*
+    build_*.py
+    asta_mcp_*.py
+    nuke_cleanup.py
+    docs/*
+    setup.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    pythoncom.CoInitialize
+    win32com.client
+    proj\.Application
+    \.ActiveProject
+    pywintypes\.Time
+    cal\.Exceptions\.Add
+    if TYPE_CHECKING:
+    @overload

@@ -349,3 +349,43 @@ def test_default_task_fields_include_progress_and_baseline():
     assert "percent_complete" in DEFAULT_TASK_FIELDS
     assert "baseline_start" in DEFAULT_TASK_FIELDS
     assert "actual_work" in DEFAULT_TASK_FIELDS
+
+
+# === Phase 11.1 T141: gap-fill ===
+
+def test_diff_tasks_skips_items_with_none_id():
+    """_index_by skips items whose key value is None (line 42 continue)."""
+    tasks_a = [
+        {"id": None, "name": "ghost"},
+        {"id": 1, "name": "T1", "percent_complete": 50},
+    ]
+    tasks_b = [
+        {"id": 1, "name": "T1", "percent_complete": 75},
+    ]
+    r = diff_tasks(tasks_a, tasks_b)
+    # Ghost task ignored; T1 marked changed
+    assert len(r["changed"]) == 1
+    assert r["changed"][0]["id"] == 1
+
+
+def test_diff_evm_safe_sub_handles_non_numeric_strings():
+    """_safe_sub returns None when values can't be converted (lines 189-190)."""
+    snap_a = {"bac": "not-a-number", "pv": 100, "ev": 100, "ac": 50,
+              "spi": 1.0, "cpi": 1.0}
+    snap_b = {"bac": "still-not-a-number", "pv": 200, "ev": 150, "ac": 100,
+              "spi": 0.75, "cpi": 0.6}
+    r = diff_evm(snap_a, snap_b)
+    # bac_delta forced through ValueError path -> None
+    assert r["bac_delta"] is None
+    # Numeric fields still compute deltas
+    assert r["pv_delta"] == 100.0
+
+
+def test_diff_evm_safe_sub_handles_unsupported_type():
+    """_safe_sub returns None when float() raises TypeError on weird types."""
+    class Weird:
+        pass
+    snap_a = {"ev": Weird()}
+    snap_b = {"ev": 100}
+    r = diff_evm(snap_a, snap_b)
+    assert r["ev_delta"] is None

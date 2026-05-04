@@ -390,3 +390,151 @@ def test_read_progress_no_project_table(tmp_path):
     p = x.read_progress()
     assert p["status_date"] is None
     assert len(p["tasks"]) == 1
+
+
+# === Phase 11.1 T141: gap-fill ===
+
+def test_xer_handles_utf8_bom(tmp_path):
+    """UTF-8 BOM (EF BB BF) is detected and stripped (line 51)."""
+    content = ("ERMHDR\t18.8\t2026-01-01\tu\tApp\tUSD\n"
+               "%T\tTASK\n%F\ttask_id\ttask_name\n%R\t1\tT1_utf8bom\n%E\n")
+    path = tmp_path / "u8bom.xer"
+    path.write_bytes(b"\xef\xbb\xbf" + content.encode("utf-8"))
+    x = XerFile(str(path))
+    assert "TASK" in x.tables
+    assert x.tables["TASK"]["rows"][0]["task_name"] == "T1_utf8bom"
+
+
+def test_xer_skips_unknown_marker(tmp_path):
+    """Unknown markers like '%Z' are silently skipped (line 102/103)."""
+    content = ("ERMHDR\t18.8\t2026-01-01\tu\tApp\tUSD\n"
+               "%Z unknown marker line\n"
+               "%T\tTASK\n%F\ttask_id\ttask_name\n%R\t1\tT1\n%E\n")
+    path = tmp_path / "u.xer"
+    path.write_bytes(b"\xff\xfe" + content.encode("utf-16-le"))
+    x = XerFile(str(path))
+    # Parser tolerated the %Z marker
+    assert x.tables["TASK"]["rows"][0]["task_name"] == "T1"
+
+
+def test_xer_skips_blank_lines(tmp_path):
+    """Empty lines are skipped (line 64)."""
+    content = ("ERMHDR\t18.8\t2026-01-01\tu\tApp\tUSD\n"
+               "\n\n"  # two blank lines
+               "%T\tTASK\n%F\ttask_id\ttask_name\n"
+               "\n"   # blank line in middle
+               "%R\t1\tT1\n%E\n")
+    path = tmp_path / "b.xer"
+    path.write_bytes(b"\xff\xfe" + content.encode("utf-16-le"))
+    x = XerFile(str(path))
+    assert x.tables["TASK"]["rows"][0]["task_name"] == "T1"
+
+
+def test_xer_skips_field_marker_without_table(tmp_path):
+    """`%F` before any `%T` is ignored (line 83 continue)."""
+    content = ("ERMHDR\t18.8\t2026-01-01\tu\tApp\tUSD\n"
+               "%F\torphan_field\n"  # %F before any %T
+               "%T\tTASK\n%F\ttask_id\ttask_name\n%R\t1\tT1\n%E\n")
+    path = tmp_path / "of.xer"
+    path.write_bytes(b"\xff\xfe" + content.encode("utf-16-le"))
+    x = XerFile(str(path))
+    assert x.tables["TASK"]["rows"][0]["task_name"] == "T1"
+
+
+def test_xer_skips_row_marker_without_table(tmp_path):
+    """`%R` before any `%T` is ignored (line 89 continue)."""
+    content = ("ERMHDR\t18.8\t2026-01-01\tu\tApp\tUSD\n"
+               "%R\torphan_value\n"  # %R before any %T
+               "%T\tTASK\n%F\ttask_id\ttask_name\n%R\t1\tT1\n%E\n")
+    path = tmp_path / "or.xer"
+    path.write_bytes(b"\xff\xfe" + content.encode("utf-16-le"))
+    x = XerFile(str(path))
+    assert x.tables["TASK"]["rows"][0]["task_name"] == "T1"
+
+
+def test_xer_skips_row_when_headers_empty(tmp_path):
+    """`%R` after `%T` but before `%F` (no headers yet) is skipped (line 92)."""
+    content = ("ERMHDR\t18.8\t2026-01-01\tu\tApp\tUSD\n"
+               "%T\tTASK\n"
+               "%R\t1\tT1\n"   # %R before %F (headers still empty)
+               "%F\ttask_id\ttask_name\n"
+               "%R\t2\tT2\n%E\n")
+    path = tmp_path / "rb.xer"
+    path.write_bytes(b"\xff\xfe" + content.encode("utf-16-le"))
+    x = XerFile(str(path))
+    # First %R was dropped; second should be present
+    assert len(x.tables["TASK"]["rows"]) == 1
+    assert x.tables["TASK"]["rows"][0]["task_name"] == "T2"
+
+
+def test_to_int_handles_invalid_string(sample_cau_xer):
+    """_to_int returns default on non-numeric strings (lines 127-128)."""
+    from xer_parser import _to_int
+    assert _to_int("not-a-number") is None
+    assert _to_int("not-a-number", default=42) == 42
+    assert _to_int(None) is None
+    assert _to_int("") is None
+    assert _to_int("123") == 123
+    assert _to_int("123.45") == 123
+
+
+def test_to_float_handles_invalid_string(sample_cau_xer):
+    """_to_float returns default on non-numeric strings (lines 134-135)."""
+    from xer_parser import _to_float
+    assert _to_float("not-a-number") == 0.0
+    assert _to_float("not-a-number", default=99.0) == 99.0
+    assert _to_float("") == 0.0
+    assert _to_float("3.14") == 3.14
+
+
+def test_parse_clndr_data_handles_overflow_and_invalid_serials():
+    """_parse_clndr_data skips serials that ValueError or OverflowError."""
+    from xer_parser import _parse_clndr_data
+    # None / empty -> []
+    assert _parse_clndr_data(None) == []
+    assert _parse_clndr_data("") == []
+    # No exception block -> []
+    assert _parse_clndr_data("(no exceptions here)") == []
+    # Valid block
+    blob = "(d|44197|f|0)(d|44204|f|1)"  # 2021-01-01 holiday and an override
+    out = _parse_clndr_data(blob)
+    assert len(out) == 2
+    assert out[0]["working"] is False
+    assert out[1]["working"] is True
+    # Overflow path: extremely huge serial that overflows timedelta
+    big_blob = f"(d|999999999999999|f|0)"
+    # Should not raise; just skip the bad entry
+    out2 = _parse_clndr_data(big_blob)
+    assert out2 == []
+
+
+def test_read_progress_skips_assignments_with_no_task_id(tmp_path):
+    """TASKRSRC rows with missing task_id are skipped (line 329)."""
+    content = (
+        "ERMHDR\t18.8\t2026-01-01\tu\tApp\tUSD\n"
+        "%T\tTASK\n%F\ttask_id\ttask_name\tphys_complete_pct\n"
+        "%R\t1\tT1\t50\n"
+        "%T\tTASKRSRC\n%F\ttask_id\trsrc_id\tact_reg_qty\n"
+        "%R\t\t10\t100\n"   # task_id missing -> skipped
+        "%R\t1\t10\t250\n"
+        "%E\n"
+    )
+    path = tmp_path / "skip.xer"
+    path.write_bytes(b"\xff\xfe" + content.encode("utf-16-le"))
+    x = XerFile(str(path))
+    p = x.read_progress()
+    # Only the 250 from the second assignment counted
+    t1 = next(t for t in p["tasks"] if t["id"] == 1)
+    assert t1["actual_work_h"] == 250.0
+
+
+def test_read_tasks_zero_day_hr_cnt_yields_zero_total_float(tmp_path):
+    """day_hr_cnt=0 -> total_float is 0 (avoids div-by-zero in line 167-168)."""
+    content = ("ERMHDR\t18.8\t2026-01-01\tu\tApp\tUSD\n"
+               "%T\tTASK\n%F\ttask_id\ttask_name\ttotal_float_hr_cnt\n"
+               "%R\t1\tT1\t72\n%E\n")
+    path = tmp_path / "z.xer"
+    path.write_bytes(b"\xff\xfe" + content.encode("utf-16-le"))
+    x = XerFile(str(path))
+    tasks = x.read_tasks(day_hr_cnt=0.0)
+    assert tasks[0]["total_float"] == 0.0

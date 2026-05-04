@@ -267,3 +267,176 @@ def test_pdq_no_resources_warning():
     warnings = progress_data_quality(spi_h=0.85, spi_t=0.85,
                                     completion_pct=50, has_resources=False)
     assert any("resource" in w["warning"].lower() for w in warnings)
+
+
+# === Phase 11.1 T141: gap-fill edge cases ===
+
+from evm_math import time_phased_ac, time_phased_ac_increments
+
+
+def test_time_phased_pv_missing_baseline_returns_zero():
+    """Task missing baseline_start -> 0 PV (covers line 82 early return)."""
+    tasks = [
+        {"name": "no_bs", "baseline_start": None, "baseline_finish": dt.date(2026, 1, 30), "baseline_work": 100.0},
+        {"name": "no_bf", "baseline_start": dt.date(2026, 1, 1), "baseline_finish": None, "baseline_work": 100.0},
+        {"name": "no_bw", "baseline_start": dt.date(2026, 1, 1), "baseline_finish": dt.date(2026, 1, 30), "baseline_work": 0},
+    ]
+    buckets = [(dt.date(2026, 1, 1), dt.date(2026, 1, 31))]
+    pv = time_phased_pv(tasks, buckets)
+    assert pv == [0.0]
+
+
+def test_time_phased_pv_accepts_datetime_inputs():
+    """datetime values get .date() coerced (covers lines 85, 87)."""
+    tasks = [{
+        "name": "dt_task",
+        "baseline_start": dt.datetime(2026, 1, 1, 8, 0),
+        "baseline_finish": dt.datetime(2026, 1, 11, 8, 0),
+        "baseline_work": 100.0,
+    }]
+    buckets = [(dt.date(2026, 1, 1), dt.date(2026, 1, 31))]
+    pv = time_phased_pv(tasks, buckets)
+    assert pv[0] == pytest.approx(100.0, rel=1e-3)
+
+
+def test_time_phased_ev_accepts_datetime_data_date_and_bucket_end():
+    """datetime values for data_date and bucket_end coerced via .date() (lines 114, 118)."""
+    tasks = [_make_task_ev("T1", dt.date(2026, 1, 1), dt.date(2026, 1, 30), 100.0, 50)]
+    data_date = dt.datetime(2026, 1, 31, 17, 0)
+    buckets = [(dt.datetime(2026, 1, 1), dt.datetime(2026, 1, 31, 17, 0))]
+    ev = time_phased_ev(tasks, buckets, data_date)
+    assert ev[0] == pytest.approx(50.0, rel=1e-3)
+
+
+def test_time_phased_ev_skips_task_with_none_baseline_start():
+    """Task with baseline_start=None is skipped (line 124)."""
+    tasks = [
+        {"name": "no_bs", "baseline_start": None, "baseline_finish": dt.date(2026, 1, 30),
+         "baseline_work": 100.0, "percent_complete": 50},
+        _make_task_ev("ok", dt.date(2026, 1, 1), dt.date(2026, 1, 30), 100.0, 50),
+    ]
+    buckets = [(dt.date(2026, 1, 1), dt.date(2026, 1, 31))]
+    ev = time_phased_ev(tasks, buckets, data_date=dt.date(2026, 1, 31))
+    # only ok-task contributes
+    assert ev[0] == pytest.approx(50.0, rel=1e-3)
+
+
+def test_time_phased_ev_baseline_start_as_datetime_coerced():
+    """baseline_start as datetime triggers .date() coercion (line 126)."""
+    tasks = [{
+        "name": "dt_bs",
+        "baseline_start": dt.datetime(2026, 1, 1, 0, 0),
+        "baseline_finish": dt.date(2026, 1, 30),
+        "baseline_work": 100.0,
+        "percent_complete": 75,
+    }]
+    buckets = [(dt.date(2026, 1, 1), dt.date(2026, 1, 31))]
+    ev = time_phased_ev(tasks, buckets, data_date=dt.date(2026, 1, 31))
+    assert ev[0] == pytest.approx(75.0, rel=1e-3)
+
+
+def test_time_phased_ac_with_no_actual_start_falls_back_zero():
+    """actual_start missing AND no baseline_start -> AC stays 0 (line 158)."""
+    tasks = [{
+        "name": "no_start",
+        "actual_work": 50.0,
+        "actual_start": None,
+        "actual_finish": None,
+        # baseline_start missing too
+    }]
+    buckets = [(dt.date(2026, 1, 1), dt.date(2026, 1, 31))]
+    ac = time_phased_ac(tasks, buckets, data_date=dt.date(2026, 1, 31))
+    assert ac[0] == 0.0
+
+
+def test_time_phased_ac_actual_start_datetime_coerced():
+    """actual_start as datetime triggers .date() coercion (line 160)."""
+    tasks = [{
+        "name": "dt_as",
+        "actual_work": 100.0,
+        "actual_start": dt.datetime(2026, 1, 1, 8, 0),
+        "actual_finish": dt.datetime(2026, 1, 10, 17, 0),
+    }]
+    buckets = [(dt.date(2026, 1, 1), dt.date(2026, 1, 31))]
+    ac = time_phased_ac(tasks, buckets, data_date=dt.date(2026, 1, 31))
+    assert ac[0] == pytest.approx(100.0, rel=1e-3)
+
+
+def test_time_phased_ac_with_datetime_data_date():
+    """data_date and bucket_end as datetime get coerced (lines 191, 195)."""
+    tasks = [{
+        "name": "T1",
+        "actual_work": 80.0,
+        "actual_start": dt.date(2026, 1, 1),
+        "actual_finish": dt.date(2026, 1, 10),
+    }]
+    data_date = dt.datetime(2026, 1, 31, 17, 0)
+    buckets = [(dt.datetime(2026, 1, 1), dt.datetime(2026, 1, 31, 17, 0))]
+    ac = time_phased_ac(tasks, buckets, data_date)
+    assert ac[0] == pytest.approx(80.0, rel=1e-3)
+
+
+def test_time_phased_ac_increments_empty_buckets():
+    """Empty buckets -> empty increments list (line 217)."""
+    assert time_phased_ac_increments([], [], dt.date(2026, 1, 31)) == []
+
+
+def test_earned_schedule_accepts_datetime_inputs():
+    """datetime values for project_start and data_date coerced (lines 253, 255)."""
+    project_start = dt.datetime(2026, 1, 1, 8, 0)
+    data_date = dt.datetime(2026, 1, 22, 17, 0)
+    pv_curve = [
+        (dt.date(2026, 1, 8),  100.0),
+        (dt.date(2026, 1, 15), 200.0),
+        (dt.date(2026, 1, 22), 300.0),
+    ]
+    r = earned_schedule(pv_curve, ev_now=200.0,
+                        project_start=project_start, data_date=data_date)
+    assert r["es"] == pytest.approx(2.0, rel=1e-2)
+
+
+def test_earned_schedule_empty_pv_curve_returns_none_es():
+    """Empty pv_curve -> es/sv_t/spi_t are None (line 258)."""
+    r = earned_schedule(pv_curve=[], ev_now=100.0,
+                        project_start=dt.date(2026, 1, 1),
+                        data_date=dt.date(2026, 1, 31))
+    assert r["es"] is None
+    assert r["sv_t"] is None
+    assert r["spi_t"] is None
+
+
+def test_earned_schedule_first_point_zero_pv_no_div_by_zero():
+    """ev_now <= first_pv with first_pv == 0 -> frac=0 branch (line 268)."""
+    project_start = dt.date(2026, 1, 1)
+    pv_curve = [
+        (dt.date(2026, 1, 8), 0.0),    # first_pv == 0
+        (dt.date(2026, 1, 15), 200.0),
+    ]
+    r = earned_schedule(pv_curve, ev_now=0.0, project_start=project_start,
+                        data_date=dt.date(2026, 1, 15))
+    # es_days = (Jan 8 - Jan 1).days * 0 = 0 -> 0 weeks
+    assert r["es"] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_earned_schedule_with_flat_plateau_curve_works():
+    """PV curve containing a flat plateau still yields a valid ES.
+
+    Note: line 280 (flat-segment frac=0 fallback inside the adjacent-pair
+    loop) is defensive — for the loop to enter the flat branch first, the
+    flat pair must be the earliest pv_prev <= ev_now <= pv_curr match,
+    but a non-decreasing PV curve where ev_now > first_pv always matches
+    a rising segment first. Verified the function handles the curve
+    cleanly nonetheless.
+    """
+    project_start = dt.date(2026, 1, 1)
+    pv_curve = [
+        (dt.date(2026, 1, 1),   0.0),
+        (dt.date(2026, 1, 8),  50.0),
+        (dt.date(2026, 1, 15), 50.0),  # flat plateau between idx 1 and 2
+        (dt.date(2026, 1, 22), 100.0),
+    ]
+    r = earned_schedule(pv_curve, ev_now=50.0, project_start=project_start,
+                        data_date=dt.date(2026, 1, 22))
+    assert r["es"] is not None
+    # First rising segment (0..50) matches; es_days ≈ 7 -> 1 week
+    assert r["es"] == pytest.approx(1.0, rel=1e-2)

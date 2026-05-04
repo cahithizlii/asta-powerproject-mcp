@@ -105,3 +105,54 @@ def test_assess_all_executive_text_present():
                    baseline=None, status_date=None)
     assert isinstance(r["summary"]["executive_text"], str)
     assert len(r["summary"]["executive_text"]) > 0
+
+
+# === Phase 11.1 T141: gap-fill ===
+
+def test_assess_all_executive_all_pass_message():
+    """All 14 checks pass -> 'All 14 DCMA rules pass. Schedule health: GREEN.' (line 474)."""
+    # Need at least 1 critical real task to satisfy check_critical_path,
+    # plus default thresholds to all pass.
+    tasks = [{
+        "id": 1, "name": "T1", "summary": False,
+        "predecessors": [99], "successors": [99],  # has both pred & succ
+        "constraint_type": 0,
+        "total_slack_days": 0,
+        "duration_h": 80,
+        "critical": True,                  # satisfies critical_path
+        "start": "2026-01-01", "finish": "2026-01-10",
+    }]
+    links = []
+    assignments = [{"task_id": 1, "resource_id": 1}]
+    r = assess_all(tasks=tasks, links=links, assignments=assignments,
+                   baseline=None, status_date=None)
+    assert r["summary"]["fail_count"] == 0
+    assert r["summary"]["pass_count"] == 14
+    assert "All 14 DCMA rules pass" in r["summary"]["executive_text"]
+
+
+def test_assess_all_executive_more_than_5_failures_truncated():
+    """Failure summary shows '...' when >5 rules fail."""
+    # Build a synthetic: many no-pred/no-succ tasks -> trigger multiple fails
+    tasks = []
+    for i in range(1, 21):
+        tasks.append({
+            "id": i, "name": f"T{i}", "summary": False,
+            "predecessors": [], "successors": [],   # both fail rule 1 and 2
+            "constraint_type": 5,                    # hard constraint -> fail rule 6
+            "total_slack_days": 100,                 # high float -> fail rule 7
+            "duration_h": 5000,                      # high duration -> fail rule 9
+            "critical": False,                       # fail rule 13
+            "start": "2026-01-10", "finish": "2026-01-01",  # invalid date -> rule 10
+        })
+    # Lags > 5% to trigger rule 4; leads to trigger rule 3
+    links = [
+        {"from_id": 1, "to_id": 2, "type": "FS", "lag_days": -1},
+        {"from_id": 2, "to_id": 3, "type": "FS", "lag_days": 5},
+        {"from_id": 3, "to_id": 4, "type": "SS", "lag_days": 0},
+    ]
+    r = assess_all(tasks=tasks, links=links, assignments=[],
+                   baseline=None, status_date="2026-12-31")
+    # Should have many failures
+    assert r["summary"]["fail_count"] > 5
+    assert "..." in r["summary"]["executive_text"]

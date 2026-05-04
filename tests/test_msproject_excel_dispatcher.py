@@ -82,3 +82,50 @@ def test_dispatcher_unknown_action():
 def test_dispatcher_missing_xlsx_path():
     p = _call("export_hakedis", file_path=MSP_XML)
     assert p["status"] == "error"
+
+
+# =============================================================================
+# Phase 11.2 — Edge Case + Negative Path tests (T142)
+# =============================================================================
+
+
+def test_dispatcher_export_tasks_missing_xlsx_path_returns_error():
+    """export_tasks without xlsx_path → error."""
+    p = _call("export_tasks", file_path=MSP_XML)
+    assert p["status"] == "error"
+    assert "xlsx_path" in p["error"].lower()
+
+
+def test_dispatcher_export_evm_missing_xlsx_path_returns_error():
+    """export_evm without xlsx_path → error."""
+    p = _call("export_evm", file_path=MSP_XML)
+    assert p["status"] == "error"
+    assert "xlsx_path" in p["error"].lower()
+
+
+def test_dispatcher_export_dcma_missing_xlsx_path_returns_error():
+    """export_dcma without xlsx_path → error."""
+    p = _call("export_dcma", file_path=MSP_XML)
+    assert p["status"] == "error"
+    assert "xlsx_path" in p["error"].lower()
+
+
+def test_dispatcher_import_tasks_missing_xlsx_path_returns_error():
+    """import_tasks without xlsx_path → error."""
+    p = _call("import_tasks")
+    assert p["status"] == "error"
+    assert "xlsx_path" in p["error"].lower()
+
+
+def test_dispatcher_import_tasks_nonexistent_file_returns_error(tmp_path):
+    """import_tasks with non-existent file → error mentions 'not found'."""
+    p = _call("import_tasks", xlsx_path=str(tmp_path / "missing.xlsx"))
+    assert p["status"] == "error"
+    assert "not found" in p["error"].lower() or "missing" in p["error"].lower()
+
+
+def test_dispatcher_import_progress_missing_xlsx_path_returns_error():
+    """import_progress without xlsx_path → error."""
+    p = _call("import_progress")
+    assert p["status"] == "error"
+    assert "xlsx_path" in p["error"].lower()

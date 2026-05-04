@@ -58,3 +58,112 @@ def test_schedule_dispatcher_invalid_action(msproject_app):
     r = _run(msproject_schedule({"action": "fake"}))
     parsed = json.loads(r)
     assert parsed["status"] == "error"
+
+
+# =============================================================================
+# Phase 11.2 — Edge Case + Negative Path tests (T142): TASK + LINK
+# =============================================================================
+# Most of these COM-gated negative tests run only when MS Project is open.
+# They exercise validation paths in the dispatcher: bad task IDs, bad inputs,
+# self-loops, bad link types. clean_test_project ensures isolation.
+
+
+def test_task_dispatcher_delete_nonexistent_id_returns_error(clean_test_project):
+    """Deleting task_id=-1 → error from helper (task not found)."""
+    r = _run(msproject_task({"action": "delete", "task_id": -1}))
+    p = json.loads(r)
+    assert p["status"] == "error"
+    assert p["error"]
+
+
+def test_task_dispatcher_get_nonexistent_id_returns_error(clean_test_project):
+    """get with task_id=999999 (max-int-ish) → error."""
+    r = _run(msproject_task({"action": "get", "task_id": 999999}))
+    p = json.loads(r)
+    assert p["status"] == "error"
+
+
+def test_task_dispatcher_update_nonexistent_id_returns_error(clean_test_project):
+    """update with task_id=0 → error."""
+    r = _run(msproject_task({"action": "update", "task_id": 0,
+                             "name": "ShouldFail"}))
+    p = json.loads(r)
+    assert p["status"] == "error"
+
+
+def test_task_dispatcher_update_bad_start_date_returns_error(clean_test_project):
+    """update with malformed start date → COM-rejected error."""
+    from msproject_mcp_core import _msp_task_add_single
+    add_r = _msp_task_add_single(name="UpdBadDate", duration="1d")
+    r = _run(msproject_task({"action": "update",
+                             "task_id": add_r["task_id"],
+                             "start": "not-a-real-date"}))
+    p = json.loads(r)
+    assert p["status"] == "error"
+
+
+def test_task_dispatcher_bulk_add_empty_items_returns_error(clean_test_project):
+    """bulk_add with empty items list → error or count=0."""
+    r = _run(msproject_task({"action": "bulk_add", "items": []}))
+    p = json.loads(r)
+    # Either error OR ok with count=0 — both acceptable; just check no crash
+    assert p["status"] in ("ok", "error")
+    if p["status"] == "ok":
+        assert p.get("count", 0) == 0
+
+
+# === LINK negative tests ===
+
+def test_link_dispatcher_add_nonexistent_predecessor_returns_error(clean_test_project):
+    """add link with predecessor_id=99999 → error."""
+    from msproject_mcp_core import _msp_task_add_single
+    add_r = _msp_task_add_single(name="LinkDispNeg1", duration="1d")
+    r = _run(msproject_link({"action": "add",
+                             "predecessor_id": 99999,
+                             "successor_id": add_r["task_id"]}))
+    p = json.loads(r)
+    assert p["status"] == "error"
+    assert "predecessor" in p["error"].lower() or "not found" in p["error"].lower()
+
+
+def test_link_dispatcher_add_nonexistent_successor_returns_error(clean_test_project):
+    """add link with successor_id=99999 → error."""
+    from msproject_mcp_core import _msp_task_add_single
+    add_r = _msp_task_add_single(name="LinkDispNeg2", duration="1d")
+    r = _run(msproject_link({"action": "add",
+                             "predecessor_id": add_r["task_id"],
+                             "successor_id": 99999}))
+    p = json.loads(r)
+    assert p["status"] == "error"
+    assert "successor" in p["error"].lower() or "not found" in p["error"].lower()
+
+
+def test_link_dispatcher_delete_nonexistent_successor_returns_error(clean_test_project):
+    """delete link with successor_id=99999 → error."""
+    r = _run(msproject_link({"action": "delete",
+                             "predecessor_id": 1,
+                             "successor_id": 99999}))
+    p = json.loads(r)
+    assert p["status"] == "error"
+
+
+def test_link_dispatcher_chain_single_task_id_no_op(clean_test_project):
+    """chain with only one task_id → no links (chain needs >=2)."""
+    from msproject_mcp_core import _msp_task_add_single
+    a = _msp_task_add_single(name="ChainNeg1", duration="1d")
+    r = _run(msproject_link({"action": "chain",
+                             "task_ids": [a["task_id"]]}))
+    p = json.loads(r)
+    # Either ok with 0 links or error — not a crash
+    assert p["status"] in ("ok", "error")
+    if p["status"] == "ok":
+        assert p.get("links_added", 0) == 0
+
+
+def test_link_dispatcher_chain_empty_task_ids_no_op(clean_test_project):
+    """chain with empty task_ids → 0 links or error."""
+    r = _run(msproject_link({"action": "chain", "task_ids": []}))
+    p = json.loads(r)
+    assert p["status"] in ("ok", "error")
+    if p["status"] == "ok":
+        assert p.get("links_added", 0) == 0

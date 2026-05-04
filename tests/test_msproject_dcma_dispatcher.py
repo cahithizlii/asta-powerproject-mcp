@@ -57,3 +57,49 @@ def test_dispatcher_compare_no_snapshot():
     assert p["status"] == "ok"
     assert "current" in p
     assert "delta" in p
+
+
+# =============================================================================
+# Phase 11.2 — Edge Case + Negative Path tests (T142)
+# =============================================================================
+
+
+def test_dispatcher_drill_down_negative_rule_id_returns_error():
+    """rule_id=-1 (out of 1-14 range) → error."""
+    p = _call("drill_down", file_path=MSP_XML, rule_id=-1)
+    assert p["status"] == "error"
+    assert "rule_id" in p["error"].lower() or "1-14" in p["error"]
+
+
+def test_dispatcher_drill_down_zero_rule_id_returns_error():
+    """rule_id=0 (out of 1-14 range) → error."""
+    p = _call("drill_down", file_path=MSP_XML, rule_id=0)
+    assert p["status"] == "error"
+    assert "rule_id" in p["error"].lower() or "1-14" in p["error"]
+
+
+def test_dispatcher_drill_down_huge_rule_id_returns_error():
+    """rule_id=15 (just past valid range) → error."""
+    p = _call("drill_down", file_path=MSP_XML, rule_id=15)
+    assert p["status"] == "error"
+    assert "rule_id" in p["error"].lower() or "1-14" in p["error"]
+
+
+def test_dispatcher_assess_all_invalid_baseline_returns_error():
+    """baseline_number=-1 → error."""
+    p = _call("assess_all", file_path=MSP_XML, baseline_number=-1)
+    assert p["status"] == "error"
+    assert "baseline" in p["error"].lower()
+
+
+def test_dispatcher_assess_all_missing_file_returns_error(tmp_path):
+    """assess_all with non-existent file → error."""
+    p = _call("assess_all", file_path=str(tmp_path / "missing.xml"))
+    assert p["status"] == "error"
+
+
+def test_dispatcher_summary_invalid_baseline_returns_error():
+    """summary with baseline_number=99 → error."""
+    p = _call("summary", file_path=MSP_XML, baseline_number=99)
+    assert p["status"] == "error"
+    assert "baseline" in p["error"].lower()

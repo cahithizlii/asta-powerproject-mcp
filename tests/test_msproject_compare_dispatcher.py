@@ -243,3 +243,43 @@ def test_dispatcher_monthly_report_writes_excel_when_path_given(xer_pair, tmp_pa
 def test_dispatcher_monthly_report_listed_in_unknown_action_error():
     r = _call("definitely_not_an_action")
     assert "monthly_report" in r["error"]
+
+
+# =============================================================================
+# Phase 11.2 — Edge Case + Negative Path tests (T142)
+# =============================================================================
+
+
+def test_dispatcher_task_delta_missing_file_b_returns_error(xer_pair):
+    """One-side missing → error from file_b loader."""
+    a, _ = xer_pair
+    r = _call("task_delta", file_a=a, file_b="/totally/missing/x.xer")
+    assert r["status"] == "error"
+    assert "file_b" in r["error"].lower() or "load" in r["error"].lower()
+
+
+def test_dispatcher_unknown_action_listed_explicitly():
+    """Unknown action lists all valid actions in error message."""
+    r = _call("not_real")
+    assert r["status"] == "error"
+    assert "task_delta" in r["error"]
+    assert "summary" in r["error"]
+
+
+def test_dispatcher_evm_delta_missing_file_a_returns_error(xer_pair):
+    """evm_delta with bad file_a → error from EVM loader."""
+    _, b = xer_pair
+    r = _call("evm_delta", file_a="/missing/a.xer", file_b=b)
+    assert r["status"] == "error"
+
+
+def test_dispatcher_summary_missing_file_returns_error():
+    """summary with both missing → error."""
+    r = _call("summary", file_a="/x/a.xer", file_b="/x/b.xer")
+    assert r["status"] == "error"
+
+
+def test_dispatcher_progress_delta_missing_file_returns_error():
+    """progress_delta with one missing file → error."""
+    r = _call("progress_delta", file_a="/no/a.xer", file_b="/no/b.xer")
+    assert r["status"] == "error"

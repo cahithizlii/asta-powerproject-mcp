@@ -66,3 +66,40 @@ def test_dispatcher_unknown_action(sample_cau_xer):
 def test_dispatcher_missing_file_path():
     p = _call("read_tasks")
     assert p["status"] == "error"
+
+
+# =============================================================================
+# Phase 11.2 — Edge Case + Negative Path tests (T142)
+# =============================================================================
+
+
+def test_dispatcher_read_tasks_nonexistent_xer_returns_error(tmp_path):
+    """Non-existent .xer path → error."""
+    p = _call("read_tasks", file_path=str(tmp_path / "missing.xer"))
+    assert p["status"] == "error"
+    assert p["error"]
+
+
+def test_dispatcher_read_tasks_directory_path_returns_error(tmp_path):
+    """Passing a directory (not file) → error."""
+    p = _call("read_tasks", file_path=str(tmp_path))
+    assert p["status"] == "error"
+
+
+def test_dispatcher_unknown_action_lists_valid_actions(sample_cau_xer):
+    """Unknown action error message lists valid actions."""
+    p = _call("invented_action", file_path=sample_cau_xer)
+    assert p["status"] == "error"
+    assert "read_tasks" in p["error"]
+
+
+def test_dispatcher_read_links_nonexistent_returns_error(tmp_path):
+    """Non-existent file → error from XerFile."""
+    p = _call("read_links", file_path=str(tmp_path / "ghost.xer"))
+    assert p["status"] == "error"
+
+
+def test_dispatcher_read_calendars_nonexistent_returns_error(tmp_path):
+    """read_calendars on missing file → error."""
+    p = _call("read_calendars", file_path=str(tmp_path / "no.xer"))
+    assert p["status"] == "error"

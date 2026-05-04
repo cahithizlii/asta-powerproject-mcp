@@ -97,6 +97,7 @@ def test_dispatcher_missing_file_path():
     """No file_path → error (TypeError caught and translated)."""
     p = _call("read_tasks")
     assert p["status"] == "error"
+    assert "file_path" in p["error"].lower()
 
 
 # =============================================================================
@@ -137,8 +138,9 @@ def test_dispatcher_corrupted_xml_returns_error(tmp_path):
     bad.write_bytes(b"\x00\x01garbage<not xml")
     p = _call("read_tasks", file_path=str(bad))
     assert p["status"] == "error"
-    # message may say schema/asta or parsing — just verify error string present
-    assert p["error"]
+    # parser rejects unknown XML → message names the schema mismatch
+    err = p["error"].lower()
+    assert "schema" in err or "ms project" in err or "asta" in err
 
 
 def test_dispatcher_save_as_missing_extension_returns_error(tmp_path):

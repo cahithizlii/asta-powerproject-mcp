@@ -271,15 +271,21 @@ def test_dispatcher_evm_delta_missing_file_a_returns_error(xer_pair):
     _, b = xer_pair
     r = _call("evm_delta", file_a="/missing/a.xer", file_b=b)
     assert r["status"] == "error"
+    err = r["error"].lower()
+    assert "file_a" in err or "not found" in err
 
 
 def test_dispatcher_summary_missing_file_returns_error():
     """summary with both missing → error."""
     r = _call("summary", file_a="/x/a.xer", file_b="/x/b.xer")
     assert r["status"] == "error"
+    err = r["error"].lower()
+    assert "file_a" in err or "not found" in err
 
 
 def test_dispatcher_progress_delta_missing_file_returns_error():
     """progress_delta with one missing file → error."""
     r = _call("progress_delta", file_a="/no/a.xer", file_b="/no/b.xer")
     assert r["status"] == "error"
+    err = r["error"].lower()
+    assert "file_a" in err or "not found" in err

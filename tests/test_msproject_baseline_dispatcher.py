@@ -87,6 +87,8 @@ def test_dispatcher_get_task_baseline_nonexistent_task_returns_error(clean_test_
                                  "task_id": 99999, "baseline_number": 0}))
     p = json.loads(r)
     assert p["status"] == "error"
+    err = p["error"].lower()
+    assert "task" in err or "not found" in err
 
 
 def test_dispatcher_compare_two_invalid_baseline_a_returns_error(clean_test_project):

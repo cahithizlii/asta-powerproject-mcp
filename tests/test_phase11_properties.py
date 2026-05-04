@@ -230,6 +230,35 @@ def test_property_evm_compute_finite(bac, pv, ev, ac):
 
 
 # ---------------------------------------------------------------------------
+# Property 7b — compute_metrics zero-divisor returns None (not 0/NaN)
+# ---------------------------------------------------------------------------
+@settings(deadline=None)
+@given(bac=st.floats(min_value=1, max_value=1e9,
+                     allow_nan=False, allow_infinity=False),
+       ev=st.floats(min_value=0, max_value=1e9,
+                    allow_nan=False, allow_infinity=False),
+       ac=st.floats(min_value=0, max_value=1e9,
+                    allow_nan=False, allow_infinity=False))
+def test_property_evm_compute_zero_divisor_returns_none(bac, ev, ac):
+    """When pv == 0, SPI must be None (not 0.0 or NaN)."""
+    r = compute_metrics(bac=bac, pv=0, ev=ev, ac=ac)
+    assert r.get("spi") is None, f"Expected None, got {r.get('spi')!r}"
+
+
+@settings(deadline=None)
+@given(bac=st.floats(min_value=1, max_value=1e9,
+                     allow_nan=False, allow_infinity=False),
+       pv=st.floats(min_value=0, max_value=1e9,
+                    allow_nan=False, allow_infinity=False),
+       ev=st.floats(min_value=0, max_value=1e9,
+                    allow_nan=False, allow_infinity=False))
+def test_property_evm_compute_zero_ac_returns_none(bac, pv, ev):
+    """When ac == 0, CPI must be None (not 0.0 or NaN)."""
+    r = compute_metrics(bac=bac, pv=pv, ev=ev, ac=0)
+    assert r.get("cpi") is None, f"Expected None, got {r.get('cpi')!r}"
+
+
+# ---------------------------------------------------------------------------
 # Property 8 — _parse_clndr_data accepts any string, returns list
 # ---------------------------------------------------------------------------
 @settings(deadline=None)

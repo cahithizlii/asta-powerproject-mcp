@@ -1,3 +1,12 @@
+# Phase 11.1 coverage measurement (added 2026-05-04).
+# Pure-module coverage targets at end of Phase 11:
+#   currency_validator/xer_parser/xer_compare : 100%
+#   mspdi_parser / evm_math                   : 99%
+#   dcma_checks                               : 91% — remaining 9% are
+#     defensive branches in summary helpers (unreachable early-return
+#     paths under current rule set). See docs/plans/phase11-followups.md
+#     F13 for triage rationale.
+
 [run]
 source = .
 omit =

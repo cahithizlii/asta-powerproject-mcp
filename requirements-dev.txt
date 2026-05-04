@@ -1,0 +1,16 @@
+# Development dependencies for the MS Project MCP test suite.
+# Phase 11 (2026-05-04) added coverage measurement + property-based testing.
+#
+# Install:
+#   pip install -r requirements.txt
+#   pip install -r requirements-dev.txt
+#
+# Then run the full Phase 11 test suite:
+#   pytest tests/ -q --tb=line
+#
+# For coverage report:
+#   pytest tests/ --cov=. --cov-report=term-missing
+
+pytest>=8
+pytest-cov>=4    # Phase 11.1 coverage measurement (.coveragerc)
+hypothesis>=6    # Phase 11.4 property-based tests (tests/test_phase11_properties.py)

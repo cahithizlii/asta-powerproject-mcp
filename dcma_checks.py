@@ -139,6 +139,13 @@ def check_leads(links: List[Dict[str, Any]]) -> Dict[str, Any]:
     A lead = predecessor link with negative lag (successor starts BEFORE
     predecessor finishes). DCMA prohibits leads entirely.
     """
+    if not links:
+        return {"id": 3, "name": "Leads", "threshold": "=0",
+                "actual": 0, "actual_unit": "count", "status": "pass",
+                "failed_count": 0, "total_count": 0, "failed_links": [],
+                "vacuous": True,
+                "note": "No links to evaluate — rule cannot be assessed "
+                        "(Rules 1/2 catch the missing logic)."}
     failed_links = [l for l in links if (l.get("lag_days") or 0) < 0]
     failed_count = len(failed_links)
     return {
@@ -157,7 +164,9 @@ def check_lags(links: List[Dict[str, Any]]) -> Dict[str, Any]:
     if total == 0:
         return {"id": 4, "name": "Lags", "threshold": "<5%",
                 "actual": 0.0, "actual_unit": "%", "status": "pass",
-                "failed_count": 0, "total_count": 0, "failed_links": []}
+                "failed_count": 0, "total_count": 0, "failed_links": [],
+                "vacuous": True,
+                "note": "No links to evaluate — rule cannot be assessed."}
     failed_links = [l for l in links if (l.get("lag_days") or 0) > 0]
     failed_count = len(failed_links)
     actual_pct = (failed_count / total) * 100.0
@@ -177,7 +186,10 @@ def check_fs_link_pct(links: List[Dict[str, Any]]) -> Dict[str, Any]:
     if total == 0:
         return {"id": 5, "name": "FS Link %", "threshold": ">90%",
                 "actual": 100.0, "actual_unit": "%", "status": "pass",
-                "failed_count": 0, "total_count": 0, "failed_links": []}
+                "failed_count": 0, "total_count": 0, "failed_links": [],
+                "vacuous": True,
+                "note": "No links to evaluate — 100% is vacuous, not a real "
+                        "FS ratio (Rules 1/2 catch the missing logic)."}
     fs_count = sum(1 for l in links if (l.get("type") or "").upper() == "FS")
     actual_pct = (fs_count / total) * 100.0
     failed_links = [l for l in links if (l.get("type") or "").upper() != "FS"]
@@ -282,7 +294,8 @@ def check_resources_missing(tasks: List[Dict[str, Any]],
 # ---------- T88: Float / Duration rules ----------
 
 HIGH_FLOAT_THRESHOLD_DAYS = 44.0
-HIGH_DURATION_THRESHOLD_HOURS = 44.0 * 8.0  # 352h - DCMA standard 8h/day
+HIGH_DURATION_THRESHOLD_DAYS = 44.0
+HIGH_DURATION_THRESHOLD_HOURS = 44.0 * 8.0  # 352h @ 8h/day (legacy constant)
 
 
 def check_high_float(tasks: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -321,16 +334,25 @@ def check_negative_float(tasks: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def check_high_duration(tasks: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """RULE 9: <5% of real tasks should have duration > 44 working days (352h)."""
+def check_high_duration(tasks: List[Dict[str, Any]],
+                        day_hr_cnt: float = 8.0) -> Dict[str, Any]:
+    """RULE 9: <5% of real tasks should have duration > 44 working days.
+
+    Calendar-aware (CLAUDE.md RULE 1): the 44-day threshold is converted to
+    hours via day_hr_cnt. Default 8.0h/day = 352h (DCMA standard). For a
+    CAU/Uzbekistan 9h/day calendar pass day_hr_cnt=9.0 -> 396h, so genuinely
+    long 352-396h tasks are not falsely flagged.
+    """
     real = _real_tasks(tasks)
     total = len(real)
+    threshold_h = HIGH_DURATION_THRESHOLD_DAYS * float(day_hr_cnt or 8.0)
     if total == 0:
         return {"id": 9, "name": "High Duration (>44d)", "threshold": "<5%",
                 "actual": 0.0, "actual_unit": "%", "status": "pass",
-                "failed_count": 0, "total_count": 0, "failed_task_ids": []}
+                "failed_count": 0, "total_count": 0, "failed_task_ids": [],
+                "threshold_hours": threshold_h, "day_hr_cnt": float(day_hr_cnt or 8.0)}
     failed_ids = [t["id"] for t in real
-                  if float(t.get("duration_h") or 0) > HIGH_DURATION_THRESHOLD_HOURS]
+                  if float(t.get("duration_h") or 0) > threshold_h]
     failed_count = len(failed_ids)
     actual_pct = (failed_count / total) * 100.0
     return {
@@ -339,6 +361,7 @@ def check_high_duration(tasks: List[Dict[str, Any]]) -> Dict[str, Any]:
         "status": _eval_status(9, actual_pct),
         "failed_count": failed_count, "total_count": total,
         "failed_task_ids": failed_ids,
+        "threshold_hours": threshold_h, "day_hr_cnt": float(day_hr_cnt or 8.0),
     }
 
 
@@ -444,8 +467,12 @@ def assess_all(tasks: List[Dict[str, Any]],
                links: List[Dict[str, Any]],
                assignments: List[Dict[str, Any]],
                baseline: Optional[Dict[str, Any]] = None,
-               status_date: Optional[str] = None) -> Dict[str, Any]:
+               status_date: Optional[str] = None,
+               day_hr_cnt: float = 8.0) -> Dict[str, Any]:
     """Run all 14 DCMA checks; return rules + summary envelope.
+
+    day_hr_cnt: working hours/day for the calendar-aware Rule 9 threshold
+    (CLAUDE.md RULE 1). Default 8.0 (DCMA standard); pass 9.0 for CAU.
 
     Returns {rules: [14 dicts], summary: {pass_count, fail_count,
              overall_rag, executive_text}}.
@@ -459,7 +486,7 @@ def assess_all(tasks: List[Dict[str, Any]],
         check_hard_constraints(tasks),
         check_high_float(tasks),
         check_negative_float(tasks),
-        check_high_duration(tasks),
+        check_high_duration(tasks, day_hr_cnt=day_hr_cnt),
         check_invalid_dates(tasks),
         check_resources_missing(tasks, assignments),
         check_missed_tasks(tasks, status_date),

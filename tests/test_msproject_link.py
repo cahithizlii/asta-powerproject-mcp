@@ -7,13 +7,13 @@ from msproject_mcp_core import (
 )
 
 
-def test_link_two_tasks(msproject_app):
+def test_link_two_tasks(live_msp_app):
     """Adding a predecessor link sets Predecessors string."""
     a = _msp_task_add_single(name="LinkA", duration="2d")
     b = _msp_task_add_single(name="LinkB", duration="3d")
     r = _msp_link_add(predecessor_id=a["task_id"], successor_id=b["task_id"], type="FS", lag="0d")
     assert r["status"] == "ok"
-    proj = msproject_app.ActiveProject
+    proj = live_msp_app.ActiveProject
     bt = None
     for i in range(1, proj.Tasks.Count + 1):
         t = proj.Tasks(i)

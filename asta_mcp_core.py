@@ -2813,6 +2813,138 @@ async def asta_bulk_update_progress(params: BulkUpdateProgressInput) -> str:
         return f"Error in bulk progress update: {str(e)}"
 
 
+# ============================================================================
+# P2 #7 — COM bulk add for tasks + links (single-transaction orchestrators)
+# ============================================================================
+# Reuses the proven _com_add_task / _com_add_link building blocks inside ONE
+# StartTransaction/EndTransaction (the asta_bulk_update_progress pattern), so
+# >10 tasks/links no longer require a hand-written external COM script.
+# Bars created within the transaction stay valid until the single EndTransaction
+# (refs only go stale ACROSS EndTransaction — we end once, at the end).
+#
+# ⚠️ COM EXECUTION PATH IS NOT UNIT-VERIFIABLE WITHOUT A LIVE ASTA SESSION.
+# The orchestration logic mirrors the verified single-add + bulk-progress
+# patterns; confirm against a running Asta before production use.
+
+async def asta_com_bulk_add_tasks(items: list) -> str:
+    """Bulk-add tasks via COM in a single transaction.
+
+    items: list of dicts {name, duration?, start_date?, finish_date?,
+           parent_bar_id?, is_summary?, is_milestone?}.
+    Returns JSON {total, successful, failed, tasks:[{index,name,task_id}], errors}.
+    """
+    import pythoncom
+    if not items:
+        return json.dumps({"error": "items list is empty"}, indent=2)
+    com_initialized = False
+    _com_project = None
+    try:
+        pythoncom.CoInitialize()
+        com_initialized = True
+        app, project, method = _connect_asta_com()
+        _com_project = project
+        project.StartTransaction("Bulk Add Tasks")
+        created, errors = [], []
+        for idx, it in enumerate(items):
+            try:
+                name = it.get("name")
+                if not name:
+                    errors.append({"index": idx, "error": "name required"})
+                    continue
+                r = _com_add_task(
+                    project, name, it.get("duration", "1d"),
+                    start_date=it.get("start_date"),
+                    finish_date=it.get("finish_date"),
+                    parent_bar_id=it.get("parent_bar_id"),
+                    is_summary=bool(it.get("is_summary", False)),
+                    is_milestone=bool(it.get("is_milestone", False)))
+                if "error" in r:
+                    errors.append({"index": idx, "name": name, "error": r["error"]})
+                else:
+                    created.append({"index": idx, "name": name,
+                                    "task_id": r.get("task_id")})
+            except Exception as ie:
+                errors.append({"index": idx, "error": str(ie)})
+        _com_end_transaction(project, reschedule=True)
+        return json.dumps({
+            "method": "COM", "com_method": method,
+            "total": len(items), "successful": len(created),
+            "failed": len(errors), "tasks": created,
+            "errors": errors or None,
+        }, indent=2, default=str)
+    except RuntimeError:
+        return json.dumps({"error": "Asta Powerproject is not running. "
+                           "Open Asta with a project, then retry."}, indent=2)
+    except Exception as e:
+        if _com_project:
+            try: _com_project.AbandonTransaction()
+            except Exception: pass
+        return json.dumps({"error": f"COM bulk add tasks failed: {e}"}, indent=2)
+    finally:
+        if com_initialized:
+            try: pythoncom.CoUninitialize()
+            except Exception: pass
+
+
+async def asta_com_bulk_add_links(items: list) -> str:
+    """Bulk-add links via COM in a single transaction.
+
+    items: list of dicts {predecessor_id, successor_id, link_type?, lag?}.
+    Returns JSON {total, successful, failed, links:[...], errors}.
+    """
+    import pythoncom
+    if not items:
+        return json.dumps({"error": "items list is empty"}, indent=2)
+    com_initialized = False
+    _com_project = None
+    try:
+        pythoncom.CoInitialize()
+        com_initialized = True
+        app, project, method = _connect_asta_com()
+        _com_project = project
+        project.StartTransaction("Bulk Add Links")
+        created, errors = [], []
+        for idx, it in enumerate(items):
+            try:
+                pid = it.get("predecessor_id")
+                sid = it.get("successor_id")
+                if pid is None or sid is None:
+                    errors.append({"index": idx,
+                                   "error": "predecessor_id and successor_id required"})
+                    continue
+                r = _com_add_link(project, int(pid), int(sid),
+                                  link_type=it.get("link_type", "FS"),
+                                  lag_str=it.get("lag"))
+                if "error" in r:
+                    errors.append({"index": idx, "error": r["error"],
+                                   "predecessor_id": pid, "successor_id": sid})
+                else:
+                    created.append({"index": idx, "predecessor_id": pid,
+                                    "successor_id": sid,
+                                    "link_type": it.get("link_type", "FS")})
+            except Exception as ie:
+                errors.append({"index": idx, "error": str(ie)})
+        _com_end_transaction(project, reschedule=True)
+        return json.dumps({
+            "method": "COM", "com_method": method,
+            "total": len(items), "successful": len(created),
+            "failed": len(errors), "links": created,
+            "errors": errors or None,
+        }, indent=2, default=str)
+    except RuntimeError:
+        return json.dumps({"error": "Asta Powerproject is not running. "
+                           "Open Asta with a project, then retry."}, indent=2)
+    except Exception as e:
+        if _com_project:
+            try: _com_project.AbandonTransaction()
+            except Exception: pass
+        return json.dumps({"error": f"COM bulk add links failed: {e}"}, indent=2)
+    finally:
+        if com_initialized:
+            try: pythoncom.CoUninitialize()
+            except Exception: pass
+
+
 # @mcp.tool(  # CONSOLIDATED into asta_query
 #     name="asta_delay_analysis",
 #     annotations={"title": "Delay Analysis", "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
@@ -3526,7 +3658,15 @@ def _com_add_task(project, name: str, duration_str: str = "1d",
     if parent_task is None:
         try:
             root_bar = project.Bars.Item(1)
-            parent_task = win32com.client.Dispatch(root_bar.Tasks(1))
+            try:
+                parent_task = win32com.client.Dispatch(root_bar.Tasks(1))
+            except Exception:
+                # Root "Program" bar: .Tasks(1) raises "Item does not exist"
+                # (615) on a blank/root project. Use ExpandedTask so the new
+                # child bar gets a PROPER linkable task — NOT an empty bar.
+                # (Verified live 2026-06-09: Tasks(1)->empty bar/Count 0/
+                # unlinkable; ExpandedTask->Count 1/LinkTo OK.)
+                parent_task = win32com.client.Dispatch(root_bar.ExpandedTask)
         except Exception:
             # Absolute fallback: create top-level bar
             new_bar = project.Bars.Add()
@@ -4357,6 +4497,32 @@ async def asta_reschedule_project(params: RescheduleProjectInput) -> str:
                     ole_date = app.DateToJulian(report_dt)
                 except Exception:
                     ole_date = report_dt
+
+            # --- P2 #8: POLYBLMH reschedule risk guard (RULE 17, advisory) ---
+            # Non-blocking: records a warning when ReportDate is well after
+            # project start AND the project has ~zero progress (the exact
+            # signature that pushed all POLYBLMH tasks past the data date).
+            try:
+                from asta_reschedule_guard import assess_reschedule_risk
+                proj_pct = None
+                try:
+                    proj_pct = float(project.ExpandedTask.OverallPercentComplete)
+                except Exception:
+                    try:
+                        proj_pct = float(project.PercentComplete)
+                    except Exception:
+                        proj_pct = None
+                _risk = assess_reschedule_risk(
+                    params.report_date, result.get("project_start"),
+                    project_percent_complete=proj_pct)
+                if _risk.get("message"):
+                    result["progress_period_warning"] = _risk["message"]
+                    result["progress_period_recommendation"] = _risk.get(
+                        "recommendation")
+                    result["progress_period_risk"] = _risk.get("severity")
+                    logger.warning(f"Reschedule guard: {_risk['message']}")
+            except Exception as e:
+                logger.warning(f"Reschedule guard failed (non-fatal): {e}")
 
             # --- Start a transaction for atomic changes ---
             transaction_started = False
@@ -7318,6 +7484,9 @@ async def asta_task(params: dict) -> str:
     - add_child: Add child task. Params: parent_task_id, name, duration, start_date, finish_date
     - get: Get task details. Params: task_id, response_format
     - list: List all tasks in project. Params: include_summary (bool), response_format, limit (default 50, max 200)
+    - bulk_add: Add many tasks in ONE transaction. Params: items (list of
+      {name, duration?, start_date?, finish_date?, parent_bar_id?,
+      is_summary?, is_milestone?}). Single StartTransaction + one reschedule.
 
     Planning best practices:
     - Keep activity durations between 5-20 working days (DCMA standard)
@@ -7326,11 +7495,10 @@ async def asta_task(params: dict) -> str:
     - Every activity needs at least one predecessor and successor (except start/end milestones)
     - After adding tasks, use asta_schedule → reschedule to recalculate CPM
 
-    ⚠️ CRITICAL — BULK OPERATIONS (>10 tasks/links):
-    - NEVER call add/update one-by-one in a loop via MCP for >10 items!
-    - Instead, write a standalone Python COM script and execute it.
-    - MCP add_summary creates orphan bars with no task data when called repeatedly.
-    - Bulk script pattern: store bar IDs, re-fetch after each EndTransaction, use try/except+AbandonTransaction.
+    ⚠️ BULK OPERATIONS (>10 tasks): use action 'bulk_add' with an items list
+    — it runs all adds in ONE transaction + a single reschedule (no need for
+    a hand-written external COM script anymore). Still avoid calling single
+    'add' in a loop for >10 items.
 
     ⚠️ COM GOTCHAS:
     - Root "Program" bar → use bar.ExpandedTask (NOT bar.Tasks(1) which fails on root!)
@@ -7357,8 +7525,10 @@ async def asta_task(params: dict) -> str:
             result = await asta_get_task(GetTaskInput(**p))
         elif action == "list":
             result = await asta_list_tasks(ListTasksInput(**p))
+        elif action == "bulk_add":
+            result = await asta_com_bulk_add_tasks(p.get("items") or [])
         else:
-            return json.dumps({"error": f"Unknown action '{action}'. Valid: add, update, delete, add_summary, add_child, get, list"})
+            return json.dumps({"error": f"Unknown action '{action}'. Valid: add, update, delete, add_summary, add_child, get, list, bulk_add"})
         return _truncate_response(result)
     except Exception as e:
         return json.dumps({"error": f"asta_task({action}) failed: {e}"})
@@ -7375,6 +7545,8 @@ async def asta_link(params: dict) -> str:
     - add: Add link. Params: predecessor_id, successor_id, link_type (FS/SS/FF/SF), lag
     - remove: Remove link. Params: predecessor_id, successor_id
     - update: Update link. Params: predecessor_id, successor_id, new_link_type, new_lag
+    - bulk_add: Add many links in ONE transaction. Params: items (list of
+      {predecessor_id, successor_id, link_type?, lag?}).
     - diagnose: Explore available link COM interfaces. No params needed.
 
     Link types (PDM - Precedence Diagramming Method):
@@ -7386,10 +7558,9 @@ async def asta_link(params: dict) -> str:
     DCMA standards: Avoid leads (negative lag), minimize lags (<5%), keep non-FS links <10%.
     If all add strategies fail, diagnostics run automatically showing available COM methods.
 
-    ⚠️ BULK LINKS (>10): Write a Python COM script using task.LinkTo(task2).
-    - link.type = 0(FS)/1(SS)/2(FF)/3(SF)
-    - link.StartLagTime = task.GetDurationFromString("10d")
-    - COM refs stale after EndTransaction — always re-fetch by bar ID.
+    ⚠️ BULK LINKS (>10): use action 'bulk_add' with an items list — runs all
+    links in ONE transaction + a single reschedule (no external COM script
+    needed).
     """
     action = params.get("action", "")
     p = {k: v for k, v in params.items() if k != "action"}
@@ -7400,6 +7571,8 @@ async def asta_link(params: dict) -> str:
             result = await asta_remove_link(RemoveLinkInput(**p))
         elif action == "update":
             result = await asta_update_link(UpdateLinkInput(**p))
+        elif action == "bulk_add":
+            result = await asta_com_bulk_add_links(p.get("items") or [])
         elif action == "diagnose":
             import pythoncom
             com_initialized = False
@@ -7417,7 +7590,7 @@ async def asta_link(params: dict) -> str:
                     try: pythoncom.CoUninitialize()
                     except: pass
         else:
-            return json.dumps({"error": f"Unknown action '{action}'. Valid: add, remove, update, diagnose"})
+            return json.dumps({"error": f"Unknown action '{action}'. Valid: add, remove, update, bulk_add, diagnose"})
         return _truncate_response(result)
     except Exception as e:
         return json.dumps({"error": f"asta_link({action}) failed: {e}"})

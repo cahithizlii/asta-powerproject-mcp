@@ -3,9 +3,9 @@ import pytest
 from msproject_mcp_core import _msp_task_add_single
 
 
-def test_add_single_task(msproject_app):
+def test_add_single_task(live_msp_app):
     """Adding 1 task -> ActiveProject.Tasks.Count incremented."""
-    proj = msproject_app.ActiveProject
+    proj = live_msp_app.ActiveProject
     initial = proj.Tasks.Count
     result = _msp_task_add_single(name="Test Task A", duration="3d")
     assert result["status"] == "ok"
@@ -20,9 +20,9 @@ def test_add_single_task(msproject_app):
     found.Delete()
 
 
-def test_add_milestone(msproject_app):
+def test_add_milestone(live_msp_app):
     """Milestone has 0d duration."""
-    proj = msproject_app.ActiveProject
+    proj = live_msp_app.ActiveProject
     result = _msp_task_add_single(name="MS Test", duration="0d", milestone=True)
     assert result["status"] == "ok"
     found = None

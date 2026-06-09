@@ -1105,9 +1105,21 @@ def _msp_resource_bulk_assign(items: List[Dict[str, Any]]) -> Dict[str, Any]:
     else:  # mspdi_bulk — Phase 2b uses com_batch_fallback (true MSPDI merge is Phase 3+)
         _enter_batch_mode()
         try:
-            return _msp_resource_bulk_assign_loop(items, "mspdi_bulk", task_map, res_map)
+            res = _msp_resource_bulk_assign_loop(items, "mspdi_bulk", task_map, res_map)
         finally:
             _exit_batch_mode()
+        # P2 #9: the live-COM path is ~9.6ms/assignment (proj.Assignments not
+        # available for a bulk merge). For large batches the verified fast path
+        # is the FILE tool (msproject_file.bulk_add_assignments — 2800 in <5s).
+        # Surface that hint without risking the user's open project via an
+        # untested SaveAs/merge/reload round-trip.
+        if isinstance(res, dict):
+            res["perf_hint"] = (
+                f"{len(items)} assignments via per-call COM (~{len(items)*0.01:.1f}s). "
+                "For large batches export to .xml/.mspdi and use "
+                "msproject_file.bulk_add_assignments (single-write MSPDI merge, "
+                "2800 in <5s) — far faster than the live-COM path.")
+        return res
 
 
 def _msp_resource_unassign(task_id: int, resource_id: int) -> Dict[str, Any]:
@@ -5128,6 +5140,7 @@ from evm_math import (
     period_delta as _evm_period_delta,
     progress_data_quality as _evm_pdq,
     rag_status as _evm_rag,
+    cross_validate_bac as _evm_cross_validate_bac,
 )
 
 
@@ -5382,6 +5395,69 @@ def _msp_evm_summary(file_path=None, baseline_number=0):
         "spi": cm.get("spi"),
         "cpi": cm.get("cpi"),
         "schedule_health": rag,
+    }
+
+
+def _msp_evm_verify(file_path=None, baseline_number=0, tolerance=0.01):
+    """Action: verify — BAC cross-validation (RULE 16.A, ALFB1 9x defense).
+
+    Computes BAC two independent ways and flags a mismatch:
+      - primary    = sum(baseline_work) across non-summary tasks (what the
+                     EVM pipeline trusts).
+      - independent = sum(assignment target_qty) — the raw figure that
+                     exposed the ALFB1 9x error when the tool under-reported.
+    Also reports tasks that carry assignments but zero baseline_work
+    (a classic missing-rollup symptom).
+
+    The independent check requires assignment-level data; the COM path may
+    return assignments=[] for perf, in which case match=True with a
+    'no independent source' note (cannot validate, not a pass).
+    """
+    load = _evm_load_task_data(file_path=file_path)
+    if load.get("status") != "ok":
+        return load
+    tasks = load.get("tasks", []) or []
+    assignments = load.get("assignments", []) or []
+
+    bac_primary = sum(float(t.get("baseline_work") or 0) for t in tasks)
+    # Independent raw sum: prefer XER/file target_qty; fall back to
+    # baseline_work/work fields present on assignment dicts.
+    def _asg_qty(a):
+        for k in ("target_qty", "baseline_work", "work", "actual_qty"):
+            v = a.get(k)
+            if v not in (None, ""):
+                try:
+                    return float(v)
+                except (ValueError, TypeError):
+                    return 0.0
+        return 0.0
+    bac_independent = sum(_asg_qty(a) for a in assignments) if assignments else None
+
+    result = _evm_cross_validate_bac(bac_primary, bac_independent,
+                                     tolerance=float(tolerance))
+
+    # Missing-rollup diagnostic: tasks with assignments but zero baseline_work
+    qty_by_task = {}
+    for a in assignments:
+        tid = a.get("task_id")
+        if tid is not None:
+            qty_by_task[tid] = qty_by_task.get(tid, 0.0) + _asg_qty(a)
+    zero_rollup = [
+        {"id": t.get("id"), "name": t.get("name"),
+         "assignment_qty": round(qty_by_task.get(t.get("id"), 0.0), 2)}
+        for t in tasks
+        if (float(t.get("baseline_work") or 0) == 0
+            and qty_by_task.get(t.get("id"), 0.0) > 0)
+    ]
+
+    return {
+        "status": "ok",
+        "baseline_number": baseline_number,
+        "task_count": len(tasks),
+        "assignment_count": len(assignments),
+        "tolerance": float(tolerance),
+        "zero_baseline_with_assignments": zero_rollup,
+        **result,
     }
 
 
@@ -5866,6 +5942,8 @@ async def msproject_evm(params: dict) -> str:
     - get_period_history: list saved snapshots (filter by project/baseline)
     - trend: SPI/CPI/EAC trajectory series
     - detect_currency_mode: hours vs cost (RULE 3)
+    - validate_currency_mode: multi-source cost/hours consensus (RULE 3)
+    - verify: BAC cross-validation vs raw target_qty (RULE 16.A, ALFB1 9x)
 
     Phase 5a (30 Apr 2026). Tool count 8 -> 9.
     """
@@ -5901,6 +5979,8 @@ async def msproject_evm(params: dict) -> str:
             r = _msp_evm_detect_currency_mode(**p)
         elif action == "validate_currency_mode":
             r = _msp_evm_validate_currency_mode(**p)
+        elif action == "verify":
+            r = _msp_evm_verify(**p)
         else:
             r = {"status": "error",
                  "error": (f"Unknown action '{action}'. Valid: "
@@ -5908,7 +5988,7 @@ async def msproject_evm(params: dict) -> str:
                           "time_phased_evm/period_delta/progress_data_quality/"
                           "variance_to_baseline/compare_baselines_evm/"
                           "save_period_snapshot/get_period_history/trend/"
-                          "detect_currency_mode/validate_currency_mode")}
+                          "detect_currency_mode/validate_currency_mode/verify")}
     except TypeError as e:
         r = {"status": "error", "error": f"Invalid params for {action}: {e}"}
     except Exception as e:
@@ -6116,6 +6196,7 @@ def _dcma_collect_full_data(file_path=None, baseline_number=0):
         "resources": base.get("resources", []) or [],
         "baseline": bload if bload.get("status") == "ok" else None,
         "status_date": base.get("status_date"),
+        "day_hr_cnt": base.get("day_hr_cnt", 8.0),
     }
 
 
@@ -6131,6 +6212,7 @@ def _msp_dcma_assess_all(file_path=None, baseline_number=0):
         assignments=data["assignments"],
         baseline=data.get("baseline"),
         status_date=data.get("status_date"),
+        day_hr_cnt=data.get("day_hr_cnt", 8.0),
     )
     return {"status": "ok", "baseline_number": baseline_number, **result}
 
@@ -6165,6 +6247,7 @@ def _msp_dcma_drill_down(file_path=None, rule_id=1, baseline_number=0):
         assignments=data["assignments"],
         baseline=data.get("baseline"),
         status_date=data.get("status_date"),
+        day_hr_cnt=data.get("day_hr_cnt", 8.0),
     )
     rule = next((r for r in result["rules"] if r["id"] == rule_id), None)
     if rule is None:
@@ -6643,13 +6726,15 @@ def _xer_collect_full_data(file_path):
     day_hr_cnt = cals[0]["day_hr_cnt"] if cals else 8.0
     return {
         "status": "ok",
+        "day_hr_cnt": day_hr_cnt,
         "tasks": xer.read_tasks(day_hr_cnt=day_hr_cnt),
-        "links": xer.read_links(),
+        "links": xer.read_links(day_hr_cnt=day_hr_cnt),
         "resources": xer.read_resources(),
         "assignments": xer.read_assignments(),
         "calendars": cals,
         "progress": xer.read_progress(),
         "project": xer.read_project(),
+        "wbs": xer.read_wbs(),
     }
 
 
@@ -6710,6 +6795,23 @@ def _msp_xer_read_progress(file_path=None):
     return {"status": "ok", **data["progress"]}
 
 
+def _msp_xer_finish_drivers(file_path=None, anomaly_gap_days=30, top_n=5):
+    """Action 7: forecast-finish driver / top-level WBS anomaly (RULE 16.C).
+
+    Uses forecast_finish (reend_date) — NOT target_end_date — to compare
+    each top-level WBS branch's finish and flag a late-finishing branch
+    dragged by an LOE (the ALFB1 Procurement > Infrastructure pattern).
+    """
+    from xer_drivers import forecast_drivers
+    data = _xer_collect_full_data(file_path)
+    if data.get("status") != "ok":
+        return data
+    report = forecast_drivers(
+        data["tasks"], data["wbs"],
+        anomaly_gap_days=int(anomaly_gap_days), top_n=int(top_n))
+    return {"status": "ok", **report}
+
+
 @mcp.tool(
     name="msproject_xer",
     annotations={
@@ -6730,6 +6832,8 @@ async def msproject_xer(params: dict) -> str:
     - read_assignments: TASKRSRC section
     - read_calendars: CALENDAR section (day_hr_cnt + week_hr_cnt)
     - read_progress: PROJECT.last_recalc_date + per-task progress
+    - finish_drivers: top-level WBS forecast-finish anomaly + LOE driver
+      (RULE 16.C — uses reend_date forecast, not target_end_date)
 
     Phase 5d (1 May 2026). Tool count 11 -> 12.
     """
@@ -6749,11 +6853,14 @@ async def msproject_xer(params: dict) -> str:
             r = _msp_xer_read_calendars(**p)
         elif action == "read_progress":
             r = _msp_xer_read_progress(**p)
+        elif action == "finish_drivers":
+            r = _msp_xer_finish_drivers(**p)
         else:
             r = {"status": "error",
                  "error": (f"Unknown action '{action}'. Valid: "
                            "read_tasks/read_links/read_resources/"
-                           "read_assignments/read_calendars/read_progress")}
+                           "read_assignments/read_calendars/read_progress/"
+                           "finish_drivers")}
     except TypeError as e:
         r = {"status": "error", "error": f"Invalid params for {action}: {e}"}
     except Exception as e:
@@ -6785,7 +6892,7 @@ def _xer_to_evm_task_shape(xer):
     cals = xer.read_calendars()
     day_hr_cnt = cals[0]["day_hr_cnt"] if cals else 8.0
     raw_tasks = xer.read_tasks(day_hr_cnt=day_hr_cnt)
-    links = xer.read_links()
+    links = xer.read_links(day_hr_cnt=day_hr_cnt)
     progress = xer.read_progress()
     assignments = xer.read_assignments()
 
@@ -6828,6 +6935,7 @@ def _xer_to_evm_task_shape(xer):
 
     return {
         "status": "ok",
+        "day_hr_cnt": day_hr_cnt,
         "tasks": out_tasks,
         "resources": xer.read_resources(),
         "assignments": assignments,
@@ -7079,6 +7187,133 @@ async def msproject_compare(params: dict) -> str:
         r = {"status": "error", "error": f"Invalid params for {action}: {e}"}
     except Exception as e:
         logger.exception(f"msproject_compare({action}) failed: {e}")
+        r = {"status": "error", "error": str(e)}
+    return json.dumps(r, default=str, ensure_ascii=False)
+
+
+# ============================================================================
+# PHASE 12 - EXECUTIVE REPORT (DOCX + PDF) — P2 #10
+# ============================================================================
+# Branded EVM + DCMA executive report. Reuses Phase 5a EVM + Phase 5b DCMA +
+# P0 finish-driver collectors; builder lives in pure report_builder.py.
+
+
+def _report_collect(file_path=None, baseline_number=0):
+    """Gather EVM + DCMA + driver + project meta into report_builder shape."""
+    cm = _msp_evm_compute_metrics(file_path=file_path,
+                                  baseline_number=baseline_number)
+    if cm.get("status") != "ok":
+        return cm
+    fc = _msp_evm_forecast(file_path=file_path, baseline_number=baseline_number)
+    summ = _msp_evm_summary(file_path=file_path, baseline_number=baseline_number)
+    try:
+        cur = _msp_evm_detect_currency_mode(file_path=file_path)
+        currency_mode = cur.get("mode") if isinstance(cur, dict) else None
+    except Exception:
+        currency_mode = None
+    dcma = _msp_dcma_assess_all(file_path=file_path,
+                               baseline_number=baseline_number)
+
+    is_xer = bool(file_path) and str(file_path).lower().endswith(".xer")
+    driver = None
+    proj_meta = {}
+    forecast_finish = None
+    if is_xer:
+        try:
+            driver = _msp_xer_finish_drivers(file_path=file_path)
+            forecast_finish = driver.get("project_forecast_finish")
+        except Exception as e:
+            logger.warning(f"_report_collect driver failed: {e}")
+        try:
+            xer = XerFile(file_path)
+            proj_meta = xer.read_project() or {}
+        except Exception:
+            proj_meta = {}
+
+    project_name = (proj_meta.get("proj_short_name")
+                    or (cm.get("project_name") if isinstance(cm, dict) else None)
+                    or (file_path or "Project"))
+    return {
+        "status": "ok",
+        "project": {
+            "name": project_name,
+            "file": file_path,
+            "status_date": cm.get("status_date") or proj_meta.get("last_recalc_date"),
+            "forecast_finish": forecast_finish,
+        },
+        "evm": {
+            "bac": cm.get("bac"), "pv": cm.get("pv"), "ev": cm.get("ev"),
+            "ac": cm.get("ac"), "spi": cm.get("spi"), "cpi": cm.get("cpi"),
+            "sv": cm.get("sv"), "cv": cm.get("cv"),
+            "eac_t2": fc.get("eac_t2") if fc.get("status") == "ok" else None,
+            "vac": fc.get("vac") if fc.get("status") == "ok" else None,
+            "rag": summ.get("rag") if summ.get("status") == "ok" else None,
+            "completion_pct": summ.get("completion_pct")
+                if summ.get("status") == "ok" else None,
+            "currency_mode": currency_mode,
+        },
+        "dcma": {"rules": dcma.get("rules", []),
+                 "summary": dcma.get("summary", {})}
+            if dcma.get("status") == "ok" else {"rules": [], "summary": {}},
+        "driver": driver if (driver and driver.get("anomaly")) else None,
+    }
+
+
+def _msp_report_executive(file_path=None, output_path=None, fmt="docx",
+                          baseline_number=0):
+    """Build branded executive EVM+DCMA report. fmt: 'docx' | 'pdf'."""
+    if not output_path:
+        return {"status": "error", "error": "output_path required"}
+    data = _report_collect(file_path=file_path, baseline_number=baseline_number)
+    if data.get("status") != "ok":
+        return data
+    import report_builder
+    if fmt == "pdf":
+        report_builder.build_executive_pdf(data, output_path)
+    elif fmt == "docx":
+        report_builder.build_executive_docx(data, output_path)
+    else:
+        return {"status": "error",
+                "error": f"fmt must be 'docx' or 'pdf', got '{fmt}'"}
+    return {"status": "ok", "output_path": output_path, "format": fmt,
+            "rag": data["evm"].get("rag"),
+            "dcma_pass": data["dcma"].get("summary", {}).get("pass_count")}
+
+
+@mcp.tool(
+    name="msproject_report",
+    annotations={"title": "MS Project Executive Report (DOCX/PDF)",
+                 "readOnlyHint": False},
+)
+async def msproject_report(params: dict) -> str:
+    """Branded executive EVM + DCMA report (Mühendis İnşaat Yönetim A.Ş.).
+
+    Collects Phase 5a EVM + Phase 5b DCMA + P0 finish-driver findings and
+    renders a one/two-page report. Hybrid: file_path (.xer/.xml/.mspdi) or
+    COM (file_path omitted).
+
+    Actions:
+    - executive_docx(output_path, [baseline_number]): branded .docx
+    - executive_pdf(output_path, [baseline_number]): branded .pdf
+
+    Phase 12 (P2 #10). Tool count 13 -> 14.
+    """
+    import json
+    action = params.get("action", "")
+    p = {k: v for k, v in params.items() if k != "action"}
+    try:
+        if action == "executive_docx":
+            r = _msp_report_executive(fmt="docx", **p)
+        elif action == "executive_pdf":
+            r = _msp_report_executive(fmt="pdf", **p)
+        else:
+            r = {"status": "error",
+                 "error": (f"Unknown action '{action}'. Valid: "
+                           "executive_docx/executive_pdf")}
+    except TypeError as e:
+        r = {"status": "error", "error": f"Invalid params for {action}: {e}"}
+    except Exception as e:
+        logger.exception(f"msproject_report({action}) failed: {e}")
         r = {"status": "error", "error": str(e)}
     return json.dumps(r, default=str, ensure_ascii=False)
 

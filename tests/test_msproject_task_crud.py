@@ -32,10 +32,10 @@ def test_update_task(temp_task):
     assert g["task"]["notes"] == "changed"
 
 
-def test_delete_task(msproject_app):
+def test_delete_task(live_msp_app):
     r = _msp_task_add_single(name="ToDelete", duration="1d")
     tid = r["task_id"]
-    proj = msproject_app.ActiveProject
+    proj = live_msp_app.ActiveProject
     before = proj.Tasks.Count
     d = _msp_task_delete(task_id=tid)
     assert d["status"] == "ok"

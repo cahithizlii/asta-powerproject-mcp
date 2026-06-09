@@ -20,14 +20,18 @@ SAMPLE_CAU_XER_CONTENT = """ERMHDR\t18.8\t2026-05-01\tcahit\tProject Management\
 %R\t102\tExtractors\tEXT\tRT_Labor\t5.0
 %R\t103\tSteel\tSTL\tRT_Mat\t100.0
 %R\t104\tCarpenters\tCAR\tRT_Labor\t8.0
+%T\tPROJWBS
+%F\twbs_id\tparent_wbs_id\tproj_id\twbs_short_name\twbs_name
+%R\t1\t0\t1\tCONST\tConstruction
+%R\t0\t\t1\tROOT\tCAU Project
 %T\tTASK
-%F\ttask_id\twbs_id\tproj_id\tclndr_id\ttask_code\ttask_name\ttask_type\ttarget_drtn_hr_cnt\ttarget_start_date\ttarget_end_date\tact_start_date\tact_end_date\tphys_complete_pct\ttotal_float_hr_cnt\tcstr_type\tstatus_code
-%R\t1001\t1\t1\t1\tA1010\tFoundation\tTT_Task\t180.0\t2024-07-08 08:00\t2024-07-29 17:00\t2024-07-08 08:00\t2024-07-29 17:00\t100.0\t0.0\tCS_ASAP\tTK_Complete
-%R\t1002\t1\t1\t1\tA1020\tFrame\tTT_Task\t360.0\t2024-07-30 08:00\t2024-09-09 17:00\t2024-07-30 08:00\t\t75.0\t0.0\tCS_ASAP\tTK_Active
-%R\t1003\t1\t1\t1\tA1030\tWalls\tTT_Task\t180.0\t2024-09-10 08:00\t2024-10-01 17:00\t\t\t0.0\t72.0\tCS_ASAP\tTK_NotStart
-%R\t1004\t1\t1\t1\tA1040\tRoof\tTT_Task\t180.0\t2024-10-02 08:00\t2024-10-23 17:00\t\t\t0.0\t72.0\tCS_ASAP\tTK_NotStart
-%R\t1005\t1\t1\t1\tA1050\tInterior\tTT_Task\t360.0\t2024-10-24 08:00\t2024-12-04 17:00\t\t\t0.0\t72.0\tCS_ASAP\tTK_NotStart
-%R\t1006\t1\t1\t1\tA1060\tHandover\tTT_FinMile\t0.0\t2024-12-15 17:00\t2024-12-15 17:00\t\t\t0.0\t81.0\tCS_MFO\tTK_NotStart
+%F\ttask_id\twbs_id\tproj_id\tclndr_id\ttask_code\ttask_name\ttask_type\ttarget_drtn_hr_cnt\ttarget_start_date\ttarget_end_date\tact_start_date\tact_end_date\tphys_complete_pct\ttotal_float_hr_cnt\tcstr_type\tstatus_code\treend_date\tearly_end_date\tlate_end_date
+%R\t1001\t1\t1\t1\tA1010\tFoundation\tTT_Task\t180.0\t2024-07-08 08:00\t2024-07-29 17:00\t2024-07-08 08:00\t2024-07-29 17:00\t100.0\t0.0\tCS_ASAP\tTK_Complete\t2024-07-29 17:00\t2024-07-29 17:00\t2024-07-29 17:00
+%R\t1002\t1\t1\t1\tA1020\tFrame\tTT_Task\t360.0\t2024-07-30 08:00\t2024-09-09 17:00\t2024-07-30 08:00\t\t75.0\t0.0\tCS_ASAP\tTK_Active\t2024-09-20 17:00\t2024-09-20 17:00\t2024-09-25 17:00
+%R\t1003\t1\t1\t1\tA1030\tWalls\tTT_Task\t180.0\t2024-09-10 08:00\t2024-10-01 17:00\t\t\t0.0\t72.0\tCS_ASAP\tTK_NotStart\t2024-10-13 17:00\t2024-10-13 17:00\t2024-10-18 17:00
+%R\t1004\t1\t1\t1\tA1040\tRoof\tTT_Task\t180.0\t2024-10-02 08:00\t2024-10-23 17:00\t\t\t0.0\t72.0\tCS_ASAP\tTK_NotStart\t2024-11-04 17:00\t2024-11-04 17:00\t2024-11-09 17:00
+%R\t1005\t1\t1\t1\tA1050\tInterior\tTT_Task\t360.0\t2024-10-24 08:00\t2024-12-04 17:00\t\t\t0.0\t72.0\tCS_ASAP\tTK_NotStart\t2024-12-16 17:00\t2024-12-16 17:00\t2024-12-21 17:00
+%R\t1006\t1\t1\t1\tA1060\tHandover\tTT_FinMile\t0.0\t2024-12-15 17:00\t2024-12-15 17:00\t\t\t0.0\t81.0\tCS_MFO\tTK_NotStart\t2024-12-27 17:00\t2024-12-27 17:00\t2024-12-27 17:00
 %T\tTASKPRED
 %F\ttask_pred_id\ttask_id\tpred_task_id\tpred_type\tlag_hr_cnt
 %R\t1\t1002\t1001\tPR_FS\t0.0
@@ -67,6 +71,32 @@ def fixtures_dir() -> str:
     return os.path.join(REPO_ROOT, "tests", "fixtures")
 
 
+def _ensure_live_msp_app(app):
+    """Return a live MS Project Application, reconnecting if the cached COM
+    proxy has disconnected.
+
+    Root cause this fixes: the session-scoped `msproject_app` proxy can drop
+    mid-run with CO_E_OBJNOTCONNECTED (-2147220995, 'Object is not connected
+    to server') after enough CoInitialize/CoUninitialize churn from per-call
+    tool functions. Once dead, every `clean_test_project` setup failed at
+    `app.FileNew()`, cascading into ~128 setup errors + downstream failures.
+
+    Mirrors production `_connect_app`: ping `.Version`; on failure
+    re-CoInitialize the apartment and re-acquire from the ROT.
+    """
+    import win32com.client
+    import pythoncom
+    try:
+        _ = app.Version  # ping
+        return app
+    except Exception:
+        try:
+            pythoncom.CoInitialize()
+        except Exception:
+            pass
+        return win32com.client.GetActiveObject("MSProject.Application")
+
+
 @pytest.fixture(scope="session")
 def msproject_app():
     """Session-level MS Project COM connection. Skips if not available."""
@@ -94,6 +124,17 @@ def msproject_app():
 
 
 @pytest.fixture
+def live_msp_app(msproject_app):
+    """Function-scoped live MS Project app (reconnects a dead session proxy).
+
+    Use instead of `msproject_app` directly in tests that read ActiveProject
+    objects across the full-suite run, where the cached session proxy may have
+    disconnected (CO_E_OBJNOTCONNECTED).
+    """
+    return _ensure_live_msp_app(msproject_app)
+
+
+@pytest.fixture
 def clean_test_project(msproject_app):
     """Function-scoped fixture providing an ISOLATED empty MS Project for tests.
 
@@ -101,7 +142,8 @@ def clean_test_project(msproject_app):
     On teardown: closes test project without saving, restores user's original active
     project. Tests using this fixture will NEVER modify the user's real work.
     """
-    app = msproject_app
+    # Self-heal: reconnect if the session COM proxy died (CO_E_OBJNOTCONNECTED)
+    app = _ensure_live_msp_app(msproject_app)
     # Remember user's active project so we can restore focus on teardown
     original_name = None
     try:

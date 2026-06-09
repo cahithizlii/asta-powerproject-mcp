@@ -314,3 +314,67 @@ def progress_data_quality(spi_h: Optional[float],
             "severity": "high",
         })
     return warnings
+
+
+def cross_validate_bac(bac_primary: float,
+                       bac_independent: Optional[float],
+                       tolerance: float = 0.01) -> Dict[str, Any]:
+    """RULE 16.A — sanity-check a BAC against an independent raw sum.
+
+    Catches the ALFB1 failure class where a tool reported BAC = 277,640h
+    while the raw sum(target_qty) was 2,505,038h (9x wrong). Compare the
+    primary BAC (sum of baseline_work the pipeline trusts) against an
+    independent figure (raw sum of assignment target_qty).
+
+    Args:
+        bac_primary: BAC the EVM pipeline computed (sum baseline_work).
+        bac_independent: raw cross-check (sum of assignment target_qty);
+            None/0 when no independent source is available.
+        tolerance: max acceptable relative difference (default 1%).
+
+    Returns dict:
+        match: True if within tolerance OR no independent source.
+        bac_primary, bac_independent, abs_diff, rel_diff, ratio
+        severity: 'none'|'low'|'high'
+        warning: human message (None when match).
+    """
+    out: Dict[str, Any] = {
+        "bac_primary": bac_primary,
+        "bac_independent": bac_independent,
+        "abs_diff": None,
+        "rel_diff": None,
+        "ratio": None,
+        "match": True,
+        "severity": "none",
+        "warning": None,
+    }
+    # No independent source -> cannot cross-validate; report unverified.
+    if not bac_independent:
+        out["severity"] = "none"
+        out["warning"] = ("No independent BAC source (assignment target_qty) "
+                          "to cross-validate against.") if not bac_primary else None
+        return out
+    if not bac_primary:
+        out["match"] = False
+        out["severity"] = "high"
+        out["warning"] = ("Primary BAC is 0 but independent sum is "
+                          f"{bac_independent:.1f} — baseline_work likely not "
+                          "rolled up (RULE 16.A).")
+        return out
+    abs_diff = abs(bac_primary - bac_independent)
+    denom = max(abs(bac_primary), abs(bac_independent))
+    rel_diff = abs_diff / denom if denom else 0.0
+    ratio = (bac_independent / bac_primary) if bac_primary else None
+    out.update({"abs_diff": abs_diff, "rel_diff": rel_diff, "ratio": ratio})
+    if rel_diff <= tolerance:
+        out["match"] = True
+        out["severity"] = "none"
+    else:
+        out["match"] = False
+        out["severity"] = "high" if rel_diff > 0.10 else "low"
+        out["warning"] = (
+            f"BAC mismatch: primary={bac_primary:.1f} vs "
+            f"independent(target_qty)={bac_independent:.1f} "
+            f"(rel_diff={rel_diff:.1%}, ratio={ratio:.2f}x). "
+            "Possible WBS rollup / subset bug (RULE 16.A — ALFB1 9x error).")
+    return out

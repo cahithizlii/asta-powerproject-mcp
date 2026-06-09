@@ -149,20 +149,43 @@ def _read_tasks(self, day_hr_cnt=8.0):
 
     day_hr_cnt: hours per working day (CAU = 9.0; default 8.0). Used to
     convert total_float_hr_cnt to days.
+
+    DATE FIELDS (CLAUDE.md RULE 16.B — critical distinction):
+    - `finish`          = target_end_date (BASELINE target; backward-compat,
+                          unchanged). Do NOT use this for forecast finish.
+    - `target_finish`   = explicit alias of `finish` (baseline target).
+    - `early_finish`    = early_end_date (CPM early finish).
+    - `late_finish`     = late_end_date (CPM late finish).
+    - `forecast_finish` = reend_date (current schedule / CPM forecast finish).
+                          Fallback chain: reend_date -> early_end_date ->
+                          act_end_date -> target_end_date. THIS is the field
+                          a forecast-finish / slip / driver consumer must use.
+    The ALFB1 9x/345-day error came from reading target_end_date as forecast.
     """
     tbl = self.tables.get("TASK", {"rows": []})
     out = []
     for row in tbl["rows"]:
         ttype = row.get("task_type", "")
+        target_finish = _to_iso_date(row.get("target_end_date"))
+        reend = _to_iso_date(row.get("reend_date"))
+        early_finish = _to_iso_date(row.get("early_end_date"))
+        late_finish = _to_iso_date(row.get("late_end_date"))
+        actual_finish = _to_iso_date(row.get("act_end_date"))
         out.append({
             "id": _to_int(row.get("task_id")),
+            "wbs_id": _to_int(row.get("wbs_id")),
             "name": row.get("task_name", ""),
             "code": row.get("task_code", ""),
             "duration_h": _to_float(row.get("target_drtn_hr_cnt")),
             "start": _to_iso_date(row.get("target_start_date")),
-            "finish": _to_iso_date(row.get("target_end_date")),
+            "finish": target_finish,
+            "target_finish": target_finish,
+            "early_finish": early_finish,
+            "late_finish": late_finish,
+            "forecast_finish": (reend or early_finish or actual_finish
+                                or target_finish),
             "actual_start": _to_iso_date(row.get("act_start_date")),
-            "actual_finish": _to_iso_date(row.get("act_end_date")),
+            "actual_finish": actual_finish,
             "percent_complete": _to_float(row.get("phys_complete_pct")),
             "total_float": _to_float(row.get("total_float_hr_cnt")) / day_hr_cnt
                            if day_hr_cnt > 0 else 0.0,
@@ -174,12 +197,17 @@ def _read_tasks(self, day_hr_cnt=8.0):
     return out
 
 
-def _read_links(self):
+def _read_links(self, day_hr_cnt=8.0):
     """TASKPRED section -> list of {from_id, to_id, type, lag_days}.
 
     XER `task_id` = successor; `pred_task_id` = predecessor. Map to MSP shape:
-    from_id = predecessor, to_id = successor. Lag converted hr -> day @ 8h/day.
+    from_id = predecessor, to_id = successor.
+
+    day_hr_cnt: hours per working day for lag hr->day conversion (CLAUDE.md
+    RULE 1). Default 8.0; pass the calendar's day_hr_cnt (CAU = 9.0) so lag
+    days reflect the real working calendar.
     """
+    div = float(day_hr_cnt) if day_hr_cnt else 8.0
     tbl = self.tables.get("TASKPRED", {"rows": []})
     out = []
     for row in tbl["rows"]:
@@ -187,7 +215,7 @@ def _read_links(self):
             "from_id": _to_int(row.get("pred_task_id")),
             "to_id": _to_int(row.get("task_id")),
             "type": LINK_TYPE_MAP.get(row.get("pred_type", ""), "FS"),
-            "lag_days": _to_float(row.get("lag_hr_cnt")) / 8.0,
+            "lag_days": _to_float(row.get("lag_hr_cnt")) / div,
         })
     return out
 
@@ -343,5 +371,27 @@ def _read_progress(self):
     }
 
 
+def _read_wbs(self):
+    """PROJWBS section -> list of {id, parent_id, name, code, proj_id}.
+
+    Used by forecast-driver analysis to group tasks under top-level WBS
+    nodes and compare per-branch forecast finish (CLAUDE.md RULE 16.C).
+    Top-level WBS = node whose parent_id is the project root (a WBS id not
+    itself present as a child) or None.
+    """
+    tbl = self.tables.get("PROJWBS", {"rows": []})
+    out = []
+    for row in tbl["rows"]:
+        out.append({
+            "id": _to_int(row.get("wbs_id")),
+            "parent_id": _to_int(row.get("parent_wbs_id")),
+            "name": row.get("wbs_name", ""),
+            "code": row.get("wbs_short_name", ""),
+            "proj_id": _to_int(row.get("proj_id")),
+        })
+    return out
+
+
 XerFile.read_project = _read_project
 XerFile.read_progress = _read_progress
+XerFile.read_wbs = _read_wbs

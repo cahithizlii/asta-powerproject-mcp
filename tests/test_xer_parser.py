@@ -538,3 +538,85 @@ def test_read_tasks_zero_day_hr_cnt_yields_zero_total_float(tmp_path):
     x = XerFile(str(path))
     tasks = x.read_tasks(day_hr_cnt=0.0)
     assert tasks[0]["total_float"] == 0.0
+
+
+# === P0 #1: reend_date / forecast_finish vs target_finish (RULE 16.B) ===
+
+def test_read_tasks_forecast_fields_present(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    t = x.read_tasks()[0]
+    for k in ("target_finish", "early_finish", "late_finish",
+              "forecast_finish", "wbs_id"):
+        assert k in t
+
+
+def test_forecast_finish_uses_reend_not_target(sample_cau_xer):
+    """Frame (in progress) forecast slips past baseline target."""
+    x = XerFile(sample_cau_xer)
+    frame = next(t for t in x.read_tasks() if t["id"] == 1002)
+    assert frame["finish"] == "2024-09-09"          # baseline target (unchanged)
+    assert frame["target_finish"] == "2024-09-09"
+    assert frame["forecast_finish"] == "2024-09-20"  # reend_date (later)
+    assert frame["forecast_finish"] != frame["target_finish"]
+
+
+def test_forecast_finish_backward_compat_finish_is_target(sample_cau_xer):
+    """`finish` MUST stay = target_end_date (no breakage for old consumers)."""
+    x = XerFile(sample_cau_xer)
+    for t in x.read_tasks():
+        assert t["finish"] == t["target_finish"]
+
+
+def test_forecast_finish_fallback_chain(tmp_path):
+    """No reend_date -> falls back to early_end_date -> act -> target."""
+    content = ("ERMHDR\t18.8\t2026-01-01\tu\tApp\tUSD\n"
+               "%T\tTASK\n%F\ttask_id\ttask_name\ttarget_end_date"
+               "\tearly_end_date\n"
+               "%R\t1\tEarlyOnly\t2024-01-10 17:00\t2024-01-20 17:00\n"
+               "%R\t2\tTargetOnly\t2024-02-10 17:00\t\n"
+               "%E\n")
+    path = tmp_path / "fc.xer"
+    path.write_bytes(b"\xff\xfe" + content.encode("utf-16-le"))
+    x = XerFile(str(path))
+    tasks = {t["id"]: t for t in x.read_tasks()}
+    assert tasks[1]["forecast_finish"] == "2024-01-20"  # early_end_date
+    assert tasks[2]["forecast_finish"] == "2024-02-10"  # target fallback
+
+
+def test_forecast_finish_prefers_reend_over_early(tmp_path):
+    content = ("ERMHDR\t18.8\t2026-01-01\tu\tApp\tUSD\n"
+               "%T\tTASK\n%F\ttask_id\ttask_name\ttarget_end_date"
+               "\treend_date\tearly_end_date\n"
+               "%R\t1\tT\t2024-01-10 17:00\t2024-03-01 17:00\t2024-02-01 17:00\n"
+               "%E\n")
+    path = tmp_path / "re.xer"
+    path.write_bytes(b"\xff\xfe" + content.encode("utf-16-le"))
+    x = XerFile(str(path))
+    assert x.read_tasks()[0]["forecast_finish"] == "2024-03-01"
+
+
+# === P0 #2 foundation: read_wbs (PROJWBS) ===
+
+def test_read_wbs_count_and_shape(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    wbs = x.read_wbs()
+    assert len(wbs) == 2
+    for k in ("id", "parent_id", "name", "code", "proj_id"):
+        assert k in wbs[0]
+
+
+def test_read_wbs_values(sample_cau_xer):
+    x = XerFile(sample_cau_xer)
+    wbs = {w["id"]: w for w in x.read_wbs()}
+    assert wbs[1]["name"] == "Construction"
+    assert wbs[1]["parent_id"] == 0
+    assert wbs[0]["name"] == "CAU Project"
+
+
+def test_read_wbs_empty_when_no_section(tmp_path):
+    content = ("ERMHDR\t18.8\t2026-01-01\tu\tApp\tUSD\n"
+               "%T\tTASK\n%F\ttask_id\ttask_name\n%R\t1\tT1\n%E\n")
+    path = tmp_path / "nw.xer"
+    path.write_bytes(b"\xff\xfe" + content.encode("utf-16-le"))
+    x = XerFile(str(path))
+    assert x.read_wbs() == []

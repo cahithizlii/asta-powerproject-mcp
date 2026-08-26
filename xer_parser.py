@@ -33,27 +33,161 @@ class XerFile:
         read_project() -> {proj_id, plan_start_date, plan_end_date, ...}
     """
 
-    def __init__(self, file_path):
+    def __init__(self, file_path, encoding=None):
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"XER file not found: {file_path}")
         self.file_path = file_path
+        self.requested_encoding = encoding
+        self.encoding = None
+        self.encoding_source = None
+        self.encoding_scores = None
+        self.encoding_confidence = None
         self.header_fields = {}
         self.tables = {}
         self._parse()
 
     def _read_text(self):
-        """Read file with encoding auto-detect (UTF-16-LE BOM or UTF-8)."""
+        """Decode the file, and say which encoding was used and why.
+
+        P6 writes XER either as UTF-16-LE or in the *exporting machine's ANSI
+        code page*, and the ERMHDR header does not record which. The old
+        fallback here was ``utf-8, errors="replace"``, which turned every
+        Cyrillic byte of a cp1251 export into U+FFFD without a word of
+        warning -- silently wrong data, the failure class RULE 0 exists to
+        prevent. So: try the unambiguous decodings first, then score the ANSI
+        candidates, and refuse to guess when the top two are close.
+
+        Pass ``encoding=`` to settle it explicitly.
+        """
         with open(self.file_path, "rb") as f:
             raw = f.read()
+
+        if self.requested_encoding:
+            self.encoding = self.requested_encoding
+            self.encoding_source = "parametre"
+            return raw.decode(self.requested_encoding, errors="replace")
+
         if raw[:2] == b"\xff\xfe":
+            self.encoding, self.encoding_source = "utf-16-le", "BOM"
             return raw[2:].decode("utf-16-le", errors="replace")
         if raw[:3] == b"\xef\xbb\xbf":
+            self.encoding, self.encoding_source = "utf-8", "BOM"
             return raw[3:].decode("utf-8", errors="replace")
-        # No BOM - try UTF-16-LE first (P6 default), fallback UTF-8
+
+        for enc in ("utf-16-le", "utf-8"):
+            try:
+                text = raw.decode(enc)
+            except UnicodeDecodeError:
+                continue
+            # A UTF-16-LE guess on ASCII-ish bytes decodes into CJK noise;
+            # require the tab/newline skeleton an XER must have.
+            if enc == "utf-16-le" and text.count("\t") < 10:
+                continue
+            self.encoding, self.encoding_source = enc, "gecerli cozumleme"
+            return text
+
+        return self._decode_ansi(raw)
+
+    # ANSI code pages P6 actually exports in, in the regions this repo covers.
+    ANSI_CANDIDATES = ("cp1251", "cp1254", "cp1252", "cp1250")
+
+    @staticmethod
+    def _score_ansi(text):
+        """How plausible is this decoding as human text? Scored per word.
+
+        Per-character scoring does not work here. Cyrillic read through
+        cp1252 becomes a run of accented Latin vowels ("Гранит" -> "Ãðàíèò")
+        which still look like letters, and Turkish read through cp1251
+        becomes Cyrillic ("Şantiye" -> "Юantiye") which a Cyrillic bonus
+        would happily reward. What separates right from wrong is *inside the
+        word*:
+
+        * a word mixing scripts ("Юantiye" = Cyrillic Ю + Latin antiye) can
+          only come from the wrong code page -- heavily penalised;
+        * a word that is entirely accented Latin with no plain ASCII letters
+          ("Ãðàíèò") is the signature of mojibake -- penalised;
+        * a word entirely in one script, or ASCII with a few accents
+          ("Şantiye"), is what real text looks like -- rewarded.
+
+        Bilingual names ("ЗЕМЛЯНЫЕ РАБОТЫ / EARTHWORKS") work because the
+        scripts live in separate words.
+        """
+        score = 0
+        for word in text.split():
+            if not any(ch >= "\x80" for ch in word):
+                continue
+            letters = [c for c in word if c.isalpha()]
+            high_nonletter = sum(1 for c in word if c >= "\x80" and not c.isalpha())
+            score -= 2 * high_nonletter
+            if not letters:
+                continue
+            cyr = sum(1 for c in letters if 0x0400 <= ord(c) <= 0x04FF)
+            lat = len(letters) - cyr
+            ascii_lat = sum(1 for c in letters if c.isascii())
+            high_lat = lat - ascii_lat
+            if cyr and lat:
+                score -= 5 * min(cyr, lat)
+            elif cyr:
+                score += 3 * cyr
+            elif high_lat:
+                score += 2 * high_lat if high_lat <= ascii_lat else -2 * high_lat
+        return score
+
+    @staticmethod
+    def _system_ansi_codepage():
+        """The machine's ANSI code page, e.g. 'cp1254' on a Turkish Windows."""
         try:
-            return raw.decode("utf-16-le")
-        except UnicodeDecodeError:
-            return raw.decode("utf-8", errors="replace")
+            import locale
+            enc = locale.getpreferredencoding(False)
+            return enc.lower().replace("windows-", "cp").replace("-", "")
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _decode_ansi(self, raw):
+        scores = {}
+        for enc in self.ANSI_CANDIDATES:
+            try:
+                text = raw.decode(enc)
+            except UnicodeDecodeError:
+                continue
+            scores[enc] = self._score_ansi(text)
+        if not scores:
+            raise ValueError(
+                "XER dosyasi cozumlenemedi (UTF-16LE/UTF-8/ANSI hicbiri "
+                "uymadi): " + self.file_path)
+
+        ranked = sorted(scores.items(), key=lambda kv: (-kv[1],
+                                                        self.ANSI_CANDIDATES.index(kv[0])))
+        self.encoding_scores = dict(ranked)
+        best, best_score = ranked[0]
+        tied = [e for e, s in ranked if s == best_score]
+
+        if len(tied) == 1:
+            self.encoding_confidence = "yuksek"
+            self.encoding_source = "sezgisel"
+        else:
+            # cp1252/cp1254/cp1250 are indistinguishable for Latin text --
+            # the same bytes are a valid word in each. P6 writes an ANSI XER
+            # in the exporting machine's code page, so the local one is the
+            # best available tie-break; say that it was a tie-break rather
+            # than present it as a finding.
+            system = self._system_ansi_codepage()
+            if system in tied:
+                best = system
+                self.encoding_source = "sezgisel (esitlik sistem kod sayfasiyla bozuldu)"
+            else:
+                self.encoding_source = "sezgisel (esitlik, aday sirasi kullanildi)"
+            self.encoding_confidence = "dusuk"
+            logger.warning(
+                "XER %s: %s kod sayfalari esit skorda (%d); %s secildi. "
+                "Metin yanlis gorunuyorsa encoding parametresini acikca verin.",
+                self.file_path, tied, best_score, best)
+
+        self.encoding = best
+        logger.info("XER %s -> ANSI kod sayfasi %s (skorlar=%s, guven=%s)",
+                    self.file_path, best, self.encoding_scores,
+                    self.encoding_confidence)
+        return raw.decode(best, errors="replace")
 
     def _parse(self):
         text = self._read_text()
@@ -156,11 +290,18 @@ def _read_tasks(self, day_hr_cnt=8.0):
     - `target_finish`   = explicit alias of `finish` (baseline target).
     - `early_finish`    = early_end_date (CPM early finish).
     - `late_finish`     = late_end_date (CPM late finish).
-    - `forecast_finish` = reend_date (current schedule / CPM forecast finish).
-                          Fallback chain: reend_date -> early_end_date ->
-                          act_end_date -> target_end_date. THIS is the field
+    - `forecast_finish` = when the activity actually finishes or is expected
+                          to. Chain: act_end_date -> reend_date ->
+                          early_end_date -> target_end_date. THIS is the field
                           a forecast-finish / slip / driver consumer must use.
     The ALFB1 9x/345-day error came from reading target_end_date as forecast.
+
+    act_end_date comes FIRST because a completed activity's finish is a fact,
+    not a forecast. P6 leaves reend_date empty once an activity is complete
+    and lets early_end_date drift to the data date, so the old chain reported
+    finished work as finishing on the data date -- e.g. an activity actually
+    completed 2026-09-24 came back as 2026-11-01, silently erasing 38 days of
+    float in any slip analysis.
     """
     tbl = self.tables.get("TASK", {"rows": []})
     out = []
@@ -182,7 +323,7 @@ def _read_tasks(self, day_hr_cnt=8.0):
             "target_finish": target_finish,
             "early_finish": early_finish,
             "late_finish": late_finish,
-            "forecast_finish": (reend or early_finish or actual_finish
+            "forecast_finish": (actual_finish or reend or early_finish
                                 or target_finish),
             "actual_start": _to_iso_date(row.get("act_start_date")),
             "actual_finish": actual_finish,

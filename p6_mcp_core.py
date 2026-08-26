@@ -25,7 +25,7 @@ from mcp.server.fastmcp import FastMCP
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import mcp_common as mc  # noqa: E402
-from p6 import db, evm, health, jobs  # noqa: E402
+from p6 import baseline, db, evm, health, jobs, progress  # noqa: E402
 from p6 import source as src  # noqa: E402
 
 # stderr only -- stdout belongs to the MCP stdio protocol
@@ -457,6 +457,53 @@ def p6_health(params: dict) -> str:
 )
 def p6_evm(params: dict) -> str:
     return mc.dispatch("p6_evm", params or {}, evm.ACTIONS)
+
+
+@mcp.tool(
+    name="p6_progress",
+    description=(
+        "Enter progress and actuals into a P6 project, and read back what is "
+        "recorded.\n"
+        "actions: read | set_progress | set_assignment_actuals | clear | "
+        "set_data_date\n"
+        "params: proj_id, updates (list of {task_code or task_id, status, "
+        "actual_start, actual_finish, percent_complete, "
+        "remaining_duration_h}), dry_run, confirm (required to write), "
+        "schedule (run F9 after), allow_future_actuals, data_date, "
+        "task_codes (clear), limit, only_started (read).\n"
+        "Writes keep P6's fields consistent: status_code matches the actual "
+        "dates, remaining duration and units fall to zero on completion, and "
+        "percent complete is written on the basis the activity actually uses "
+        "(complete_pct_type). Actual dates after the data date are refused, "
+        "as P6 refuses them. Dates are NOT recalculated here -- P6's own CPM "
+        "engine does that via the Job Service.\n"
+        "Always run with dry_run=true first: it shows the before/after of "
+        "every field without writing."
+    ),
+)
+def p6_progress(params: dict) -> str:
+    return mc.dispatch("p6_progress", params or {}, progress.ACTIONS)
+
+
+@mcp.tool(
+    name="p6_baseline",
+    description=(
+        "P6 baselines: list, create, assign, delete.\n"
+        "actions: list | create | assign | delete\n"
+        "params: proj_id, baseline_proj_id, base_type (default 'Initial "
+        "Plan') or base_type_id, baseline_name, assign (default true), "
+        "dry_run, confirm (required to write).\n"
+        "A P6 baseline is a full copy of the project stored as its own "
+        "PROJECT row -- 'create' copies PROJECT/PROJPROP/PROJWBS/TASK/"
+        "TASKPRED/TASKRSRC in one transaction with fresh ids. Feed the "
+        "resulting baseline_proj_id to p6_evm action='variance_to_baseline'; "
+        "without one, EVM compares the schedule against its own planned "
+        "dates, which in a live P6 database are a copy of the current "
+        "schedule."
+    ),
+)
+def p6_baseline(params: dict) -> str:
+    return mc.dispatch("p6_baseline", params or {}, baseline.ACTIONS)
 
 
 if __name__ == "__main__":

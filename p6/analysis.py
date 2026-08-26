@@ -75,6 +75,32 @@ def _rollup(assignments: Sequence[Mapping[str, Any]], key: str) -> dict[int, flo
     return out
 
 
+def wbs_paths(rows: Sequence[Mapping[str, Any]], id_key: str = "wbs_id",
+              parent_key: str = "parent_wbs_id",
+              short_key: str = "wbs_short_name") -> dict[Any, str]:
+    """Root-to-node path of short names, one per WBS node.
+
+    ``wbs_short_name`` is NOT unique: '1', '2', '3' repeat under different
+    parents. Matching two copies of a programme on the short name alone
+    scrambles them -- when the Cyrillic repair first did that, the node named
+    "СНАБЖЕНИЕ / PROCUREMENT" was about to be relabelled "НАРУЖНЫЕ СЕТИ /
+    EXTERNAL NETWORKS". The path from the root is unique and survives the
+    renumbering an import performs, so it is the safe join key between a
+    project and a copy of it.
+    """
+    by_id = {r.get(id_key): r for r in rows if r.get(id_key)}
+    out: dict[Any, str] = {}
+    for node_id in by_id:
+        parts: list[str] = []
+        cursor, guard = node_id, 0
+        while cursor in by_id and guard < 60:
+            parts.append(by_id[cursor].get(short_key) or "")
+            cursor = by_id[cursor].get(parent_key)
+            guard += 1
+        out[node_id] = "/".join(reversed(parts))
+    return out
+
+
 def _link_maps(links: Sequence[Mapping[str, Any]]):
     """One O(M) pass -> predecessor and successor id lists per task."""
     preds: dict[int, list[int]] = {}
@@ -91,6 +117,81 @@ def _link_maps(links: Sequence[Mapping[str, Any]]):
 def _project_row(bag) -> dict[str, str]:
     rows = bag.tables.get("PROJECT", {"rows": []})["rows"]
     return rows[0] if rows else {}
+
+
+# --- percent complete ------------------------------------------------------
+# P6 stores THREE different completions per activity and `complete_pct_type`
+# picks which one is "the" percent complete. Reading phys_complete_pct blindly
+# -- which is what xer_parser does -- reports 0% for every activity in a
+# duration-based project no matter how much work is booked, so EV comes out 0
+# and SPI looks catastrophic. bukhtourcity is CP_Drtn throughout.
+PCT_TYPES = {"CP_Phys": "fiziksel", "CP_Drtn": "sure", "CP_Units": "birim"}
+
+
+def _pct_from_duration(row: Mapping[str, Any]) -> float | None:
+    target = _f(row.get("target_drtn_hr_cnt"))
+    if target <= 0:
+        return None
+    remain = _f(row.get("remain_drtn_hr_cnt"))
+    return max(0.0, min(100.0, (target - remain) / target * 100.0))
+
+
+def _pct_from_units(task_id: Any, units: Mapping[Any, tuple[float, float]]
+                    ) -> float | None:
+    act, remain = units.get(task_id, (0.0, 0.0))
+    total = act + remain
+    if total <= 0:
+        return None
+    return max(0.0, min(100.0, act / total * 100.0))
+
+
+def resolve_percent_complete(bag) -> tuple[dict[Any, float], dict[str, Any]]:
+    """Percent complete per activity, honouring each one's complete_pct_type.
+
+    Falls back to the stored phys_complete_pct when the activity's own basis
+    cannot be computed (no target duration, no units), and reports how many
+    activities used which basis so a reader can see it rather than assume.
+    Reads the raw TASK/TASKRSRC rows because remain_qty and
+    complete_pct_type are not part of the shaped reader output.
+    """
+    units: dict[Any, tuple[float, float]] = {}
+    for a in bag.tables.get("TASKRSRC", {"rows": []})["rows"]:
+        try:
+            tid = int(a.get("task_id"))
+        except (TypeError, ValueError):
+            continue
+        act, rem = units.get(tid, (0.0, 0.0))
+        units[tid] = (act + _f(a.get("act_reg_qty")) + _f(a.get("act_ot_qty")),
+                      rem + _f(a.get("remain_qty")))
+
+    out: dict[Any, float] = {}
+    used: dict[str, int] = {}
+    for row in bag.tables.get("TASK", {"rows": []})["rows"]:
+        try:
+            tid = int(row.get("task_id"))
+        except (TypeError, ValueError):
+            continue
+        basis = row.get("complete_pct_type") or "CP_Phys"
+        pct = None
+        if basis == "CP_Drtn":
+            pct = _pct_from_duration(row)
+        elif basis == "CP_Units":
+            pct = _pct_from_units(tid, units)
+        else:
+            pct = _f(row.get("phys_complete_pct"))
+        if pct is None:
+            pct = _f(row.get("phys_complete_pct"))
+            key = basis + " (phys_complete_pct'e dusuldu)"
+        else:
+            key = basis
+        # A finished activity is 100% whatever the arithmetic says.
+        if row.get("status_code") == "TK_Complete":
+            pct = 100.0
+        elif row.get("status_code") == "TK_NotStart":
+            pct = 0.0
+        out[tid] = pct
+        used[key] = used.get(key, 0) + 1
+    return out, used
 
 
 def _target_vs_schedule(bag) -> dict[str, Any]:
@@ -249,6 +350,7 @@ def load(params: Mapping[str, Any]) -> dict[str, Any]:
                 s.backend, int(b_id), day_hr)
             baseline_meta = {"baseline_source": "baseline_project", **meta}
 
+        pct_by_task, pct_basis = resolve_percent_complete(bag)
         source_meta = dict(s.meta)
 
     # ---- shaping (backend already closed; everything below is plain data) --
@@ -294,6 +396,8 @@ def load(params: Mapping[str, Any]) -> dict[str, Any]:
         slack = _f(t.get("total_float"))
         shaped.append({
             **t,
+            "percent_complete": pct_by_task.get(tid, _f(t.get("percent_complete"))),
+            "percent_complete_stored": _f(t.get("percent_complete")),
             "baseline_start": b_start,
             "baseline_finish": b_finish,
             "baseline_work": baseline_work,
@@ -340,6 +444,7 @@ def load(params: Mapping[str, Any]) -> dict[str, Any]:
         "resources": list(resources),
         "task_count": len(shaped),
         "summary_task_count": len(tasks) - len(shaped),
+        "percent_complete_basis": pct_basis,
         **units,
         **baseline_meta,
     }

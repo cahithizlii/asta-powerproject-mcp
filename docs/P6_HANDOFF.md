@@ -36,7 +36,7 @@ Bu yüzden veritabanı **SQL Server**'a taşındı. Standalone SQLite alias'ı b
 
 | Dosya | Rol |
 |---|---|
-| `p6_mcp_core.py` | MCP sunucusu (ince dispatcher). Tool'lar: `p6_query`, `p6_job`, `p6_health`, `p6_evm` |
+| `p6_mcp_core.py` | MCP sunucusu (ince dispatcher). Tool'lar: `p6_query`, `p6_job`, `p6_health`, `p6_evm`, `p6_progress`, `p6_baseline` |
 | `mcp_common.py` | Paylaşılan katman: redaksiyon, JSON zarfı + **veri-seviyesi kısaltma**, dispatch, kimlik-parametresi reddi |
 | `p6/db.py` | Alias çözümleme (bootstrap XML), SQLite/SQL Server salt-okuma backend'leri, snapshot, `connect_rw` (yalnız JOBSVC), `parse_schedule_options` |
 | `p6/jobs.py` | **F9 motoru**: `build_job_data`, `submit`, `wait`, `list_jobs`, `cancel`, `purge`, `preflight`, `translate_error` |
@@ -120,9 +120,64 @@ db 26.08 (F9 sonrası, negatif float 9); fark beklenen ve Faz 0 ölçümüyle tu
 Repo test paketi bu dalda **yeniden koşuldu: 890 passed, 279 skipped, 0 fail**
 (skip'ler MS Project/Asta COM gerektiren testler).
 
+### Faz 3 -- yazma: `p6_progress` (5 action) + `p6_baseline` (4 action)
+
+`p6_progress`: `read` * `set_progress` * `set_assignment_actuals` * `clear` * `set_data_date`
+`p6_baseline`: `list` * `create` * `assign` * `delete`
+
+P6'da otomasyon arayuzu yok; yazma dogrudan veritabanina yapilir, tarihleri
+**yalniz P6'nin kendi CPM motoru** hesaplar (`schedule=true` -> Job Service).
+Her yazma `confirm=true` ister, hepsinde `dry_run` var ve dry_run alan alan
+before/after gosterir.
+
+**Faz 2'de gozden kacmis, Faz 3'te bulunup duzeltilen uc hata:**
+
+1. 🔴 **`complete_pct_type` yok sayiliyordu.** `xer_parser` dogrudan
+   `phys_complete_pct` okuyor; bukhtourcity'nin **950 aktivitesinin tamami
+   CP_Drtn**, yani yuzde tamamlanma kalan sureden turer. Ilerleme girildikten
+   sonra bile EV = 0 cikiyordu. `p6/analysis.resolve_percent_complete` artik
+   aktivitenin kendi tabanini kullaniyor (CP_Drtn / CP_Phys / CP_Units) ve
+   hangi tabanin kac aktivitede kullanildigini `percent_complete_basis` ile
+   raporluyor.
+2. 🔴 **Biten is "veri tarihinde bitiyor" gorunuyordu.** `forecast_finish`
+   zinciri `reend_date -> early_end_date -> act_end_date` idi; P6 biten
+   aktivitede `reend_date`'i bosaltip `early_end_date`'i veri tarihine
+   kaydirdigi icin 24.09'da biten is 01.11 olarak donuyordu -- gecikme
+   analizinde 38 gun sessizce siliniyordu. Zincir `act_end_date` ile basliyor:
+   biten isin bitisi tahmin degil, olgudur.
+3. 🔴 **Kaynak yuklu aktivitede kalan sure F9'da geri yaziliyordu.** Sure ile
+   birimi baglayan duration_type'ta (burada `DT_FixedDUR2`) P6 kalan sureyi
+   **atamanin kalan biriminden** yeniden hesaplar. Olcum: bukhtourcity85'e
+   72 saat yazildi, F9 sonrasi 240 saate dondu; atamasi olmayan ayni yapidaki
+   bukhtourcity1346 ise degerini korudu. `set_progress` artik atama
+   defterlerini (act_reg_qty / remain_qty / maliyet) aktiviteyle birlikte
+   tasiyor. `update_assignments=false` verilirse bu davranis uyariyla bildirilir.
+
+**Baseline.** P6'nin Job Service'inde baseline yaratma is tipi YOK; kopya tek
+transaction'da SQL ile yapiliyor (PROJECT/PROJPROP/PROJWBS/TASK/TASKPRED/
+TASKRSRC, NEXTKEY'den taze id). Kalici test baseline'i: **proj_id 369
+"bukhtourcity BL01 Initial"** (Initial Plan, 26.08). Sadakat: 950/950 aktivite
+tarih+ad birebir, 0 kopuk bag, 0 kopuk WBS, `project_flag='N'` (EPS'te
+gorunmez), canli projeyle ortak task_id yok.
+
+### Testler
+
+| Paket | Kapsam | Sonuc |
+|---|---|---|
+| `pytest tests/` (cevrimdisi) | 969 test | **969 passed, 279 skipped, 0 fail** |
+| `tests/test_xer_encoding_detect.py` | XER kod sayfasi saptama, 13 test | gecti |
+| `tests/test_p6_progress_rules.py` | P6 ilerleme semantigi, 33 test | gecti |
+| `tests/test_p6_analysis_rules.py` | yuzde tabani / birim / WBS yolu, 33 test | gecti |
+| `tests/live/test_p6_health_evm.py` | DCMA + EVM, ham SQL capraz kontrol | **35/35** |
+| `tests/live/test_p6_full_acceptance.py` | 6 aracin tamami, uctan uca | **187/187** |
+
+Tam kabul testi veriyi degistirir ve sonunda baslangic durumuna geri alir
+(ilerleme temizlenir, test baseline'i silinir, veri tarihi geri konur);
+tekrar tekrar calistirilabilir.
+
 ### MCP stdio testi
 `initialize → p6_mcp 1.26.0` ·
-`tools/list → ['p6_query','p6_job','p6_health','p6_evm']` · `tools/call` ✅
+`tools/list → ['p6_query','p6_job','p6_health','p6_evm','p6_progress','p6_baseline']` · `tools/call` ✅
 
 ---
 
@@ -139,11 +194,12 @@ Repo test paketi bu dalda **yeniden koşuldu: 890 passed, 279 skipped, 0 fail**
 
 ---
 
-## 5. Faz 2'de ortaya çıkan üç veri bulgusu
+## 5. Veri bulguları (Faz 2'de bulundu, Faz 3'te ikisi çözüldü)
 
-Üçü de kodda değil **veride**; hiçbiri sessizce düzeltilmedi.
+Üçü de kodda değil **veride**; hiçbiri sessizce düzeltilmedi. 5.1 ve 5.3
+Faz 3'te kapatıldı, 5.2 açık.
 
-### 🔴 5.1 Latin1 collation Kiril'i GERİ DÖNÜŞSÜZ bozuyor
+### ✅ 5.1 Latin1 collation Kiril'i bozuyordu — ÇÖZÜLDÜ (26.08)
 
 `TASK.task_name` = `varchar` + `SQL_Latin1_General_CP1_CI_AS`. Kiril metin bu
 kolona sığmıyor ve SQL Server "best-fit" ile en yakın Latin harfi yazıyor:
@@ -154,15 +210,41 @@ DB'de duran  : C3 67 E0 ED E8 F2   -> cp1251 -> "Гgанит"   (bozuk)
                   ^^ 0xF0 ('ğ', cp1254) -> 0x67 ('g')
 ```
 
-Bayt kaybolduğu için **veritabanından kurtarılamaz**. Sonuç: bu DB'den üretilen
-her raporda Rusça aktivite adları bozuk çıkar. Sayısal analiz (DCMA/EVM/float)
-etkilenmez — yalnız metin.
+Bayt kaybolduğu için **veritabanından kurtarılamazdı**; tek doğru kaynak
+projeyi üreten XER dosyasıdır. Sayısal analiz (DCMA/EVM/float) hiç
+etkilenmemişti — yalnız metin.
 
-Çözüm yönü: alias'ı **case-insensitive ama Kiril** bir collation'la
-(`Cyrillic_General_CI_AS`) yeniden kurup XER'i tekrar import etmek. P6'nın
-şartı CI olması; Latin1 olması değil. **Yapılmadı — karar bekliyor.**
+**Çözüm uygulandı** (yedek: `backup_20260826\PMDB_faz3_oncesi.bak`, 43,8 MB):
 
-### 🔴 5.2 CLI import kaynak ücretlerini düşürüyor
+1. `_P6_MCP\collation_migrate.py` — veritabanının **tamamını**
+   `Cyrillic_General_CI_AS`'e taşır (931 varchar kolon + 32 indeks + 62 check
+   constraint drop/recreate + `ALTER DATABASE COLLATE`). Yalnız birkaç kolonu
+   çevirmek karışık collation bırakır ve join'lerde "collation conflict"
+   üretir — 495 trigger / 210 view'lı bir şemada tek tek denetlemek yerine
+   tamamı tek collation'a alındı. Önce yedekten kurulan `PMDB_COLLTEST`
+   üzerinde denendi, satır sayıları birebir doğrulandı, sonra PMDB'ye uygulandı.
+2. `_P6_MCP
+epair_cyrillic.py` — kaybolan baytları XER'den geri yazar.
+   TASK `task_code` ile, PROJWBS **kök yolu** ile eşleşir (`wbs_short_name`
+   benzersiz DEĞİL: '1','2','3' farklı üst düğümler altında tekrar eder; ilk
+   denemede bununla eşleşince "СНАБЖЕНИЕ / PROCUREMENT" düğümüne
+   "НАРУЖНЫЕ СЕТИ" adı yazılacaktı).
+
+Sonuç: **950/950 görev adı XER ile bayt bayt aynı**, 529 görev + 785 WBS
+Kiril, U+FFFD kalıntısı yok, F9 çalışmaya devam ediyor (8 sn, JS_Complete).
+
+🔴 **Bilinen takas:** `varchar` tek bir kod sayfası taşır. cp1251'de Türkçe'ye
+özgü harfler (Ş Ğ İ) YOKTUR; SQL Server en yakın harfi yazar (Ş→S). Kiril
+programlar için doğru seçim budur, ama aynı veritabanında Türkçe metin
+tutulamaz. Kabul testi bunu açıkça sabitler.
+
+**Ayrıca `xer_parser` düzeltildi:** BOM'suz ANSI XER `utf-8 errors='replace'`
+ile okunuyordu, yani cp1251 Kiril'in TAMAMI sessizce U+FFFD oluyordu. Artık
+kod sayfası kelime bazlı skorlamayla saptanıyor (gerçek dosyada cp1251 66.022,
+cp1252 −44.260), `encoding` parametresiyle ezilebiliyor, eşitlikte düşük güven
+işaretleniyor. 13 birim testi: `tests/test_xer_encoding_detect.py`.
+
+### 🔴 5.2 CLI import kaynak ücretlerini düşürüyor (AÇIK)
 
 XER'de `TASKRSRC.cost_per_qty = 5,00` ve `target_cost = target_qty × 5`.
 Aynı XER CLI ile import edildikten sonra DB'de `cost_per_qty = 0`,
@@ -175,7 +257,7 @@ ise BAC'ı ham `target_qty` toplamıyla çapraz doğruluyor (RULE 16.A).
 Faz 4 (`p6_cli` parity) bu kaybı kapatmadan XER→import→F9 döngüsü maliyet
 tarafında güvenilir değildir.
 
-### 🔴 5.3 P6'nın "planned" tarihleri baseline DEĞİLDİR
+### ✅ 5.3 P6'nın "planned" tarihleri baseline DEĞİLDİR — gerçek baseline üretildi
 
 bukhtourcity'de **950 aktivitenin 950'sinde** `target_start_date = early_start_date`
 ve `target_end_date = early_end_date`. P6 başlamamış aktivitelerin planned
@@ -184,8 +266,12 @@ verilmezse target tarihleri kullan" yaklaşımı programı kendisiyle kıyaslar 
 SPI ≈ 1, gecikme ≈ 0, sonsuza kadar.
 
 `p6/analysis.py` bu oranı **ölçüyor** (varsaymıyor) ve %95 üstündeyse
-`baseline_warnings` ile açıkça uyarıyor. Anlamlı EVM için `baseline_proj_id`
-şart. bukhtourcity'de hiç baseline projesi yok (`orig_proj_id = 368` satırı 0).
+`baseline_warnings` ile açıkça uyarıyor.
+
+Faz 3'te `p6_baseline action='create'` eklendi ve **kalıcı bir baseline
+üretildi: proj_id 369 "bukhtourcity BL01 Initial"** (Initial Plan, 26.08).
+`p6_evm action='variance_to_baseline' baseline_proj_id=369` artık gerçek bir
+karşılaştırma yapıyor: 950 aktivite eşleşti, 0 eşleşmeyen, uyarı yok.
 
 ---
 
@@ -219,27 +305,23 @@ SPI ≈ 1, gecikme ≈ 0, sonsuza kadar.
 2. **`p6_write` / `p6_cli` / `p6_revision`**: MPXJ ile XER/PMXML yaz → CLI ile
    revizyon projesi olarak import → F9 → parity.
    **§5.2'deki maliyet kaybı bu adımda çözülmeli.**
-3. **Collation kararı (§5.1)** — `Cyrillic_General_CI_AS` ile veritabanını yeniden
-   kurup XER'i tekrar import etmek. Yıkıcı işlem; kullanıcı onayı bekliyor.
-4. **`mcp_common.py`'yi diğer 3 sunucuya taşı** — JSON kısaltma düzeltmesi
+3. **`mcp_common.py`'yi diğer 3 sunucuya taşı** — JSON kısaltma düzeltmesi
    ve §6'daki kırpma tuzağı orada da geçerli.
-5. `JT_Level` / `JT_Sum` / `JT_ApplyActuals` / `JT_UpdateBaseline` gerçek veriyle doğrula.
-6. `PrmJob.Job` COM `Execute`'u `comtypes` ile yeniden dene (pywin32 `VT_BYREF`
+4. `JT_Level` / `JT_Sum` / `JT_ApplyActuals` / `JT_UpdateBaseline` gerçek veriyle doğrula.
+5. `PrmJob.Job` COM `Execute`'u `comtypes` ile yeniden dene (pywin32 `VT_BYREF`
    OUT parametrelerini kabul etmiyor; servis kuyruğu çalıştığı için bloklayıcı değil).
 
 ## 8. Doğrulanmamış / riskli
 
 - `JT_Level`, `JT_Sum`, `JT_ApplyActuals`, `JT_UpdateBaseline`, `JT_XERExport` —
   kod yolu hazır, **çalıştırılmadı**.
-- **Gerçek baseline'lı EVM yolu denenmedi.** `baseline_proj_id`,
-  `variance_to_baseline` ve `compare_baselines_evm` kod olarak hazır ama bu
-  veritabanında **hiç baseline projesi yok** (§5.3); yalnız hata yolları
-  (olmayan baseline, XER'de baseline isteme) doğrulandı. Baseline taşıyan bir
-  proje bulununca sınanmalı.
-- **İlerlemeli bir programda EVM denenmedi.** bukhtourcity %0 ilerlemede:
-  EV = AC = 0, dolayısıyla SPI/CPI `null`, EAC2/EAC3 `null`, Earned Schedule
-  tanımsız. Formüller `evm_math`'in kendi testleriyle kapsanıyor ama uçtan uca
-  ilerlemeli doğrulama yapılmadı.
+- `compare_baselines_evm` **iki baseline ile denenmedi** — veritabanında tek
+  baseline var (369). `variance_to_baseline` gerçek baseline ile doğrulandı.
+- **Türkçe karakter taşıyan bir P6 programı denenmedi** — collation cp1251;
+  Türkçe'ye özgü harfler bu veritabanında tutulamaz (§5.1 takası).
+- P6 Professional arayüzü **açılıp bakılmadı**: yazılan ilerlemenin ve
+  baseline'ın P6 GUI'sinde nasıl göründüğü doğrulanmadı; tüm doğrulama
+  veritabanı + Job Service üzerinden yapıldı.
 - `p6/db.py`'nin **SQLite backend'i** P6 24.12 SQLite şemasında test edildi;
   SQL Server yolu asıl kullanılan.
 - `snapshot()` fallback dalı (3 dosya kopyası) hiç tetiklenmedi — `VACUUM INTO`

@@ -273,7 +273,7 @@ def add_task(params: Mapping[str, Any]) -> dict[str, Any]:
 
 
 _UPDATABLE = {"task_name", "duration_h", "task_type", "clndr_id", "wbs_id",
-              "wbs_path", "new_task_code"}
+              "wbs_path", "new_task_code", "auto_compute_actuals"}
 
 
 def update_task(params: Mapping[str, Any]) -> dict[str, Any]:
@@ -308,6 +308,12 @@ def update_task(params: Mapping[str, Any]) -> dict[str, Any]:
             sets["task_type"] = TASK_TYPES.get(tt.lower(), tt)
         if "clndr_id" in fields:
             sets["clndr_id"] = int(fields["clndr_id"])
+        if "auto_compute_actuals" in fields:
+            # JT_ApplyActuals only acts on activities flagged auto-compute;
+            # with none flagged the whole job fails ("No projects to apply
+            # actual to."). This is the switch that arms it.
+            sets["auto_compute_act_flag"] = (
+                "Y" if fields["auto_compute_actuals"] else "N")
         if "new_task_code" in fields:
             new_code = str(fields["new_task_code"])[:40]
             dup = s.scalar("SELECT COUNT(*) FROM TASK WHERE proj_id = ? AND "

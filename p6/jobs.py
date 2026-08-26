@@ -43,14 +43,17 @@ JT_RECALC_COST = "JT_RecalcCost"
 JT_STORE_PERIOD = "JT_StorePerPerf"
 JT_BATCH_REPORT = "JT_Batch"
 
-# job_data'da "Schedule Projects" gibi bir bolum adi tasiyan is tipleri
+# JOB_DATA bolum adlari -- PM.exe'nin kendi string tablosundan (26.08.2026):
+# JT_Sched "Schedule Projects" kullanir, DIGER tum is tipleri duz "Projects".
+# Bu ayrim olculdu: JT_ApplyActuals "Apply Actuals" bolum adiyla "No projects
+# to apply actual to." veriyordu; "Projects" ile JS_Complete dondu. (JT_Sum
+# yanlis bolum adina aldirmadan calisiyordu -- sansa guvenme, dogrusunu yaz.)
 _SECTION = {
     JT_SCHEDULE: "Schedule Projects",
-    JT_LEVEL: "Level Projects",
-    JT_SUMMARIZE: "Summarize Projects",
-    JT_APPLY_ACTUALS: "Apply Actuals",
-    JT_UPDATE_BASELINE: "Update Baseline",
-    JT_XER_EXPORT: "Export Projects",
+    JT_SUMMARIZE: "Projects",
+    JT_APPLY_ACTUALS: "Projects",
+    JT_XER_EXPORT: "Projects",
+    JT_BATCH_REPORT: "Projects",
 }
 
 # prmjob.exe'nin kuyruk dispatcher'inin KABUL ETTIGI is tipleri -- 26.08.2026'da

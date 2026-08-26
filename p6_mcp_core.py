@@ -413,8 +413,11 @@ def p6_query(params: dict) -> str:
         "10 s. 'summarize' writes WBS rollups to SUMTASK/SUMTASKSPREAD/"
         "SUMTRSRC down to PROJECT.wbs_max_sum_level (TASKSUM/TRSRCSUM stay "
         "empty in P6 24.12 -- do not measure success there). 'apply_actuals' "
-        "only acts on activities/resources flagged auto-compute-actuals and "
-        "fails with 'No projects to apply actual to.' when none are. "
+        "only acts on activities flagged auto-compute-actuals (arm one via "
+        "p6_task update_task auto_compute_actuals=true); the job completes "
+        "but the new-data-date parameter of P6's dialog is not carried in "
+        "the queue blob yet, so activity actuals are not advanced headless "
+        "-- it stamps PROJECT.apply_actuals_date only. "
         "Requires a SQL Server/Oracle alias, a running PrmJobSv service "
         "and a USEROBS row for the user -- run 'preflight' if a job fails."
     ),

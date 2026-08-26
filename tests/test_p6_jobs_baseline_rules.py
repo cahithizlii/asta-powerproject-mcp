@@ -25,6 +25,20 @@ class TestDispatchable:
             "JT_Enterprise_Sum", "JT_Batch", "JT_Report",
         }
 
+    def test_section_names_from_pm_exe(self):
+        # PM.exe string table: only JT_Sched uses "Schedule Projects"; every
+        # other job type's JOB_DATA section is plain "Projects". Measured:
+        # "Apply Actuals" as section -> "No projects to apply actual to.";
+        # "Projects" -> JS_Complete.
+        assert jobs._SECTION[jobs.JT_SCHEDULE] == "Schedule Projects"
+        for jt in (jobs.JT_SUMMARIZE, jobs.JT_APPLY_ACTUALS,
+                   jobs.JT_XER_EXPORT, jobs.JT_BATCH_REPORT):
+            assert jobs._SECTION[jt] == "Projects", jt
+
+    def test_undispatchable_types_have_no_section(self):
+        assert jobs.JT_LEVEL not in jobs._SECTION
+        assert jobs.JT_UPDATE_BASELINE not in jobs._SECTION
+
     @pytest.mark.parametrize("job_type", [jobs.JT_LEVEL, jobs.JT_UPDATE_BASELINE,
                                           jobs.JT_CREATE_BASELINE])
     def test_submit_refuses_undispatchable(self, job_type):

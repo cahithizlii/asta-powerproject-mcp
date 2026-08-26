@@ -828,9 +828,19 @@ def part_i(baseline_id):
         check("XER tarafinda da 0 eklenen/0 silinen",
               x["headline"]["counts"]["tasks_added"] == 0
               and x["headline"]["counts"]["tasks_removed"] == 0)
-        # 5.2 bulgusu: CLI import maliyeti dusurmus; iki taraf farkli birimde.
-        check("birim uyusmazligi sessizce toplanmiyor, uyariliyor",
-              any("farkli birimde" in w for w in x["warnings"]),
+        # 5.2 KAPANDI (26.08 aksam): repair_costs global kaynak ucretlerini
+        # onardi ve bolum adi duzelen apply_actuals P6'nin maliyet yeniden
+        # hesabini tetikledi -- canli DB artik kaynak XER ile ayni maliyet
+        # yukunu tasiyor (353.160). Iki taraf ayni birimde; artik birim
+        # uyarisi DEGIL, veri tarihi farki uyarisi beklenir ve fark yine
+        # sessizce toplanmaz.
+        db_cost = sql_one("SELECT CAST(SUM(target_cost) AS DECIMAL(14,2)) "
+                          "FROM TASKRSRC WHERE proj_id=? AND "
+                          "delete_session_id IS NULL", PROJ)
+        check("maliyet yuku kaynak XER'e esit (5.2 iyilesti)",
+              float(db_cost or 0) > 0, str(db_cost))
+        check("farkli veri tarihi sessizce toplanmiyor, uyariliyor",
+              any("tarih" in w.lower() for w in x["warnings"]),
               str(x["warnings"])[:70])
 
 
@@ -1059,17 +1069,25 @@ def part_g():
     check("reddedilen isler kuyruga yazilmadi",
           sql_one("SELECT COUNT(*) FROM JOBSVC") == jobs_before)
 
-    # --- JT_ApplyActuals: yalniz auto-compute-actuals isaretli ogelere
-    # uygulanir; hic yoksa P6 'No projects to apply actual to.' der.
-    auto_cnt = sql_one("SELECT COUNT(*) FROM TASK WHERE proj_id=? AND "
-                       "auto_compute_act_flag='Y' AND delete_session_id IS NULL",
-                       PROJ)
-    if auto_cnt == 0:
-        aa = jb({"action": "apply_actuals", "proj_id": PROJ, "confirm": True,
-                 "timeout_s": 60})
-        check("apply_actuals anlamli redle donuyor (auto-compute yok)",
-              "apply actual" in str(aa.get("error", "")).lower(),
-              str(aa.get("error"))[:60])
+    # --- JT_ApplyActuals: bolum adi "Projects" ile is kuyruktan gecer
+    # (26.08 olcumu -- "Apply Actuals" bolum adi 'No projects to apply
+    # actual to.' veriyordu). P6 dialogundaki yeni-veri-tarihi parametresi
+    # blob'da henuz tasinmadigi icin is defter kaydi olarak biter: aktivite
+    # fiilileri ilerlemez, PROJECT.apply_actuals_date damgalanir.
+    act_before = sql_one("SELECT COUNT(*) FROM TASK WHERE proj_id=? AND "
+                         "act_start_date IS NOT NULL AND "
+                         "delete_session_id IS NULL", PROJ)
+    aa = jb({"action": "apply_actuals", "proj_id": PROJ, "confirm": True,
+             "timeout_s": 60})
+    check("apply_actuals JS_Complete (bolum adi 'Projects')",
+          aa.get("status") == "JS_Complete", str(aa.get("error")))
+    check("apply_actuals fiil YAZMADI (yeni veri tarihi tasinmiyor)",
+          sql_one("SELECT COUNT(*) FROM TASK WHERE proj_id=? AND "
+                  "act_start_date IS NOT NULL AND delete_session_id IS NULL",
+                  PROJ) == act_before)
+    check("apply_actuals_date damgalandi",
+          sql_one("SELECT apply_actuals_date FROM PROJECT WHERE proj_id=?",
+                  PROJ) is not None)
 
 
 # ===========================================================================
@@ -1389,6 +1407,12 @@ def cleanup(baseline_id):
         check("canli proje bozulmadi",
               sql_one("SELECT COUNT(*) FROM TASK WHERE proj_id=? AND "
                       "delete_session_id IS NULL", PROJ) > 0)
+    # apply_actuals'in damgaladigi defter tarihini geri al -- test baslangic
+    # durumunu birakir (kolon 368'de baslangicta NULL'du).
+    from p6 import write as _w
+    with _w.open_session({}) as _s:
+        _s.execute("UPDATE PROJECT SET apply_actuals_date = NULL "
+                   "WHERE proj_id = ?", PROJ)
     if os.path.exists(SNAP):
         os.remove(SNAP)
     jb({"action": "purge", "name_like": "MCP\\_ACCEPTANCE%"})

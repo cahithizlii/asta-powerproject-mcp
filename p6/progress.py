@@ -527,7 +527,17 @@ def set_assignment_actuals(params: Mapping[str, Any]) -> dict[str, Any]:
                 new_remain_qty = float(remain_qty)
             else:
                 new_remain_qty = max(0.0, float(rec["target_qty"] or 0) - new_act_qty)
+            # Etkin oran: atamanin kendi cost_per_qty'si, o sifirsa P6'nin
+            # hedeflerinden turetilen oran (target_cost / target_qty). P6
+            # global RSRCRATE'ten maliyet hesapladiginda atama kolonunu 0
+            # birakabiliyor (bukhtourcity: cost_per_qty=0, target_cost=800,
+            # target_qty=160) -- 0 orana dusup fiili maliyeti sabit birakmak
+            # maliyet-yuklu programda AC'yi hic oynatmiyordu.
             rate = float(rec["cost_per_qty"] or 0)
+            if not rate:
+                tq = float(rec["target_qty"] or 0)
+                if tq:
+                    rate = float(rec["target_cost"] or 0) / tq
             new_act_cost = float(act_cost) if act_cost is not None \
                 else (new_act_qty * rate if rate else float(rec["act_reg_cost"] or 0))
             new_remain_cost = float(remain_cost) if remain_cost is not None \

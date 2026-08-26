@@ -249,11 +249,23 @@ class SqlServerBackend(Backend):
         raise P6DbError("SQL Server ODBC surucusu yok. Kurulu: " + repr(available))
 
     def columns(self, table: str) -> list[str]:
+        """Column names of one object, in ordinal order.
+
+        Resolved through OBJECT_ID rather than INFORMATION_SCHEMA filtered on
+        the table name alone: P6's schema installs a `privuser` VIEW over
+        every `dbo` base table (164 of them here), so a name-only filter
+        returns each column TWICE -- once per schema. Reads survived that
+        because the rows land in a dict keyed by column name and the
+        duplicates collapse, but every query fetched each column twice, and
+        the XER writer turned the duplicate list straight into a malformed
+        `%F` header. OBJECT_ID resolves to a single object via the
+        connection's default schema.
+        """
         cur = self.con.cursor()
         cur.execute(
-            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
-            "WHERE UPPER(TABLE_NAME) = ? ORDER BY ORDINAL_POSITION",
-            table.upper(),
+            "SELECT c.name FROM sys.columns c WHERE c.object_id = OBJECT_ID(?) "
+            "ORDER BY c.column_id",
+            table,
         )
         return [r[0] for r in cur.fetchall()]
 

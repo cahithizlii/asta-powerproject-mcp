@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import mcp_common as mc  # noqa: E402
 from p6 import baseline, compare, db, evm, health, jobs, progress  # noqa: E402
+from p6 import writer  # noqa: E402
 from p6 import source as src  # noqa: E402
 
 # stderr only -- stdout belongs to the MCP stdio protocol
@@ -526,6 +527,38 @@ def p6_baseline(params: dict) -> str:
 )
 def p6_compare(params: dict) -> str:
     return mc.dispatch("p6_compare", params or {}, compare.ACTIONS)
+
+
+def _act_export_xer(params: Mapping[str, Any]) -> dict[str, Any]:
+    result = writer.write_xer(params)
+    if params.get("verify", True):
+        result["verify"] = writer.verify_roundtrip(result["path"],
+                                                   result["tables"])
+    return result
+
+
+_WRITE_ACTIONS = {"export_xer": _act_export_xer}
+
+
+@mcp.tool(
+    name="p6_write",
+    description=(
+        "Write a P6 project out to an XER file.\n"
+        "actions: export_xer\n"
+        "params: proj_id, path, overwrite, alias, tables (default: P6's own "
+        "export order), verify (default true).\n"
+        "P6's headless export job (JT_XERExport) reaches P6's export code but "
+        "fails with 'File name not specified.' and the CLI action script has "
+        "no export elements, so this writes the file directly from the "
+        "database. UTF-16-LE with a BOM -- the one encoding proven to carry "
+        "Cyrillic through the round trip. With verify=true the file is read "
+        "back with our own parser and the row counts are checked against what "
+        "was written; a baseline copy is exported the same way by passing its "
+        "proj_id."
+    ),
+)
+def p6_write(params: dict) -> str:
+    return mc.dispatch("p6_write", params or {}, _WRITE_ACTIONS)
 
 
 if __name__ == "__main__":

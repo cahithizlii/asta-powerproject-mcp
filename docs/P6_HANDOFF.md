@@ -36,7 +36,7 @@ Bu yüzden veritabanı **SQL Server**'a taşındı. Standalone SQLite alias'ı b
 
 | Dosya | Rol |
 |---|---|
-| `p6_mcp_core.py` | MCP sunucusu (ince dispatcher). Tool'lar: `p6_query`, `p6_job`, `p6_health`, `p6_evm`, `p6_progress`, `p6_baseline`, `p6_compare` |
+| `p6_mcp_core.py` | MCP sunucusu (ince dispatcher). 8 tool: `p6_query`, `p6_job`, `p6_health`, `p6_evm`, `p6_progress`, `p6_baseline`, `p6_compare`, `p6_write` |
 | `mcp_common.py` | Paylaşılan katman: redaksiyon, JSON zarfı + **veri-seviyesi kısaltma**, dispatch, kimlik-parametresi reddi |
 | `p6/db.py` | Alias çözümleme (bootstrap XML), SQLite/SQL Server salt-okuma backend'leri, snapshot, `connect_rw` (yalnız JOBSVC), `parse_schedule_options` |
 | `p6/jobs.py` | **F9 motoru**: `build_job_data`, `submit`, `wait`, `list_jobs`, `cancel`, `purge`, `preflight`, `translate_error` |
@@ -211,17 +211,63 @@ icinde `exportFile`/`exportFormat` karsiliklari YOK. Referans blob'u
 yakalamanin bilinen tek yolu, P6 arayuzunde Job Services penceresinden bir
 kez export isi olusturup JOBSVC satirini okumak.
 
+### Faz 5 -- `p6_write` (XER export) ve uc gizli hata
+
+`JT_XERExport` cikmaza girdigi icin export dogrudan veritabanindan yaziliyor:
+`p6/writer.py`, UTF-16LE + BOM, P6'nin kendi tablo sirasinda. `verify=true`
+dosyayi **kendi parser'imizla geri okur** ve satir sayilarini, baslik
+tekilligini, U+FFFD kalintisini denetler.
+
+Parite kaniti: yazilan XER ile kaynak veritabani `p6_compare` ile
+karsilastirildiginda **950/950 aktivite ayni, 0 eklenen / 0 silinen /
+0 degisen, bitis kaymasi 0, uyari yok**.
+
+**Bu is uc hata ortaya cikardi; ucu de sessiz sinifindandi:**
+
+1. 🔴 **`SqlServerBackend.columns()` her kolonu IKI KEZ donduruyordu.** P6
+   semasi her `dbo` tablosunun uzerine bir `privuser` VIEW'i kuruyor (burada
+   164 adet) ve sorgu `INFORMATION_SCHEMA.COLUMNS`'u yalnizca tablo ADIYLA
+   suzuyordu. Okumalar sagkalmisti (satirlar kolon adiyla anahtarlanan bir
+   sozluge giriyor, tekrarlar birbirini eziyor) ama **Faz 1'den beri her
+   sorgu her kolonu iki kez cekiyordu** ve XER yazici bu listeyi dogrudan
+   bozuk bir `%F` basligina cevirdi. Duzeltme: `OBJECT_ID` ile tek nesneye
+   cozumleme. Dosya boyutu 3,3 MB -> 1,7 MB.
+2. 🔴 **ERMHDR'de para birimi yanlis alandan okunuyordu.** Gercek bir P6
+   export'u sekiz alan tasir ve para birimi SONDADIR; parser bes alan varsayip
+   5. alani aliyordu. bukhtourcity.xer'de bu **"Izzat Islomov"** demekti --
+   `currency_validator.extract_currency_code` bir kisi adini para birimi kodu
+   olarak donduruyordu, ve cost/hours karari bu koda bakiyor.
+3. 🔴 **`Decimal("0E-8")` XER'e bilimsel gosterimle yaziliyordu.** SQL Server
+   sifirlanmis bir numeric kolonu tam olarak boyle veriyor (RSRCRATE
+   .cost_per_qty bunlardan biri) ve `str()` bunu `0E-8` yapiyor -- bir XER
+   importer'inin anlamasi icin sebep yok. `format(v, "f")` ile duzeltildi.
+
+### §5.2 tehisi ilerledi (hala ACIK)
+
+CLI import'un kaynak ucretlerini dusurmesi bir P6 hatasi degil: import
+**hicbir import konfigurasyonu olmadan** kosmustu. `importConfiguration`
+ogesi `VIEWPROP` tablosundaki `view_type='VP_IMP_OPT'` satirlarina cozuluyor
+ve bu veritabaninda **sifir tane VP_IMP_OPT satiri var** -- P6 varsayilanlari
+uyguladi: kaynagi ekle, ucretini sifirla. Kanit: DB'deki RSRCRATE satirlari
+dogru `rsrc_id`, `max_qty_per_hr` ve `start_date` tasiyor, yalnizca
+`cost_per_qty` sifir. (`admin` global superuser, yani yetki sorunu degil.)
+
+Cozum icin iki yol: (a) VP_IMP_OPT satirini uretmek -- `view_data` kodlamasi
+belgesiz, referans P6 arayuzunden yakalanmali; (b) import sonrasi ucretleri
+kaynak XER'den geri yazmak -- Kiril onariminda kullanilan, kanitlanmis desen.
+
 ### Testler
 
 | Paket | Kapsam | Sonuc |
 |---|---|---|
-| `pytest tests/` (cevrimdisi) | 988 test | **988 passed, 279 skipped, 0 fail** |
+| `pytest tests/` (cevrimdisi) | 1013 test | **1013 passed, 279 skipped, 0 fail** |
 | `tests/test_xer_encoding_detect.py` | XER kod sayfasi saptama, 13 test | gecti |
 | `tests/test_p6_progress_rules.py` | P6 ilerleme semantigi, 33 test | gecti |
 | `tests/test_p6_analysis_rules.py` | yuzde tabani / birim / WBS yolu, 33 test | gecti |
 | `tests/live/test_p6_health_evm.py` | DCMA + EVM, ham SQL capraz kontrol | **35/35** |
 | `tests/test_p6_compare_rules.py` | task_code eslesmesi, 19 test | gecti |
-| `tests/live/test_p6_full_acceptance.py` | 7 aracin tamami + P6 motoru dogrulamasi | **212/212** |
+| `tests/test_p6_writer_rules.py` | ERMHDR + XER bicimlendirme, 25 test | gecti |
+| `tests/live/test_p6_full_acceptance.py` | 8 aracin tamami + P6 motoru dogrulamasi | **232/232** |
 
 Tam kabul testi veriyi degistirir ve sonunda baslangic durumuna geri alir
 (ilerleme temizlenir, test baseline'i silinir, veri tarihi geri konur);
@@ -229,7 +275,7 @@ tekrar tekrar calistirilabilir.
 
 ### MCP stdio testi
 `initialize → p6_mcp 1.26.0` ·
-`tools/list → ['p6_query','p6_job','p6_health','p6_evm','p6_progress','p6_baseline','p6_compare']` · `tools/call` ✅
+`tools/list → ['p6_query','p6_job','p6_health','p6_evm','p6_progress','p6_baseline','p6_compare','p6_write']` · `tools/call` ✅
 
 ---
 
@@ -296,7 +342,7 @@ kod sayfası kelime bazlı skorlamayla saptanıyor (gerçek dosyada cp1251 66.02
 cp1252 −44.260), `encoding` parametresiyle ezilebiliyor, eşitlikte düşük güven
 işaretleniyor. 13 birim testi: `tests/test_xer_encoding_detect.py`.
 
-### 🔴 5.2 CLI import kaynak ücretlerini düşürüyor (AÇIK)
+### 🔴 5.2 CLI import kaynak ücretlerini düşürüyor (AÇIK — teşhis ilerledi, bkz. §3)
 
 XER'de `TASKRSRC.cost_per_qty = 5,00` ve `target_cost = target_qty × 5`.
 Aynı XER CLI ile import edildikten sonra DB'de `cost_per_qty = 0`,

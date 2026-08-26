@@ -1,4 +1,4 @@
-r"""P6 MCP tam kabul testi -- dort aracin tamami, canli SQL Server uzerinde.
+r"""P6 MCP tam kabul testi -- sekiz aracin tamami, canli SQL Server uzerinde.
 
 Bu test iddiaya degil KANITA bakar. Her sayisal sonuc ya ham SQL ile bagimsiz
 sayilir, ya kaynak XER dosyasiyla karsilastirilir, ya da matematiksel bir
@@ -14,6 +14,9 @@ Kapsam:
   F  Ilerleme/fiili       p6_progress 5 action + P6 semantik kurallari
   G  Job Service          p6_job preflight/schedule/status/list
   H  Korumalar            confirm, dry_run, salt-okuma SQL, kimlik parametresi
+  I  Karsilastirma        p6_compare -- task_code ile eslesme kaniti
+  K  XER yazma            p6_write -- gidis-donus + kaynakla birebir parite
+  J  P6 motoru            yazilan veriyi P6'nin kendi CPM motoru dogruluyor mu
 
 Test VERIYI DEGISTIRIR ve sonunda baslangic durumuna geri alir:
 ilerleme temizlenir, olusturulan baseline silinir, veri tarihi geri konur.
@@ -826,6 +829,88 @@ def part_i(baseline_id):
 
 
 # ===========================================================================
+# K -- XER yazma
+# ===========================================================================
+def wr(params):
+    return json.loads(srv.p6_write(params))
+
+
+def part_k():
+    section("K  XER YAZMA (p6_write)")
+    out = os.path.join(tempfile.gettempdir(), "p6_acceptance_export.xer")
+    if os.path.exists(out):
+        os.remove(out)
+
+    r = wr({"action": "export_xer", "proj_id": PROJ, "path": out})
+    check("export hatasiz", "error" not in r, r.get("error", ""))
+    if "error" in r:
+        return
+    check("dosya olustu", os.path.exists(out), "%.1f MB" % (r["bytes"] / 1024 / 1024))
+    check("UTF-16-LE BOM ile yazildi",
+          open(out, "rb").read(2) == b"\xff\xfe")
+
+    v = r.get("verify", {})
+    check("geri okuma satir sayilari tutuyor", v.get("row_count_match") is True,
+          json.dumps(v.get("mismatch", {}))[:60])
+    check("basliklarda tekrar eden kolon yok", v.get("headers_unique") is True,
+          json.dumps(v.get("duplicate_headers", {}))[:60])
+    check("U+FFFD kalintisi yok", v.get("replacement_chars") == 0,
+          str(v.get("replacement_chars")))
+    check("dogrulama tumden gecti", v.get("ok") is True)
+
+    for table, expected in (("TASK", "tasks"), ("TASKPRED", "links")):
+        n = sql_one("SELECT COUNT(*) FROM [%s] WHERE proj_id=? AND "
+                    "delete_session_id IS NULL" % table, PROJ)
+        check("%s satir sayisi veritabaniyla ayni" % table,
+              r["tables"].get(table) == n,
+              "%s vs %s" % (r["tables"].get(table), n))
+    check("SCHEDOPTIONS bolumu yazildi (PROJPROP'tan)",
+          r["tables"].get("SCHEDOPTIONS", 0) >= 1,
+          str(r["tables"].get("SCHEDOPTIONS")))
+    check("kaynak ucret tablosu da yazildi",
+          "RSRCRATE" in r["tables"], str(r["tables"].get("RSRCRATE")))
+    check("bilimsel gosterim (0E-8) sizmadi",
+          "E-" not in open(out, "rb").read().decode("utf-16-le"))
+
+    # Asil kanit: yazilan dosya kaynagiyla anlamli olarak ayni mi?
+    c = cp({"action": "summary", "a": {"proj_id": PROJ},
+            "b": {"type": "xer", "path": out}, "limit": 3})
+    counts = c["headline"]["counts"]
+    check("KRITIK -- yazilan XER kaynak projeyle birebir",
+          counts["tasks_added"] == 0 and counts["tasks_removed"] == 0
+          and counts["tasks_changed"] == 0,
+          "+%s -%s ~%s" % (counts["tasks_added"], counts["tasks_removed"],
+                           counts["tasks_changed"]))
+    check("mantik da birebir",
+          counts["links_added"] == 0 and counts["links_removed"] == 0
+          and counts["links_changed"] == 0)
+    check("bitis tarihleri kaymadi",
+          c["finish_movement"]["project_slip_days"] == 0,
+          str(c["finish_movement"]["project_slip_days"]))
+    check("birim ve takvim uyusuyor (uyari yok)", not c["warnings"],
+          str(c["warnings"])[:60])
+
+    if sql_one("SELECT COUNT(*) FROM TASK WHERE proj_id=? AND task_name "
+               "LIKE N'%[Ѐ-ӿ]%'", PROJ):
+        import xer_parser
+        x = xer_parser.XerFile(out)
+        cyr = sum(1 for row in x.tables["TASK"]["rows"]
+                  if any("Ѐ" <= ch <= "ӿ" for ch in row.get("task_name", "")))
+        check("Kiril adlar dosyaya tasindi", cyr > 0, "%d gorev" % cyr)
+
+    check("var olan dosyanin uzerine izinsiz yazilmiyor",
+          "error" in wr({"action": "export_xer", "proj_id": PROJ, "path": out}))
+    check("overwrite ile yazilabiliyor",
+          "error" not in wr({"action": "export_xer", "proj_id": PROJ,
+                             "path": out, "overwrite": True}))
+    check("proj_id'siz export reddedilir",
+          "error" in wr({"action": "export_xer", "path": out}))
+    check("yolsuz export reddedilir",
+          "error" in wr({"action": "export_xer", "proj_id": PROJ}))
+    os.remove(out)
+
+
+# ===========================================================================
 # J -- P6'nin kendi motoru
 # ===========================================================================
 def part_j():
@@ -1006,6 +1091,7 @@ def main() -> int:
         part_g()
         part_h()
         part_i(baseline_id)
+        part_k()
         part_j()
     except Exception:  # noqa: BLE001
         p("")

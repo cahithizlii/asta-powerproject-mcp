@@ -15,6 +15,36 @@ import os
 logger = logging.getLogger(__name__)
 
 
+def _parse_ermhdr(line):
+    """ERMHDR satirini alanlarina ayirir.
+
+    Gercek bir P6 export'u SEKIZ alan tasir::
+
+        ERMHDR  19.12  2026-08-21  Project  Izzat1199  Izzat Islomov
+                dbxDatabaseNoName  Project Management Cloud  USD
+
+    Onceki kod bes alan varsayip 5. alani para birimi sayiyordu; yukaridaki
+    dosyada bu "Izzat Islomov" demekti -- yani `extract_currency_code` bir
+    kisi adini para birimi kodu olarak donduruyordu. Para birimi HER ZAMAN
+    son alandir; aradaki alanlar surume gore degisir, o yuzden bastan ve
+    sondan sabit olanlar isimlendirilir, arasi `fields` olarak saklanir.
+    """
+    parts = [p.strip() for p in line.split("\t")]
+    out = {
+        "version": parts[1] if len(parts) > 1 else "",
+        "exported": parts[2] if len(parts) > 2 else "",
+        "currency": parts[-1] if len(parts) > 3 else "",
+        "fields": parts[1:],
+    }
+    # 8 alanli klasik bicim: ... project, user_login, user_name, db, app, currency
+    if len(parts) >= 9:
+        out.update(user=parts[4], user_name=parts[5], database=parts[6],
+                   app=parts[7])
+    elif len(parts) >= 5:
+        out.update(user=parts[3], app=parts[4])
+    return out
+
+
 class XerFile:
     """Parse a P6 XER file into structured table dicts.
 
@@ -197,14 +227,7 @@ class XerFile:
             if not line:
                 continue
             if line.startswith("ERMHDR"):
-                parts = line.split("\t")
-                self.header_fields = {
-                    "version": parts[1] if len(parts) > 1 else "",
-                    "exported": parts[2] if len(parts) > 2 else "",
-                    "user": parts[3] if len(parts) > 3 else "",
-                    "app": parts[4] if len(parts) > 4 else "",
-                    "currency": parts[5] if len(parts) > 5 else "",
-                }
+                self.header_fields = _parse_ermhdr(line)
                 continue
             if line.startswith("%T"):
                 parts = line.split("\t", 1)

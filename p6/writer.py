@@ -182,16 +182,42 @@ def write_xer(params: Mapping[str, Any]) -> dict[str, Any]:
         backend.close()
 
     text = "\r\n".join(lines) + "\r\n"
+    encoding = (params.get("encoding") or "utf-16-le").lower()
+    unencodable = 0
     tmp = path + ".tmp"
     with open(tmp, "wb") as fh:
-        fh.write(b"\xff\xfe")                      # UTF-16-LE BOM
-        fh.write(text.encode("utf-16-le"))
+        if encoding in ("utf-16-le", "utf-16le", "utf16"):
+            fh.write(b"\xff\xfe")
+            payload = text.encode("utf-16-le")
+        else:
+            payload = text.encode(encoding, errors="replace")
+            unencodable = sum(
+                1 for ch in text
+                if ch >= "\x80" and ch.encode(encoding, "replace") == b"?")
+        fh.write(payload)
     os.replace(tmp, path)
 
+    result_encoding = ("utf-16-le (BOM)"
+                       if encoding in ("utf-16-le", "utf-16le", "utf16")
+                       else encoding)
+    notes = []
+    if encoding in ("utf-16-le", "utf-16le", "utf16"):
+        notes.append(
+            "P6'nin KENDI CLI import'u UTF-16LE bir XER'i reddeder "
+            "('The import file is invalid.', cikis kodu 6) -- ayni icerik "
+            "ANSI olarak sorunsuz girer. Bu dosya bizim araclarimiz ve baska "
+            "sistemler icin uygundur; P6'ya geri yuklenecekse encoding='cp1251' "
+            "(ya da programin diline uygun ANSI kod sayfasi) verin.")
+    if unencodable:
+        notes.append(
+            "%d karakter %s kod sayfasina sigmadi ve '?' oldu -- bu dosya "
+            "metin acisindan KAYIPLIDIR." % (unencodable, encoding))
     return {
         "path": os.path.abspath(path),
         "bytes": os.path.getsize(path),
-        "encoding": "utf-16-le (BOM)",
+        "encoding": result_encoding,
+        "unencodable_chars": unencodable,
+        "notes": notes,
         "proj_id": proj_id, "proj_short_name": short_name,
         "currency": currency,
         "tables": counts,

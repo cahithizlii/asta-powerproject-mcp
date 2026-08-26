@@ -890,13 +890,22 @@ def part_k():
     check("birim ve takvim uyusuyor (uyari yok)", not c["warnings"],
           str(c["warnings"])[:60])
 
-    if sql_one("SELECT COUNT(*) FROM TASK WHERE proj_id=? AND task_name "
-               "LIKE N'%[Ѐ-ӿ]%'", PROJ):
+    # Kiril sayimi Python'da yapilir: SQL'de `LIKE N'%[Ѐ-ӿ]%'` aralik
+    # karsilastirmasi collation siralamasina gore calisir, kod noktasina gore
+    # degil -- Kiril bir collation altinda 0 dondurup sessizce atlatiyor.
+    def _cyr(text):
+        return any("Ѐ" <= ch <= "ӿ" for ch in (text or ""))
+
+    db_cyr = sum(1 for r in sql_all(
+        "SELECT task_name FROM TASK WHERE proj_id=? AND delete_session_id "
+        "IS NULL", PROJ) if _cyr(r[0]))
+    if db_cyr:
         import xer_parser
         x = xer_parser.XerFile(out)
-        cyr = sum(1 for row in x.tables["TASK"]["rows"]
-                  if any("Ѐ" <= ch <= "ӿ" for ch in row.get("task_name", "")))
-        check("Kiril adlar dosyaya tasindi", cyr > 0, "%d gorev" % cyr)
+        file_cyr = sum(1 for row in x.tables["TASK"]["rows"]
+                       if _cyr(row.get("task_name", "")))
+        check("Kiril adlar dosyaya eksiksiz tasindi", file_cyr == db_cyr,
+              "dosya %d / veritabani %d" % (file_cyr, db_cyr))
 
     check("var olan dosyanin uzerine izinsiz yazilmiyor",
           "error" in wr({"action": "export_xer", "proj_id": PROJ, "path": out}))

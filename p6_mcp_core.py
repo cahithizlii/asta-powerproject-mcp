@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import mcp_common as mc  # noqa: E402
 from p6 import baseline, compare, db, evm, health, jobs, progress  # noqa: E402
-from p6 import writer  # noqa: E402
+from p6 import cli, writer  # noqa: E402
 from p6 import source as src  # noqa: E402
 
 # stderr only -- stdout belongs to the MCP stdio protocol
@@ -559,6 +559,30 @@ _WRITE_ACTIONS = {"export_xer": _act_export_xer}
 )
 def p6_write(params: dict) -> str:
     return mc.dispatch("p6_write", params or {}, _WRITE_ACTIONS)
+
+
+@mcp.tool(
+    name="p6_cli",
+    description=(
+        "Drive P6's own command line: import an XER, then repair what it "
+        "drops.\n"
+        "actions: import_xer | repair_costs\n"
+        "params: path (XER), proj_id (repair), alias, user, eps, password or "
+        "the P6_CLI_PASSWORD environment variable, confirm (required), "
+        "dry_run (repair), timeout_s, work_dir.\n"
+        "The CLI only ever CREATEs, so every import lands as a NEW project -- "
+        "which is what makes it the right tool for a revision. It also zeroes "
+        "resource rates, because it runs with no import configuration "
+        "(importConfiguration resolves to VIEWPROP rows of type VP_IMP_OPT "
+        "and this database has none); 'repair_costs' writes them back from "
+        "the source XER, joining on activity code and resource short name, "
+        "never on ids, and reports whether the project total now matches the "
+        "file. PM.exe must be closed. Passwords are registered as secrets and "
+        "masked out of every log this tool returns."
+    ),
+)
+def p6_cli(params: dict) -> str:
+    return mc.dispatch("p6_cli", params or {}, cli.ACTIONS)
 
 
 if __name__ == "__main__":

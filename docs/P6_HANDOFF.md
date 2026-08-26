@@ -36,7 +36,7 @@ Bu yüzden veritabanı **SQL Server**'a taşındı. Standalone SQLite alias'ı b
 
 | Dosya | Rol |
 |---|---|
-| `p6_mcp_core.py` | MCP sunucusu (ince dispatcher). 8 tool: `p6_query`, `p6_job`, `p6_health`, `p6_evm`, `p6_progress`, `p6_baseline`, `p6_compare`, `p6_write` |
+| `p6_mcp_core.py` | MCP sunucusu (ince dispatcher). 9 tool: `p6_query`, `p6_job`, `p6_health`, `p6_evm`, `p6_progress`, `p6_baseline`, `p6_compare`, `p6_write`, `p6_cli` |
 | `mcp_common.py` | Paylaşılan katman: redaksiyon, JSON zarfı + **veri-seviyesi kısaltma**, dispatch, kimlik-parametresi reddi |
 | `p6/db.py` | Alias çözümleme (bootstrap XML), SQLite/SQL Server salt-okuma backend'leri, snapshot, `connect_rw` (yalnız JOBSVC), `parse_schedule_options` |
 | `p6/jobs.py` | **F9 motoru**: `build_job_data`, `submit`, `wait`, `list_jobs`, `cancel`, `purge`, `preflight`, `translate_error` |
@@ -256,6 +256,47 @@ Cozum icin iki yol: (a) VP_IMP_OPT satirini uretmek -- `view_data` kodlamasi
 belgesiz, referans P6 arayuzunden yakalanmali; (b) import sonrasi ucretleri
 kaynak XER'den geri yazmak -- Kiril onariminda kullanilan, kanitlanmis desen.
 
+### Faz 5b -- `p6_cli`: import, ucret onarimi ve iki kesin kodlama bulgusu
+
+**§5.2 KAPANDI.** CLI import'un kaynak ucretlerini dusurmesi yeniden uretildi
+ve onarildi:
+
+| Adim | Sonuc |
+|---|---|
+| Orijinal XER'i CLI ile import | yeni proje, 442 atama, `target_qty` 70.632 dogru |
+| Import sonrasi `target_cost` | **0** (ucreti olan atama: 0/442) -- §5.2 birebir tekrarlandi |
+| `p6_cli action='repair_costs'` | 2 kaynak ucreti + 442 atama duzeltildi |
+| Onarim sonrasi proje toplami | **353.160** = kaynak XER toplami **353.160** ✅ |
+
+Onarim id ile degil **is anahtariyla** eslesir: kaynaklar `rsrc_short_name`,
+atamalar (aktivite kodu, kaynak kisa adi) ikilisiyle. P6 import'ta her id'yi
+yeniden numaralandirdigi icin id eslesmesi sessizce yanlis satiri tutardi --
+baseline kopyasinin ve `p6_compare`'in kacindigi ayni tuzak.
+
+**🔴 P6'nin import'u UTF-16LE XER'i REDDEDER.** Devir notunun onceki
+"XER yazimi UTF-16LE" karari MPXJ + kendi parser'imiz icindi; P6'nin kendi
+importer'i icin gecerli DEGIL. Kanit, kodlamayi icerikten ayiran bir deney:
+orijinal ANSI dosya sorunsuz girer, **ayni icerigin** UTF-16LE kopyasi
+`The import file is invalid.` (cikis kodu 6) ile reddedilir. `p6_write` artik
+`encoding` parametresi aliyor ve ne kaybedildigini sayiyor
+(cp1251 → 0 karakter, cp1254 → **22.359 karakter '?' oluyor**).
+
+**🔴 Kiril bir program CLI import'undan saglam cikamaz.** P6 ANSI XER'i
+*makinenin* kod sayfasiyla okur (burada cp1254). Olcum, ayni kaynaktan iki
+kopya:
+
+| Yol | Kirilli gorev | `bukhtourcity437` |
+|---|---|---|
+| Canli proje (onarilmis) | 529 | `Гранит` |
+| **CLI import** | **0** | `Agaieo` |
+| **Veritabani ici revizyon kopyasi** | **529** | `Гранит` |
+
+Bu yuzden **revizyon veritabani icinde kopyalanir**, XER'den gecirilmez:
+`p6_baseline action='revision'` baseline kopyalama makinesini kullanir ama
+kopyayi gercek bir proje olarak birakir (`project_flag='Y'`,
+`orig_proj_id` bos, EPS'te gorunur). Sadakat: 950/950 ad+tarih birebir,
+ortak `task_id` 0, `p6_compare` ile sifir fark.
+
 ### Testler
 
 | Paket | Kapsam | Sonuc |
@@ -267,7 +308,7 @@ kaynak XER'den geri yazmak -- Kiril onariminda kullanilan, kanitlanmis desen.
 | `tests/live/test_p6_health_evm.py` | DCMA + EVM, ham SQL capraz kontrol | **35/35** |
 | `tests/test_p6_compare_rules.py` | task_code eslesmesi, 19 test | gecti |
 | `tests/test_p6_writer_rules.py` | ERMHDR + XER bicimlendirme, 25 test | gecti |
-| `tests/live/test_p6_full_acceptance.py` | 8 aracin tamami + P6 motoru dogrulamasi | **232/232** |
+| `tests/live/test_p6_full_acceptance.py` | 8 aracin tamami + P6 motoru dogrulamasi | **233/233** |
 
 Tam kabul testi veriyi degistirir ve sonunda baslangic durumuna geri alir
 (ilerleme temizlenir, test baseline'i silinir, veri tarihi geri konur);
@@ -275,7 +316,7 @@ tekrar tekrar calistirilabilir.
 
 ### MCP stdio testi
 `initialize → p6_mcp 1.26.0` ·
-`tools/list → ['p6_query','p6_job','p6_health','p6_evm','p6_progress','p6_baseline','p6_compare','p6_write']` · `tools/call` ✅
+`tools/list → ['p6_query','p6_job','p6_health','p6_evm','p6_progress','p6_baseline','p6_compare','p6_write','p6_cli']` · `tools/call` ✅
 
 ---
 
@@ -342,7 +383,7 @@ kod sayfası kelime bazlı skorlamayla saptanıyor (gerçek dosyada cp1251 66.02
 cp1252 −44.260), `encoding` parametresiyle ezilebiliyor, eşitlikte düşük güven
 işaretleniyor. 13 birim testi: `tests/test_xer_encoding_detect.py`.
 
-### 🔴 5.2 CLI import kaynak ücretlerini düşürüyor (AÇIK — teşhis ilerledi, bkz. §3)
+### ✅ 5.2 CLI import kaynak ücretlerini düşürüyordu — ÇÖZÜLDÜ (26.08, bkz. §3 Faz 5b)
 
 XER'de `TASKRSRC.cost_per_qty = 5,00` ve `target_cost = target_qty × 5`.
 Aynı XER CLI ile import edildikten sonra DB'de `cost_per_qty = 0`,
@@ -399,13 +440,14 @@ karşılaştırma yapıyor: 950 aktivite eşleşti, 0 eşleşmeyen, uyarı yok.
 
 ## 7. Sıradaki işler
 
-1. **`p6_write` / `p6_cli` / `p6_revision`**: MPXJ ile XER/PMXML yaz → CLI ile
-   revizyon projesi olarak import → F9 → parity.
-   **§5.2'deki maliyet kaybı bu adımda çözülmeli.**
-2. **`mcp_common.py`'yi diğer 3 sunucuya taşı** — JSON kısaltma düzeltmesi
+1. **`mcp_common.py`'yi diğer 3 sunucuya taşı** — JSON kısaltma düzeltmesi
    ve §6'daki kırpma tuzağı orada da geçerli.
-3. **`JT_XERExport` dosya adı parametresi** — P6 arayüzünde bir kez export işi
-   oluşturup JOBSVC satırını okumak yeterli (§3, Faz 4 notu).
+2. **`JT_XERExport` dosya adı parametresi** — P6 arayüzünde bir kez export işi
+   oluşturup JOBSVC satırını okumak yeterli (§3, Faz 4 notu). `p6_write`
+   ihtiyacı karşıladığı için artık acil değil.
+3. **VP_IMP_OPT import konfigürasyonu** — `repair_costs` sorunu çözüyor ama
+   asıl temiz yol, P6 arayüzünde bir import şablonu kaydedip `view_data`
+   kodlamasını oradan öğrenmek.
 4. `JT_Level` / `JT_Sum` / `JT_ApplyActuals` / `JT_UpdateBaseline` gerçek veriyle doğrula.
 5. `PrmJob.Job` COM `Execute`'u `comtypes` ile yeniden dene (pywin32 `VT_BYREF`
    OUT parametrelerini kabul etmiyor; servis kuyruğu çalıştığı için bloklayıcı değil).

@@ -110,22 +110,42 @@ def list_baselines(params: Mapping[str, Any]) -> dict[str, Any]:
         backend.close()
 
 
+def revision(params: Mapping[str, Any]) -> dict[str, Any]:
+    """Copy a project into a new, independent project -- a revision.
+
+    Why in the database and not through an export/import round trip: P6's CLI
+    importer **rejects a UTF-16LE XER** ("The import file is invalid.", exit
+    code 6) and reads an ANSI one with the machine's own code page, so a
+    Cyrillic programme comes back mangled on a Turkish-locale machine
+    (measured: bukhtourcity437 "Гранит" -> "Agaieo"). The import also zeroes
+    resource rates. A copy inside the database has none of those losses --
+    the same machinery that makes a baseline, with the copy left as a real
+    project instead.
+    """
+    return create(dict(params, _as_revision=True))
+
+
 def create(params: Mapping[str, Any]) -> dict[str, Any]:
     """Copy a project into a new baseline of it.
 
     dry_run reports exactly what would be copied without writing anything.
     """
+    as_revision = bool(params.get("_as_revision"))
+    what = "Revizyon olusturma" if as_revision else "Baseline olusturma"
     proj_id = params.get("proj_id")
     if proj_id is None:
         raise w.P6WriteError("proj_id zorunlu.")
     proj_id = int(proj_id)
     dry = bool(params.get("dry_run"))
     if not dry:
-        w.require_confirm(params, "Baseline olusturma")
+        w.require_confirm(params, what)
 
     with w.open_session(params) as s:
         short_name = w.project_exists(s, proj_id)
-        base_type_id, base_type = _resolve_base_type(s, params)
+        if as_revision:
+            base_type_id, base_type = None, None
+        else:
+            base_type_id, base_type = _resolve_base_type(s, params)
 
         counts = {}
         for table in COPY_TABLES:
@@ -133,14 +153,18 @@ def create(params: Mapping[str, Any]) -> dict[str, Any]:
                 "SELECT COUNT(*) FROM [%s] WHERE proj_id = ? "
                 "AND delete_session_id IS NULL" % table, proj_id) or 0)
 
-        name = params.get("baseline_name") or (
-            "%s - B%s" % (short_name, _dt.datetime.now().strftime("%Y%m%d-%H%M")))
+        default_name = "%s - %s%s" % (
+            short_name, "R" if as_revision else "B",
+            _dt.datetime.now().strftime("%Y%m%d-%H%M"))
+        name = ((params.get("revision_name") if as_revision else None)
+                or params.get("baseline_name") or default_name)
+        action_name = "revision" if as_revision else "create"
 
         if dry:
             s.conn.rollback()
-            return {"action": "create", "dry_run": True,
+            return {"action": action_name, "dry_run": True,
                     "source_proj_id": proj_id, "source_name": short_name,
-                    "baseline_name": name, "base_type": base_type,
+                    "new_name": name, "base_type": base_type,
                     "would_copy": counts,
                     "note": "Hicbir sey yazilmadi. confirm=true ile calistirin."}
 
@@ -151,12 +175,13 @@ def create(params: Mapping[str, Any]) -> dict[str, Any]:
         prow = dict(prows[0])
         prow["proj_id"] = new_proj_id
         prow["proj_short_name"] = name[:40] if "proj_short_name" in pcols else None
-        prow["orig_proj_id"] = proj_id
+        # A baseline hangs off its project and stays out of the EPS; a
+        # revision is a project in its own right and must appear there.
+        prow["orig_proj_id"] = None if as_revision else proj_id
         prow["base_type_id"] = base_type_id
         prow["sum_base_proj_id"] = None
-        # A baseline must not appear as a project in the EPS.
-        prow["project_flag"] = "N"
-        if "last_baseline_update_date" in pcols:
+        prow["project_flag"] = "Y" if as_revision else "N"
+        if not as_revision and "last_baseline_update_date" in pcols:
             prow["last_baseline_update_date"] = s.stamp
         s.stamp_audit(prow, pcols)
         s.insert_rows("PROJECT", pcols, [prow])
@@ -212,20 +237,23 @@ def create(params: Mapping[str, Any]) -> dict[str, Any]:
         external = sum(1 for r in pred_rows
                        if r.get("pred_task_id") not in task_map)
 
-        if params.get("assign", True):
+        if not as_revision and params.get("assign", True):
             s.execute("UPDATE PROJECT SET sum_base_proj_id = ?, "
                       "last_baseline_update_date = ? WHERE proj_id = ?",
                       new_proj_id, s.stamp, proj_id)
 
         return {
-            "action": "create",
-            "baseline_proj_id": new_proj_id,
-            "baseline_name": name,
+            "action": action_name,
+            "baseline_proj_id": None if as_revision else new_proj_id,
+            "revision_proj_id": new_proj_id if as_revision else None,
+            "new_proj_id": new_proj_id,
+            "new_name": name,
             "base_type": base_type, "base_type_id": base_type_id,
             "source_proj_id": proj_id, "source_name": short_name,
             "copied": written,
             "external_predecessors_left_unmapped": external,
-            "assigned_as_project_baseline": bool(params.get("assign", True)),
+            "assigned_as_project_baseline": (
+                False if as_revision else bool(params.get("assign", True))),
             "not_copied": ["OBSPROJ", "UACCESS", "TASKMEMO", "UDFVALUE",
                            "ACTVCODE atamalari", "PROJCOST"],
             "note": ("Program tablolari kopyalandi (PROJECT/PROJPROP/PROJWBS/"
@@ -291,6 +319,7 @@ def delete(params: Mapping[str, Any]) -> dict[str, Any]:
 ACTIONS = {
     "list": list_baselines,
     "create": create,
+    "revision": revision,
     "assign": assign,
     "delete": delete,
 }

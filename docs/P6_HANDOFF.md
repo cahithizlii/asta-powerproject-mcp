@@ -366,15 +366,25 @@ karşılaştırma yapıyor: 950 aktivite eşleşti, 0 eşleşmeyen, uyarı yok.
 
 ## 8. Doğrulanmamış / riskli
 
-- `JT_Level`, `JT_Sum`, `JT_ApplyActuals`, `JT_UpdateBaseline`, `JT_XERExport` —
-  kod yolu hazır, **çalıştırılmadı**.
+- `JT_Level`, `JT_ApplyActuals`, `JT_UpdateBaseline` — kod yolu hazır,
+  **çalıştırılmadı**.
+- `JT_Sum` **çalıştırıldı, JS_Complete döndü ama hiçbir şey yazmadı**
+  (`TASKSUM` 0 → 0, `TRSRCSUM` 0 → 0, `PROJECT.sum_data_date` boş kaldı).
+  Muhtemelen projede özetleme ayarı/WBS özet seviyesi tanımlı değil; işin
+  başarılı dönmesi özet üretildiği anlamına gelmiyor — araştırılmalı.
+- `JT_XERExport` **çalıştırıldı**: kuyruktan alınıyor, P6'nın export koduna
+  ulaşıyor, `File name not specified.` ile düşüyor (§3, Faz 4 notu).
 - `compare_baselines_evm` **iki baseline ile denenmedi** — veritabanında tek
   baseline var (369). `variance_to_baseline` gerçek baseline ile doğrulandı.
 - **Türkçe karakter taşıyan bir P6 programı denenmedi** — collation cp1251;
   Türkçe'ye özgü harfler bu veritabanında tutulamaz (§5.1 takası).
-- P6 Professional arayüzü **açılıp bakılmadı**: yazılan ilerlemenin ve
-  baseline'ın P6 GUI'sinde nasıl göründüğü doğrulanmadı; tüm doğrulama
-  veritabanı + Job Service üzerinden yapıldı.
+- **P6 arayüzünde göze bakılmadı.** Veri doğruluğu P6'nın kendi motoruyla
+  kanıtlandı (§3, "P6'nin kendi motoruyla dogrulama") — yazılan kalan süreden
+  P6'nın türettiği iş penceresi birebir tutuyor. Doğrulanmayan tek şey GUI
+  *render*'ı: grid'de Kiril adların ve yüzdelerin görünümü.
+  🔴 **computer-use bu iş için çalışmıyor:** Start menüsündeki
+  "P6 Professional 24 (x64)" izni `primavera.cacheservice.exe`'ye çözülüyor,
+  arayüz ise `PM.exe` — pencere maskeleniyor ve tıklama reddediliyor.
 - `p6/db.py`'nin **SQLite backend'i** P6 24.12 SQLite şemasında test edildi;
   SQL Server yolu asıl kullanılan.
 - `snapshot()` fallback dalı (3 dosya kopyası) hiç tetiklenmedi — `VACUUM INTO`

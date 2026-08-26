@@ -22,6 +22,12 @@ import pywintypes
 import win32com.client
 from mcp.server.fastmcp import FastMCP
 
+# Response envelope from mcp_common: redacts credentials and keeps oversized
+# payloads valid JSON by dropping rows from the biggest list instead of
+# cutting characters (the DCMA assess_all 14-rules-to-1 bug). This server
+# previously returned unbounded json.dumps straight to the client.
+from mcp_common import json_response as _json_response
+
 # ---------- LOGGING ----------
 log_dir = os.path.expanduser("~/.claude/logs")
 os.makedirs(log_dir, exist_ok=True)
@@ -3430,7 +3436,7 @@ async def msproject_task(params: dict) -> str:
     except Exception as e:
         logger.error(f"msproject_task({action}) failed: {e}")
         r = {"status": "error", "error": str(e)}
-    return json.dumps(r, default=str, ensure_ascii=False)
+    return _json_response(r)
 
 
 @mcp.tool(
@@ -3467,7 +3473,7 @@ async def msproject_link(params: dict) -> str:
     except Exception as e:
         logger.error(f"msproject_link({action}) failed: {e}")
         r = {"status": "error", "error": str(e)}
-    return json.dumps(r, default=str, ensure_ascii=False)
+    return _json_response(r)
 
 
 @mcp.tool(
@@ -3501,7 +3507,7 @@ async def msproject_schedule(params: dict) -> str:
     except Exception as e:
         logger.error(f"msproject_schedule({action}) failed: {e}")
         r = {"status": "error", "error": str(e)}
-    return json.dumps(r, default=str, ensure_ascii=False)
+    return _json_response(r)
 
 
 @mcp.tool(
@@ -3559,7 +3565,7 @@ async def msproject_calendar(params: dict) -> str:
     except Exception as e:
         logger.error(f"msproject_calendar({action}) failed: {e}")
         r = {"status": "error", "error": _format_com_error(e)}
-    return json.dumps(r, default=str, ensure_ascii=False)
+    return _json_response(r)
 
 
 @mcp.tool(
@@ -3605,7 +3611,7 @@ async def msproject_resource(params: dict) -> str:
     except Exception as e:
         logger.error(f"msproject_resource({action}) failed: {e}")
         r = {"status": "error", "error": _format_com_error(e)}
-    return json.dumps(r, default=str, ensure_ascii=False)
+    return _json_response(r)
 
 
 @mcp.tool(
@@ -3656,7 +3662,7 @@ async def msproject_baseline(params: dict) -> str:
     except Exception as e:
         logger.error(f"msproject_baseline({action}) failed: {e}")
         r = {"status": "error", "error": _format_com_error(e)}
-    return json.dumps(r, default=str, ensure_ascii=False)
+    return _json_response(r)
 
 
 @mcp.tool(
@@ -3722,7 +3728,7 @@ async def msproject_progress(params: dict) -> str:
     except Exception as e:
         logger.error(f"msproject_progress({action}) failed: {e}")
         r = {"status": "error", "error": _format_com_error(e)}
-    return json.dumps(r, default=str, ensure_ascii=False)
+    return _json_response(r)
 
 
 # ============================================================================
@@ -5122,7 +5128,7 @@ async def msproject_file(params: dict) -> str:
     except Exception as e:
         logger.error(f"msproject_file({action}) failed: {e}")
         r = {"status": "error", "error": str(e)}
-    return json.dumps(r, default=str, ensure_ascii=False)
+    return _json_response(r)
 
 
 # ============================================================================
@@ -5994,7 +6000,7 @@ async def msproject_evm(params: dict) -> str:
     except Exception as e:
         logger.exception(f"msproject_evm({action}) failed: {e}")
         r = {"status": "error", "error": str(e)}
-    return json.dumps(r, default=str, ensure_ascii=False)
+    return _json_response(r)
 
 
 # ============================================================================
@@ -6358,7 +6364,7 @@ async def msproject_health(params: dict) -> str:
     except Exception as e:
         logger.exception(f"msproject_health({action}) failed: {e}")
         r = {"status": "error", "error": str(e)}
-    return json.dumps(r, default=str, ensure_ascii=False)
+    return _json_response(r)
 
 
 # ============================================================================
@@ -6697,7 +6703,7 @@ async def msproject_excel(params: dict) -> str:
     except Exception as e:
         logger.exception(f"msproject_excel({action}) failed: {e}")
         r = {"status": "error", "error": str(e)}
-    return json.dumps(r, default=str, ensure_ascii=False)
+    return _json_response(r)
 
 
 # ============================================================================
@@ -6866,7 +6872,7 @@ async def msproject_xer(params: dict) -> str:
     except Exception as e:
         logger.exception(f"msproject_xer({action}) failed: {e}")
         r = {"status": "error", "error": str(e)}
-    return json.dumps(r, default=str, ensure_ascii=False)
+    return _json_response(r)
 
 
 # ============================================================================
@@ -7188,7 +7194,7 @@ async def msproject_compare(params: dict) -> str:
     except Exception as e:
         logger.exception(f"msproject_compare({action}) failed: {e}")
         r = {"status": "error", "error": str(e)}
-    return json.dumps(r, default=str, ensure_ascii=False)
+    return _json_response(r)
 
 
 # ============================================================================
@@ -7315,7 +7321,7 @@ async def msproject_report(params: dict) -> str:
     except Exception as e:
         logger.exception(f"msproject_report({action}) failed: {e}")
         r = {"status": "error", "error": str(e)}
-    return json.dumps(r, default=str, ensure_ascii=False)
+    return _json_response(r)
 
 
 def main():

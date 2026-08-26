@@ -187,6 +187,27 @@ def json_response(payload: Any, max_chars: int = MAX_RESPONSE_CHARS) -> str:
     return truncate_response(text, max_chars)
 
 
+def shrink_json_text(text: str, max_chars: int = MAX_RESPONSE_CHARS) -> str:
+    """json_response for tools that already hold a serialised JSON string.
+
+    A raw character cut on a JSON string both breaks parseability and can
+    silently swallow data (the DCMA assess_all 14-rules-to-1 bug). Oversized
+    text that parses as a JSON object is therefore shrunk row-wise through
+    json_response; only non-JSON text falls back to the character cut.
+    """
+    if text is None:
+        return text
+    if len(text) <= max_chars:
+        return redact(text)
+    try:
+        payload = json.loads(text)
+    except (ValueError, TypeError):
+        return truncate_response(redact(text), max_chars)
+    if isinstance(payload, Mapping):
+        return json_response(payload, max_chars)
+    return truncate_response(redact(text), max_chars)
+
+
 def err(message: str, **extra: Any) -> str:
     """Error envelope. Tools return errors as data, never as exceptions."""
     payload: dict[str, Any] = {"status": "error", "error": message}
@@ -228,5 +249,5 @@ def dispatch(
     except Exception as exc:  # noqa: BLE001 - tools must not raise
         return err(f"{tool}({action}) basarisiz: {exc}", exception_type=type(exc).__name__)
     if isinstance(result, str):
-        return truncate_response(redact(result))
+        return shrink_json_text(result)
     return json_response(result)

@@ -67,24 +67,11 @@ SUPPORTED_EXTENSIONS = ['.pp', '.mpp', '.xml', '.mspdi', '.xer', '.pmxml']
 DEFAULT_DOWNLOADS = os.path.join(os.path.expanduser("~"), "Downloads")
 ASTA_WINDOW_TITLE = "Asta Powerproject"
 
-# Maximum response size in characters to prevent Claude Desktop context overflow.
-# Claude Desktop chat has ~8K token tool result limit. 1 token ≈ 4 chars → ~30K chars max safe.
-MAX_RESPONSE_CHARS = 25000
-
-
-def _truncate_response(text: str, max_chars: int = MAX_RESPONSE_CHARS) -> str:
-    """Truncate tool response to prevent Claude Desktop context overflow.
-
-    If text exceeds max_chars, truncates and appends a warning note.
-    """
-    if len(text) <= max_chars:
-        return text
-    truncated = text[:max_chars]
-    # Try to truncate at a newline boundary
-    last_newline = truncated.rfind('\n')
-    if last_newline > max_chars * 0.8:  # Only if we don't lose too much
-        truncated = truncated[:last_newline]
-    return truncated + f"\n\n... **[TRUNCATED]** Response exceeded {max_chars} chars. Use smaller `limit` or `max_tasks` param, or query specific tasks with `asta_task → get`."
+# Response size guard lives in mcp_common: oversized JSON payloads lose rows
+# (biggest list halved until it fits), not characters — a raw character cut
+# breaks parseability and can silently swallow data (the DCMA assess_all
+# 14-rules-to-1 bug). Non-JSON text still falls back to a character cut.
+from mcp_common import MAX_RESPONSE_CHARS, shrink_json_text as _truncate_response
 
 # ============================================================================
 # JVM is NOT pre-started here — MPXJ/JVM is only loaded lazily in fallback mode.

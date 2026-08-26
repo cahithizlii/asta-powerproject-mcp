@@ -65,17 +65,11 @@ mcp = FastMCP(
 # CONSTANTS
 # ============================================================================
 SUPPORTED_EXTENSIONS = ['.pp', '.mpp', '.xml', '.mspdi', '.xer', '.pmxml']
-MAX_RESPONSE_CHARS = 25000
-
-def _truncate_response(text: str, max_chars: int = MAX_RESPONSE_CHARS) -> str:
-    """Truncate response to prevent Claude Desktop context overflow."""
-    if len(text) <= max_chars:
-        return text
-    truncated = text[:max_chars]
-    last_newline = truncated.rfind('\n')
-    if last_newline > max_chars * 0.8:
-        truncated = truncated[:last_newline]
-    return truncated + f"\n\n... **[TRUNCATED]** Response exceeded {max_chars} chars. Use smaller `limit` or `max_tasks` param, or query specific tasks with `asta_query → get_task`."
+# Response size guard lives in mcp_common: oversized JSON payloads lose rows
+# (biggest list halved until it fits), not characters — a raw character cut
+# breaks parseability and can silently swallow data (the DCMA assess_all
+# 14-rules-to-1 bug). Non-JSON text still falls back to a character cut.
+from mcp_common import MAX_RESPONSE_CHARS, shrink_json_text as _truncate_response
 
 # ============================================================================
 # PRE-START JVM (so first tool call is fast)

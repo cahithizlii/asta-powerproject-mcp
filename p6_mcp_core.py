@@ -25,7 +25,7 @@ from mcp.server.fastmcp import FastMCP
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import mcp_common as mc  # noqa: E402
-from p6 import db, jobs  # noqa: E402
+from p6 import db, evm, health, jobs  # noqa: E402
 from p6 import source as src  # noqa: E402
 
 # stderr only -- stdout belongs to the MCP stdio protocol
@@ -412,6 +412,51 @@ def p6_query(params: dict) -> str:
 )
 def p6_job(params: dict) -> str:
     return mc.dispatch("p6_job", params or {}, _ACTIONS)
+
+
+@mcp.tool(
+    name="p6_health",
+    description=(
+        "DCMA 14-Point schedule health for a P6 project, from a database "
+        "alias or an XER file.\n"
+        "actions: assess_all | summary | drill_down | compare\n"
+        "params: type ('db' default, or 'xer'), path, alias, proj_id or "
+        "proj_short_name, baseline_proj_id, status_date, day_hr_cnt, "
+        "rule_id (1-14, drill_down), limit, snapshot_path (compare).\n"
+        "Rule 9's 44-day threshold uses the project calendar's hours per day, "
+        "and 'critical' comes from PROJECT.critical_drtn_hr_cnt -- neither is "
+        "assumed. Without baseline_proj_id the target dates act as the "
+        "baseline; every response says which was used."
+    ),
+    annotations={"readOnlyHint": True},
+)
+def p6_health(params: dict) -> str:
+    return mc.dispatch("p6_health", params or {}, health.ACTIONS)
+
+
+@mcp.tool(
+    name="p6_evm",
+    description=(
+        "Earned Value Management for a P6 project (PMBOK 8th 7.4.2, Lipke "
+        "2003 Earned Schedule). Same action vocabulary as msproject_evm.\n"
+        "actions: compute_metrics | forecast | earned_schedule | summary | "
+        "time_phased_evm | period_delta | progress_data_quality | "
+        "variance_to_baseline | compare_baselines_evm | save_period_snapshot "
+        "| get_period_history | trend | detect_currency_mode | "
+        "validate_currency_mode | verify\n"
+        "params: type ('db' default, or 'xer'), path, alias, proj_id or "
+        "proj_short_name, baseline_proj_id (real P6 baseline), "
+        "baseline_proj_id_a/_b, units ('auto'|'cost'|'qty'|'duration_h'), "
+        "status_date, bucket ('day'|'week'|'month'), snapshot_path, tag, "
+        "limit, tolerance.\n"
+        "Every response reports the unit the BAC is measured in plus the BAC "
+        "each basis would give. Run 'verify' before quoting a BAC in a report.\n"
+        "The P6 database is never written to; 'save_period_snapshot' appends "
+        "to a local JSON file (~/p6_evm_snapshots.json by default)."
+    ),
+)
+def p6_evm(params: dict) -> str:
+    return mc.dispatch("p6_evm", params or {}, evm.ACTIONS)
 
 
 if __name__ == "__main__":

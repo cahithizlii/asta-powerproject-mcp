@@ -486,39 +486,78 @@ karşılaştırma yapıyor: 950 aktivite eşleşti, 0 eşleşmeyen, uyarı yok.
 
 ---
 
-## 7. Sıradaki işler
+## 7. Sıradaki işler (26.08 akşam güncellemesi)
 
-1. **`mcp_common.py`'yi diğer 3 sunucuya taşı** — JSON kısaltma düzeltmesi
-   ve §6'daki kırpma tuzağı orada da geçerli.
+1. ✅ **`mcp_common.py` diğer 3 sunucuya taşındı** (857fd79) — asta_mcp_core /
+   asta_mcp_file yerel ham-kesicilerini `shrink_json_text`'e devretti,
+   msproject_mcp_core'un 14 tool çıkışı (hiç guard'sızdı) `json_response`'a
+   bağlandı, `dispatch`'in str dalı da düzeltildi. 28 birim testi
+   (`tests/test_mcp_common.py`) + sunucu bağlantısını sabitleyen wiring
+   testleri eklendi.
 2. **`JT_XERExport` dosya adı parametresi** — P6 arayüzünde bir kez export işi
    oluşturup JOBSVC satırını okumak yeterli (§3, Faz 4 notu). `p6_write`
-   ihtiyacı karşıladığı için artık acil değil.
+   ihtiyacı karşıladığı için acil değil. **KULLANICI EYLEMİ GEREKLİ (GUI).**
 3. **VP_IMP_OPT import konfigürasyonu** — `repair_costs` sorunu çözüyor ama
    asıl temiz yol, P6 arayüzünde bir import şablonu kaydedip `view_data`
-   kodlamasını oradan öğrenmek.
-4. `JT_Level` / `JT_Sum` / `JT_ApplyActuals` / `JT_UpdateBaseline` gerçek veriyle doğrula.
+   kodlamasını oradan öğrenmek. **KULLANICI EYLEMİ GEREKLİ (GUI).**
+4. ✅ **İş tipleri gerçek veriyle ölçüldü** (e5aba31) — bkz. §3 "Faz 5c".
 5. `PrmJob.Job` COM `Execute`'u `comtypes` ile yeniden dene (pywin32 `VT_BYREF`
    OUT parametrelerini kabul etmiyor; servis kuyruğu çalıştığı için bloklayıcı değil).
+6. **Faz 6 — task/link/WBS CRUD**: canlı projede aktivite/bağ ekleme-silme ve
+   sıfırdan proje kurma. "Sıfırdan planlama + mevcut dosyayı düzenleme"
+   hedefinin kapanması için gereken son parça.
+
+### Faz 5c — iş tipleri ölçüldü, iki tanesi P6 Pro'da YOK (26.08 akşam)
+
+- ✅ **JT_Sum hiç "sessiz başarısız" değildi — yanlış tabloya bakılmıştı.**
+  Özet `SUMTASK` / `SUMTASKSPREAD` / `SUMTRSRC` tablolarına,
+  `PROJECT.wbs_max_sum_level` (=2 → 7 WBS düğümü) derinliğine yazılır;
+  `TASKSUM`/`TRSRCSUM` bu derlemede hep boş kalır. Kanıt: yeniden koşumda kök
+  SUMTASK 3/2/945 → 0/0/950 = canlı TASK birebir, `last_tasksum_date` ilerledi.
+- 🔴 **JT_Level ve JT_UpdateBaseline P6 Professional kuyruğunda ÇALIŞMAZ.**
+  Ölçüm: ikisi de `Invalid Job type` ile JS_Failed. İkili kanıt: prmjob.exe
+  UTF-16LE string tablosunda "Invalid Job type:" hemen öncesindeki dispatch
+  listesi yalnız şu yediyi taşıyor: `JT_Sched · JT_ApplyActuals · JT_XERExport
+  · JT_Sum · JT_Enterprise_Sum · JT_Batch · JT_Report`. (JT_Level /
+  JT_UpdateBaseline / JT_CreateBaseline sabitleri ikilide BAŞKA yerlerde var
+  ama dispatcher koşmuyor — leveling ve baseline güncelleme GUI-only.)
+  `jobs.submit` artık bu tipleri kuyruğa hiç bırakmadan açıklayıcı hata verir
+  (`jobs.DISPATCHABLE`).
+- **JT_ApplyActuals** P6 uygulama koduna ulaşıyor; auto-compute-actuals
+  işaretli öğe yoksa `No projects to apply actual to.` ile anlamlı biçimde reddediyor
+  (bukhtourcity'de 950/950 `auto_compute_act_flag='N'`). Pozitif yol için
+  işaretli veri gerekir — tool'larla bu flag henüz yazılamıyor.
+- ✅ **`compare_baselines_evm` iki gerçek baseline ile doğrulandı**
+  (379 vs 380, sandbox): iki tarafta da 950/950 eşleşme, 0 eşleşmeyen,
+  BAC birebir, delta 0 (kopyalar arasında yalnız ilerleme alanı farkı vardı).
+- ✅ **`p6_baseline delete` korumalı gerçek-proje silme kazandı**: revizyon
+  kopyası gerçek projedir (orig_proj_id boş) ve düz delete onu reddediyordu —
+  revizyonlar silinemiyordu. Artık `delete_project=true` +
+  `expected_short_name` (birebir ad) ister; projeye bakan canlı baseline
+  varken reddeder. İki guard da canlı ölçüldü.
+- Not: revizyon/baseline kopyasında `not_copied` listesi OBSPROJ'u sayar ama
+  378 için OBSPROJ satırı vardı (muhtemelen şema trigger'ı üretiyor) ve
+  JT_Sched kopya üzerinde sorunsuz koştu.
+- **Kabul testi 233 → 252 kontrol** (L: revizyon sadakati + korumalı silme;
+  M: p6_cli import+repair_costs — `P6_CLI_PASSWORD` yoksa temiz atlanır;
+  G: summarize/level/update_baseline/apply_actuals ölçümleri). 252/252, 42 sn.
+- Yedek: `PMDB_kalanisler_oncesi_20260826.bak` (SQL Backup dizini, 17:11, 87,8 MB).
 
 ## 8. Doğrulanmamış / riskli
 
-- `JT_Level`, `JT_ApplyActuals`, `JT_UpdateBaseline` — kod yolu hazır,
-  **çalıştırılmadı**.
-- `JT_Sum` **çalıştırıldı, JS_Complete döndü ama hiçbir şey yazmadı**
-  (`TASKSUM` 0 → 0, `TRSRCSUM` 0 → 0, `PROJECT.sum_data_date` boş kaldı).
-  Muhtemelen projede özetleme ayarı/WBS özet seviyesi tanımlı değil; işin
-  başarılı dönmesi özet üretildiği anlamına gelmiyor — araştırılmalı.
+- ✅(26.08 akşam) ~~JT_Level / JT_ApplyActuals / JT_UpdateBaseline çalıştırılmadı~~ —
+  ölçüldü, bkz. §3 Faz 5c: JT_Level ve JT_UpdateBaseline **P6 Pro kuyruğunda YOK**
+  (dispatch whitelist 7 tip), JT_ApplyActuals çalışıyor ama auto-compute işaretli
+  öğe ister. Pozitif ApplyActuals yolu hâlâ denenmedi (flag yazma yolu yok).
+- ✅(26.08 akşam) ~~JT_Sum sessiz başarısızlık~~ — yanlış tabloya bakılmıştı;
+  özet SUMTASK/SUMTASKSPREAD/SUMTRSRC'de, kanıtla doğrulandı (§3 Faz 5c).
 - `JT_XERExport` **çalıştırıldı**: kuyruktan alınıyor, P6'nın export koduna
   ulaşıyor, `File name not specified.` ile düşüyor (§3, Faz 4 notu).
-- `compare_baselines_evm` **iki baseline ile denenmedi** — veritabanında tek
-  baseline var (369). `variance_to_baseline` gerçek baseline ile doğrulandı.
-- 🔴 **`p6_cli` ve `p6_baseline action='revision'` kabul testinde YOK.** İkisi de
-  elle, gerçek veriyle doğrulandı (import → `repair_costs` → 353.160 = kaynak
-  XER; revizyon kopyası → 950/950 birebir, 529 Kiril korundu) ve test
-  projeleri sonradan temizlendi — ama `test_p6_full_acceptance.py` bu iki yolu
-  koşmuyor. `p6_cli` testi P6 parolası gerektirdiği için testin kimlik
-  bağımlılığı olmadan koşabilmesi ayrı bir tasarım kararı ister
-  (örn. `P6_CLI_PASSWORD` yoksa o bölümü atlamak).
+- ✅(26.08 akşam) ~~compare_baselines_evm iki baseline ile denenmedi~~ —
+  iki gerçek baseline ile doğrulandı (§3 Faz 5c).
+- ✅(26.08 akşam) ~~p6_cli ve revision kabul testinde yok~~ — kabul testine
+  L (revizyon, koşuldu) ve M (p6_cli, `P6_CLI_PASSWORD` yoksa atlanır) bölümleri
+  eklendi; 252/252. M bölümü parola tanımlı bir oturumda henüz KOŞULMADI.
 - **`p6_write`'ın ANSI çıktısı P6'ya geri import edilerek denenmedi.** UTF-16LE
   reddedildiği ölçüldü; `encoding='cp1251'` ile yazılan dosyanın P6 tarafından
   kabul edilip edilmediği sınanmadı.

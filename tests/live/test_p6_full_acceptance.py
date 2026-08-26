@@ -17,6 +17,10 @@ Kapsam:
   I  Karsilastirma        p6_compare -- task_code ile eslesme kaniti
   K  XER yazma            p6_write -- gidis-donus + kaynakla birebir parite
   J  P6 motoru            yazilan veriyi P6'nin kendi CPM motoru dogruluyor mu
+  L  Revizyon             p6_baseline revision -- DB ici proje kopyasi,
+                          ad sadakati + task_code/task_id kaniti + korumali silme
+  M  CLI import           p6_cli import + repair_costs (P6_CLI_PASSWORD ister;
+                          tanimli degilse bolum ATLANIR, test yine gecer)
 
 Test VERIYI DEGISTIRIR ve sonunda baslangic durumuna geri alir:
 ilerleme temizlenir, olusturulan baseline silinir, veri tarihi geri konur.
@@ -1021,6 +1025,182 @@ def part_g():
     check("olmayan proje reddedilir",
           "error" in jb({"action": "schedule", "proj_id": 999999, "timeout_s": 30}))
 
+    # --- JT_Sum: ozet SUMTASK/SUMTASKSPREAD/SUMTRSRC'ye yazilir (26.08.2026
+    # olcumu). TASKSUM/TRSRCSUM P6 24.12'de BOS kalir -- basariyi orada olcen
+    # onceki oturum "sessiz basarisizlik" tehisi koymustu; yanlisti.
+    sm = jb({"action": "summarize", "proj_id": PROJ,
+             "job_name": "MCP_ACCEPTANCE_SUM", "timeout_s": 120})
+    check("summarize JS_Complete", sm.get("status") == "JS_Complete",
+          str(sm.get("error")))
+    root_wbs = sql_one(
+        "SELECT s.complete_cnt + s.active_cnt + s.notstarted_cnt "
+        "FROM SUMTASK s JOIN PROJWBS w ON w.wbs_id = s.wbs_id "
+        "WHERE s.proj_id = ? AND w.proj_node_flag = 'Y'", PROJ)
+    live_cnt = sql_one("SELECT COUNT(*) FROM TASK WHERE proj_id=? "
+                       "AND delete_session_id IS NULL", PROJ)
+    check("SUMTASK kok toplami canli aktivite sayisina esit",
+          root_wbs == live_cnt, "%s = %s" % (root_wbs, live_cnt))
+    check("last_tasksum_date damgalandi",
+          sql_one("SELECT last_tasksum_date FROM PROJECT WHERE proj_id=?",
+                  PROJ) is not None)
+
+    # --- Dispatch whitelist: JT_Level / JT_UpdateBaseline P6 Professional
+    # kuyrugunda CALISMAZ (olculdu: 'Invalid Job type' + prmjob.exe string
+    # tablosu). Tool artik isi hic kuyruga birakmadan aciklayici hata verir.
+    jobs_before = sql_one("SELECT COUNT(*) FROM JOBSVC")
+    lv = jb({"action": "level", "proj_id": PROJ, "confirm": True})
+    check("level fail-fast reddedilir", "CALISTIRAMAZ" in str(lv.get("error")),
+          str(lv.get("error"))[:60])
+    ub = jb({"action": "update_baseline", "proj_id": PROJ, "confirm": True})
+    check("update_baseline fail-fast reddedilir",
+          "CALISTIRAMAZ" in str(ub.get("error")))
+    check("reddedilen isler kuyruga yazilmadi",
+          sql_one("SELECT COUNT(*) FROM JOBSVC") == jobs_before)
+
+    # --- JT_ApplyActuals: yalniz auto-compute-actuals isaretli ogelere
+    # uygulanir; hic yoksa P6 'No projects to apply actual to.' der.
+    auto_cnt = sql_one("SELECT COUNT(*) FROM TASK WHERE proj_id=? AND "
+                       "auto_compute_act_flag='Y' AND delete_session_id IS NULL",
+                       PROJ)
+    if auto_cnt == 0:
+        aa = jb({"action": "apply_actuals", "proj_id": PROJ, "confirm": True,
+                 "timeout_s": 60})
+        check("apply_actuals anlamli redle donuyor (auto-compute yok)",
+              "apply actual" in str(aa.get("error", "")).lower(),
+              str(aa.get("error"))[:60])
+
+
+# ===========================================================================
+# L -- revizyon: DB ici proje kopyasi + korumali silme
+# ===========================================================================
+def part_l():
+    section("L  REVIZYON (p6_baseline action='revision')")
+    rev_name = "MCP_ACCEPTANCE_REV"
+    src_cnt = sql_one("SELECT COUNT(*) FROM TASK WHERE proj_id=? "
+                      "AND delete_session_id IS NULL", PROJ)
+
+    dr = bl({"action": "revision", "proj_id": PROJ,
+             "baseline_name": rev_name, "dry_run": True})
+    check("dry_run yazmadan on-izleme verir",
+          dr.get("would_copy", {}).get("TASK") == src_cnt,
+          json.dumps(dr.get("would_copy")))
+
+    rv = bl({"action": "revision", "proj_id": PROJ,
+             "baseline_name": rev_name, "confirm": True})
+    rev_id = rv.get("revision_proj_id")
+    check("revizyon olustu", isinstance(rev_id, int), str(rev_id))
+    if not isinstance(rev_id, int):
+        return
+    try:
+        flag, orig = sql_all("SELECT project_flag, orig_proj_id FROM PROJECT "
+                             "WHERE proj_id=?", rev_id)[0]
+        check("gercek proje (project_flag='Y')", flag == "Y", str(flag))
+        check("orig_proj_id bos (baseline degil)", orig is None, str(orig))
+        check("TASK sayisi kaynakla ayni",
+              sql_one("SELECT COUNT(*) FROM TASK WHERE proj_id=? "
+                      "AND delete_session_id IS NULL", rev_id) == src_cnt)
+
+        # Ad sadakati: task_code uzerinden birlestir, farkli ad = 0.
+        # Kiril adlar da bu esitligin icindedir -- kopya DB icinde yapildigi
+        # icin kod sayfasi kaybi olamaz (CLI import'un aksine, bkz. §5b).
+        mismatch = sql_one(
+            "SELECT COUNT(*) FROM TASK a JOIN TASK b ON b.task_code=a.task_code "
+            "AND b.proj_id=? WHERE a.proj_id=? AND a.delete_session_id IS NULL "
+            "AND b.delete_session_id IS NULL AND a.task_name <> b.task_name",
+            rev_id, PROJ)
+        check("950/950 aktivite adi birebir (Kiril dahil)", mismatch == 0,
+              "%s farkli" % mismatch)
+        shared_ids = sql_one(
+            "SELECT COUNT(*) FROM TASK a JOIN TASK b ON b.task_id=a.task_id "
+            "AND b.proj_id=? WHERE a.proj_id=?", rev_id, PROJ)
+        check("ortak task_id yok (id'ler yeniden numaralandi)",
+              shared_ids == 0, str(shared_ids))
+
+        cmp_ = cp({"action": "summary", "a": {"proj_id": PROJ},
+                   "b": {"proj_id": rev_id}})
+        counts = cmp_.get("headline", {}).get("counts", {})
+        check("p6_compare: eklenen/silinen 0",
+              counts.get("tasks_added", -1) == 0
+              and counts.get("tasks_removed", -1) == 0,
+              json.dumps(counts))
+    finally:
+        # Korumali silme: iki guard'i olc, sonra gercekten sil.
+        g1 = bl({"action": "delete", "baseline_proj_id": rev_id,
+                 "confirm": True})
+        check("guard: delete_project'siz silinemez",
+              "delete_project" in str(g1.get("error", "")))
+        g2 = bl({"action": "delete", "baseline_proj_id": rev_id,
+                 "confirm": True, "delete_project": True,
+                 "expected_short_name": "YANLIS_AD"})
+        check("guard: yanlis expected_short_name reddedilir",
+              "eslesmiyor" in str(g2.get("error", "")))
+        short = sql_one("SELECT proj_short_name FROM PROJECT WHERE proj_id=?",
+                        rev_id)
+        d = bl({"action": "delete", "baseline_proj_id": rev_id,
+                "confirm": True, "delete_project": True,
+                "expected_short_name": short})
+        check("revizyon korumali yolla silindi", "error" not in d,
+              str(d.get("error", ""))[:60])
+        check("canli proje bozulmadi",
+              sql_one("SELECT COUNT(*) FROM TASK WHERE proj_id=? "
+                      "AND delete_session_id IS NULL", PROJ) == src_cnt)
+
+
+# ===========================================================================
+# M -- p6_cli: CLI import + ucret onarimi (parola ister; yoksa ATLANIR)
+# ===========================================================================
+def part_m():
+    section("M  CLI IMPORT (p6_cli) -- P6_CLI_PASSWORD gerekli")
+    if not os.environ.get("P6_CLI_PASSWORD"):
+        p("  ATLANDI: P6_CLI_PASSWORD tanimli degil. CLI import bolumu parola")
+        p("  olmadan kosamaz; tanimlayip tekrar calistirin. (Kontrol sayisi")
+        p("  etkilenmez -- bu bolumun atlanmasi testi BASARISIZ yapmaz.)")
+        return
+
+    import xer_parser as xp
+    from p6 import cli as p6cli
+
+    x = xp.XerFile(XER)
+    xer_tasks = len(x.tables.get("TASK", {"rows": []})["rows"])
+    xer_cost = sum(
+        float(r.get("target_cost") or 0)
+        for r in x.tables.get("TASKRSRC", {"rows": []})["rows"])
+
+    imp = p6cli.import_xer({"path": XER, "confirm": True})
+    new_id = imp.get("proj_id")
+    check("import yeni proje olusturdu", isinstance(new_id, int),
+          json.dumps(imp.get("new_projects")))
+    if not isinstance(new_id, int):
+        return
+    try:
+        check("aktivite sayisi kaynak XER ile ayni",
+              sql_one("SELECT COUNT(*) FROM TASK WHERE proj_id=? "
+                      "AND delete_session_id IS NULL", new_id) == xer_tasks,
+              str(xer_tasks))
+        dropped = sql_one("SELECT ISNULL(SUM(target_cost),0) FROM TASKRSRC "
+                          "WHERE proj_id=?", new_id)
+        check("§5.2 yeniden uretildi: import ucretleri sifirladi",
+              float(dropped) == 0.0, str(dropped))
+
+        rep = p6cli.repair_costs({"proj_id": new_id, "path": XER,
+                                  "confirm": True})
+        check("repair_costs hatasiz", "error" not in rep,
+              str(rep.get("error", ""))[:60])
+        repaired = float(sql_one(
+            "SELECT ISNULL(SUM(target_cost),0) FROM TASKRSRC WHERE proj_id=?",
+            new_id))
+        check("onarim sonrasi toplam = kaynak XER toplami",
+              abs(repaired - xer_cost) < 0.01,
+              "%.2f = %.2f" % (repaired, xer_cost))
+    finally:
+        short = sql_one("SELECT proj_short_name FROM PROJECT WHERE proj_id=?",
+                        new_id)
+        d = bl({"action": "delete", "baseline_proj_id": new_id,
+                "confirm": True, "delete_project": True,
+                "expected_short_name": short})
+        check("import edilen proje temizlendi", "error" not in d,
+              str(d.get("error", ""))[:60])
+
 
 # ===========================================================================
 # H -- korumalar
@@ -1102,6 +1282,8 @@ def main() -> int:
         part_i(baseline_id)
         part_k()
         part_j()
+        part_l()
+        part_m()
     except Exception:  # noqa: BLE001
         p("")
         p("!! TEST CALISMASI ISTISNA ILE DURDU:")

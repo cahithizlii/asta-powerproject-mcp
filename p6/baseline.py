@@ -289,15 +289,49 @@ def assign(params: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def delete(params: Mapping[str, Any]) -> dict[str, Any]:
-    """Soft-delete a baseline the way P6 does -- stamp delete_session_id."""
+    """Soft-delete a baseline the way P6 does -- stamp delete_session_id.
+
+    Deleting a *real* project (e.g. a revision copy, which is a project in
+    its own right with ``orig_proj_id`` empty) is deliberately harder: it
+    needs ``delete_project=true`` AND ``expected_short_name`` matching the
+    project's actual short name, and is refused while any live baseline
+    still points at the project. A plain baseline needs none of that.
+    """
     baseline_proj_id = int(params["baseline_proj_id"])
     w.require_confirm(params, "Baseline silme")
     with w.open_session(params) as s:
-        owner = s.scalar("SELECT orig_proj_id FROM PROJECT WHERE proj_id = ? "
-                         "AND delete_session_id IS NULL", baseline_proj_id)
-        if owner is None:
+        row = s.execute(
+            "SELECT orig_proj_id, proj_short_name FROM PROJECT "
+            "WHERE proj_id = ? AND delete_session_id IS NULL",
+            baseline_proj_id).fetchone()
+        if row is None:
             raise w.P6WriteError(
-                "%s bir baseline degil ya da zaten silinmis." % baseline_proj_id)
+                "%s diye canli bir PROJECT satiri yok (zaten silinmis olabilir)."
+                % baseline_proj_id)
+        owner, short_name = row[0], row[1]
+        if owner is None:
+            # A real project, not a baseline copy. Only deletable with the
+            # explicit double opt-in -- this path exists so revision copies
+            # made by action='revision' can be cleaned up.
+            if not params.get("delete_project"):
+                raise w.P6WriteError(
+                    "%s bir baseline degil, gercek bir proje ('%s'). Gercek "
+                    "projeyi silmek icin delete_project=true ve "
+                    "expected_short_name='%s' verin."
+                    % (baseline_proj_id, short_name, short_name))
+            expected = params.get("expected_short_name")
+            if expected != short_name:
+                raise w.P6WriteError(
+                    "expected_short_name '%s' projenin gercek adiyla ('%s') "
+                    "eslesmiyor -- yanlis proj_id'ye karsi koruma."
+                    % (expected, short_name))
+            live_baselines = s.scalar(
+                "SELECT COUNT(*) FROM PROJECT WHERE orig_proj_id = ? "
+                "AND delete_session_id IS NULL", baseline_proj_id)
+            if live_baselines:
+                raise w.P6WriteError(
+                    "Projenin %s canli baseline'i var -- once onlari silin."
+                    % live_baselines)
         session_id = s.reserve("usession_session_id", 1)[0]
         removed = {}
         for table in ("TASKRSRC", "TASKPRED", "TASK", "PROJWBS", "PROJPROP",

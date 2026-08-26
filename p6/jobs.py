@@ -53,6 +53,19 @@ _SECTION = {
     JT_XER_EXPORT: "Export Projects",
 }
 
+# prmjob.exe'nin kuyruk dispatcher'inin KABUL ETTIGI is tipleri -- 26.08.2026'da
+# olculdu: JT_Level ve JT_UpdateBaseline kuyruga birakildi, servis ikisini de
+# "Invalid Job type" ile reddetti; ardindan prmjob.exe iceriginden (UTF-16LE
+# string tablosu, "Invalid Job type:" hemen oncesindeki dispatch listesi) ayni
+# yedili dogrulandi. JT_Level/JT_UpdateBaseline/JT_CreateBaseline sabitleri
+# ikilide BASKA yerlerde gecse de dispatcher onlari CALISTIRMAZ -- P6
+# Professional'da leveling ve baseline guncelleme yalniz arayuzden yapilir
+# (baseline kopyalama zaten p6_baseline'da SQL ile yapiliyor).
+DISPATCHABLE = frozenset({
+    JT_SCHEDULE, JT_APPLY_ACTUALS, JT_XER_EXPORT, JT_SUMMARIZE,
+    "JT_Enterprise_Sum", JT_BATCH_REPORT, "JT_Report",
+})
+
 # Program verisini degistiren is tipleri -- acik onay ister
 MUTATING = frozenset({JT_APPLY_ACTUALS, JT_UPDATE_BASELINE, JT_CREATE_BASELINE,
                       JT_STORE_PERIOD, JT_RECALC_COST, JT_LEVEL})
@@ -203,6 +216,13 @@ def submit(cur, job_type: str, proj_ids: Sequence[int], user_id: int,
 
     Only the queue table is touched -- no project data is written here.
     """
+    if job_type not in DISPATCHABLE:
+        raise P6JobError(
+            "P6 Professional Job Service '%s' is tipini CALISTIRAMAZ -- "
+            "dispatcher yalniz sunlari kabul eder (olculdu, 26.08.2026): %s. "
+            "Leveling ve baseline guncelleme P6 arayuzunden yapilir; baseline "
+            "kopyasi icin p6_baseline kullanin."
+            % (job_type, ", ".join(sorted(DISPATCHABLE))))
     data = job_data if job_data is not None else build_job_data(
         job_type, proj_ids, default_proj_id)
     job_id = _next_key(cur)

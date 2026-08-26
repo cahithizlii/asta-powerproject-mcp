@@ -36,7 +36,7 @@ Bu yüzden veritabanı **SQL Server**'a taşındı. Standalone SQLite alias'ı b
 
 | Dosya | Rol |
 |---|---|
-| `p6_mcp_core.py` | MCP sunucusu (ince dispatcher). Tool'lar: `p6_query`, `p6_job`, `p6_health`, `p6_evm`, `p6_progress`, `p6_baseline` |
+| `p6_mcp_core.py` | MCP sunucusu (ince dispatcher). Tool'lar: `p6_query`, `p6_job`, `p6_health`, `p6_evm`, `p6_progress`, `p6_baseline`, `p6_compare` |
 | `mcp_common.py` | Paylaşılan katman: redaksiyon, JSON zarfı + **veri-seviyesi kısaltma**, dispatch, kimlik-parametresi reddi |
 | `p6/db.py` | Alias çözümleme (bootstrap XML), SQLite/SQL Server salt-okuma backend'leri, snapshot, `connect_rw` (yalnız JOBSVC), `parse_schedule_options` |
 | `p6/jobs.py` | **F9 motoru**: `build_job_data`, `submit`, `wait`, `list_jobs`, `cancel`, `purge`, `preflight`, `translate_error` |
@@ -160,16 +160,68 @@ TASKRSRC, NEXTKEY'den taze id). Kalici test baseline'i: **proj_id 369
 tarih+ad birebir, 0 kopuk bag, 0 kopuk WBS, `project_flag='N'` (EPS'te
 gorunmez), canli projeyle ortak task_id yok.
 
+### Faz 4 -- `p6_compare` (5 action)
+
+`summary` * `tasks` * `links` * `progress` * `evm`
+
+Aritmetik yine paylasilan `xer_compare`; eklenen tek sey P6 icin
+karsilastirmayi gecerli kilan sey:
+
+🔴 **Eslesme anahtari `task_code`, `task_id` DEGIL.** P6 bir program her sinir
+gectiginde id'leri yeniden numaralandirir -- ayni aktivite XER'de 3274452,
+CLI import sonrasi veritabaninda 35847, o projenin baseline'inda ucuncu bir
+sayidir. id ile eslesen bir diff 950 aktivitenin 950'sini birden "silinmis" ve
+"eklenmis" gosterir: kesin gorunen ama hicbir sey soylemeyen bir rapor.
+Kabul testi bunu dogrudan olcuyor (baseline kopyasiyla canli projenin ortak
+task_id'si 0, buna ragmen eklenen/silinen 0).
+
+Iki taraf farkli birimde, farkli takvimde ya da farkli veri tarihindeyse
+**uyari veriliyor, sessizce cikarilmiyor** -- XER (maliyet, 353.160) ile
+veritabani (saat, 70.632) karsilastirilinca §5.2 kaybi tam da boyle yuzeye
+cikiyor.
+
+### P6'nin kendi motoruyla dogrulama (arayuz degil)
+
+"P6'da da kontrol et" sorusunun dogru cevabi ekran goruntusu degil, P6'nin
+**kendi hesaplama motoru**: Job Service (`prmjob.exe`) veriyi okuyup CPM
+calistiriyor, sonuc olculebiliyor.
+
+| Olcum | Sonuc |
+|---|---|
+| bukhtourcity85'e yazilan kalan sure | 72 saat |
+| P6'nin planladigi kalan is penceresi | 2026-11-01 -> 2026-11-09 = **9 is gunu** = 72s ÷ 8s/gun |
+| bukhtourcity1346'ya yazilan | 30 saat -> P6 4 gun planladi (30 ÷ 8 = 3,75) |
+| Tamamlananlarda acik kalan-is penceresi | 0 |
+| Baslamamis isin veri tarihinden once planlanmasi | 0 |
+
+Ayrica P6'nin biten aktivitede `early_end_date`'i veri tarihine kaydirdigi
+**canli veride tekrar goruldu** -- Faz 3'teki `forecast_finish` duzeltmesinin
+gerekcesi hala gecerli, ve duzeltme sayesinde tahmini bitis fiili bitise esit
+raporlaniyor.
+
+**`JT_XERExport` denendi ve KISMEN cozuldu:** is tipi kuyruktan aliniyor,
+`JS_Pending -> JS_Running -> JS_Failed` ve uygulama seviyesinde anlamli bir
+hata donuyor: `File name not specified.` Yani P6'nin export kodu calisiyor
+ama dosya adinin nereden okundugu belgesiz. Denenen ve **calismayan**
+yollar: JOB_DATA bolum parametresi, kok anahtar (`File Name` / `FileName` /
+`Filename`), proje dugumu parametresi, `JOBSVC.audit_file_path`,
+`JOBSVC.recur_data`. CLI action script'i yalniz **import** ogeleri tasiyor
+(`importFormat`/`importType`/`importAction`/`importTo`/`importFile`); PM.EXE
+icinde `exportFile`/`exportFormat` karsiliklari YOK. Referans blob'u
+yakalamanin bilinen tek yolu, P6 arayuzunde Job Services penceresinden bir
+kez export isi olusturup JOBSVC satirini okumak.
+
 ### Testler
 
 | Paket | Kapsam | Sonuc |
 |---|---|---|
-| `pytest tests/` (cevrimdisi) | 969 test | **969 passed, 279 skipped, 0 fail** |
+| `pytest tests/` (cevrimdisi) | 988 test | **988 passed, 279 skipped, 0 fail** |
 | `tests/test_xer_encoding_detect.py` | XER kod sayfasi saptama, 13 test | gecti |
 | `tests/test_p6_progress_rules.py` | P6 ilerleme semantigi, 33 test | gecti |
 | `tests/test_p6_analysis_rules.py` | yuzde tabani / birim / WBS yolu, 33 test | gecti |
 | `tests/live/test_p6_health_evm.py` | DCMA + EVM, ham SQL capraz kontrol | **35/35** |
-| `tests/live/test_p6_full_acceptance.py` | 6 aracin tamami, uctan uca | **187/187** |
+| `tests/test_p6_compare_rules.py` | task_code eslesmesi, 19 test | gecti |
+| `tests/live/test_p6_full_acceptance.py` | 7 aracin tamami + P6 motoru dogrulamasi | **212/212** |
 
 Tam kabul testi veriyi degistirir ve sonunda baslangic durumuna geri alir
 (ilerleme temizlenir, test baseline'i silinir, veri tarihi geri konur);
@@ -177,7 +229,7 @@ tekrar tekrar calistirilabilir.
 
 ### MCP stdio testi
 `initialize → p6_mcp 1.26.0` ·
-`tools/list → ['p6_query','p6_job','p6_health','p6_evm','p6_progress','p6_baseline']` · `tools/call` ✅
+`tools/list → ['p6_query','p6_job','p6_health','p6_evm','p6_progress','p6_baseline','p6_compare']` · `tools/call` ✅
 
 ---
 
@@ -301,12 +353,13 @@ karşılaştırma yapıyor: 950 aktivite eşleşti, 0 eşleşmeyen, uyarı yok.
 
 ## 7. Sıradaki işler
 
-1. **`p6_compare`**: `xer_compare.py` (revizyon delta).
-2. **`p6_write` / `p6_cli` / `p6_revision`**: MPXJ ile XER/PMXML yaz → CLI ile
+1. **`p6_write` / `p6_cli` / `p6_revision`**: MPXJ ile XER/PMXML yaz → CLI ile
    revizyon projesi olarak import → F9 → parity.
    **§5.2'deki maliyet kaybı bu adımda çözülmeli.**
-3. **`mcp_common.py`'yi diğer 3 sunucuya taşı** — JSON kısaltma düzeltmesi
+2. **`mcp_common.py`'yi diğer 3 sunucuya taşı** — JSON kısaltma düzeltmesi
    ve §6'daki kırpma tuzağı orada da geçerli.
+3. **`JT_XERExport` dosya adı parametresi** — P6 arayüzünde bir kez export işi
+   oluşturup JOBSVC satırını okumak yeterli (§3, Faz 4 notu).
 4. `JT_Level` / `JT_Sum` / `JT_ApplyActuals` / `JT_UpdateBaseline` gerçek veriyle doğrula.
 5. `PrmJob.Job` COM `Execute`'u `comtypes` ile yeniden dene (pywin32 `VT_BYREF`
    OUT parametrelerini kabul etmiyor; servis kuyruğu çalıştığı için bloklayıcı değil).

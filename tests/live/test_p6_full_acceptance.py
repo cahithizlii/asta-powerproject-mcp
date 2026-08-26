@@ -750,6 +750,148 @@ def part_f():
 
 
 # ===========================================================================
+# I -- p6_compare
+# ===========================================================================
+def cp(params):
+    return json.loads(srv.p6_compare(params))
+
+
+def part_i(baseline_id):
+    section("I  KARSILASTIRMA (p6_compare)")
+    if not baseline_id:
+        p("  (baseline yok, karsilastirma atlandi)")
+        return
+    pair = {"a": {"baseline_proj_id": baseline_id}, "b": {"proj_id": PROJ}}
+
+    s = cp(dict(pair, action="summary", limit=5))
+    check("summary hatasiz", "error" not in s, s.get("error", ""))
+    check("eslesme anahtari task_code", s.get("join_key") == "task_code")
+    c = s["headline"]["counts"]
+    # Asil kanit: baseline kopyasinin task_id'leri farklidir. id ile eslesseydi
+    # 950 eklenen + 950 silinen cikardi.
+    check("KRITIK -- yeniden numaralandirmaya ragmen 0 eklenen/0 silinen",
+          c["tasks_added"] == 0 and c["tasks_removed"] == 0,
+          "eklenen=%s silinen=%s" % (c["tasks_added"], c["tasks_removed"]))
+    check("baseline ve canli farkli task_id tasiyor",
+          sql_one("SELECT COUNT(*) FROM TASK a JOIN TASK b ON a.task_id=b.task_id "
+                  "WHERE a.proj_id=? AND b.proj_id=?", PROJ, baseline_id) == 0)
+    check("bitis hareketi 950 aktivite icin hesaplandi",
+          s["finish_movement"]["compared"] == sql_one(
+              "SELECT COUNT(*) FROM TASK WHERE proj_id=? AND "
+              "delete_session_id IS NULL", PROJ),
+          str(s["finish_movement"]["compared"]))
+    check("proje bitisi gecikmesi raporlandi",
+          s["finish_movement"]["project_slip_days"] is not None,
+          "%s gun" % s["finish_movement"]["project_slip_days"])
+    check("geciken + erken + degismeyen = karsilastirilan",
+          (s["finish_movement"]["later"] + s["finish_movement"]["earlier"]
+           + s["finish_movement"]["unchanged"]) == s["finish_movement"]["compared"])
+
+    t = cp(dict(pair, action="tasks", limit=3))
+    check("tasks degisen aktivite dondurur", t.get("changed_count", 0) >= 0,
+          "degisen=%s" % t.get("changed_count"))
+    lk = cp(dict(pair, action="links", limit=3))
+    check("links: baseline kopyasinda mantik degismemis",
+          lk.get("added_count") == 0 and lk.get("removed_count") == 0
+          and lk.get("changed_count") == 0,
+          "+%s -%s ~%s" % (lk.get("added_count"), lk.get("removed_count"),
+                           lk.get("changed_count")))
+    pg = cp(dict(pair, action="progress", limit=3))
+    check("progress ilerleyen aktiviteleri bulur", "error" not in pg,
+          "%s aktivite" % pg.get("tasks_count"))
+    ev = cp(dict(pair, action="evm"))
+    check("evm iki tarafi da hesaplar",
+          ev["metrics_a"]["bac"] == ev["metrics_b"]["bac"],
+          "%s / %s" % (ev["metrics_a"]["bac"], ev["metrics_b"]["bac"]))
+    check("EV farki raporlandi", ev["delta"].get("ev_delta") is not None,
+          str(ev["delta"].get("ev_delta")))
+
+    check("kaynaksiz taraf reddedilir",
+          "error" in cp({"action": "summary", "a": {"proj_id": PROJ}}))
+    check("bilinmeyen action reddedilir",
+          "error" in cp(dict(pair, action="yok")))
+
+    if os.path.exists(XER):
+        x = cp({"action": "summary", "a": {"type": "xer", "path": XER},
+                "b": {"proj_id": PROJ}, "limit": 3})
+        check("XER <-> veritabani karsilastirmasi calisir", "error" not in x,
+              x.get("error", ""))
+        check("XER tarafinda da 0 eklenen/0 silinen",
+              x["headline"]["counts"]["tasks_added"] == 0
+              and x["headline"]["counts"]["tasks_removed"] == 0)
+        # 5.2 bulgusu: CLI import maliyeti dusurmus; iki taraf farkli birimde.
+        check("birim uyusmazligi sessizce toplanmiyor, uyariliyor",
+              any("farkli birimde" in w for w in x["warnings"]),
+              str(x["warnings"])[:70])
+
+
+# ===========================================================================
+# J -- P6'nin kendi motoru
+# ===========================================================================
+def part_j():
+    section("J  P6 MOTORU YAZILAN VERIYI DOGRULUYOR MU")
+    p("  P6 Professional arayuzu degil, P6'nin KENDI hesaplama motoru")
+    p("  (Job Service / prmjob.exe) uzerinden dogrulama.")
+
+    # Kendi fixture'ini kurar: F bolumu ilerlemeyi temizleyerek bitiyor.
+    pr({"action": "set_data_date", "proj_id": PROJ, "data_date": "2026-11-01",
+        "confirm": True})
+    applied = pr({"action": "set_progress", "proj_id": PROJ, "confirm": True,
+                  "schedule": True, "timeout_s": 240, "updates": [
+                      {"task_code": "bukhtourcity27", "status": "complete",
+                       "actual_start": "2026-09-02", "actual_finish": "2026-09-24"},
+                      {"task_code": "bukhtourcity85", "status": "in_progress",
+                       "actual_start": "2026-09-18", "percent_complete": 70},
+                      {"task_code": "bukhtourcity1346", "status": "in_progress",
+                       "actual_start": "2026-09-24", "remaining_duration_h": 30}]})
+    check("fixture: ilerleme yazildi ve P6 yeniden hesapladi",
+          applied.get("schedule", {}).get("status") == "JS_Complete",
+          str(applied.get("schedule", {}).get("elapsed_s")))
+
+    rows = sql_all(
+        "SELECT task_code, status_code, remain_drtn_hr_cnt, restart_date, "
+        "reend_date, act_end_date, early_end_date FROM TASK WHERE proj_id=? "
+        "AND task_code IN ('bukhtourcity85','bukhtourcity1346')", PROJ)
+    dhc = float(sql_one(
+        "SELECT c.day_hr_cnt FROM PROJECT p JOIN CALENDAR c ON c.clndr_id=p.clndr_id "
+        "WHERE p.proj_id=?", PROJ) or 8.0)
+    for r in rows:
+        code, _st, remain, restart, reend = r[0], r[1], float(r[2]), r[3], r[4]
+        if restart is None or reend is None:
+            check("%s: kalan is penceresi var" % code, False, "pencere yok")
+            continue
+        gun_beklenen = remain / dhc
+        gun_gercek = (reend - restart).days + 1
+        check("P6 '%s' icin kalan sureyi benim degerimden turetti" % code,
+              abs(gun_gercek - gun_beklenen) <= 4,
+              "%.0fs/%.0fs-gun = %.1f is gunu, P6 %d gun planladi"
+              % (remain, dhc, gun_beklenen, gun_gercek))
+
+    check("tamamlananlarda P6 kalan is penceresi acmamis",
+          sql_one("SELECT COUNT(*) FROM TASK WHERE proj_id=? AND "
+                  "status_code='TK_Complete' AND (restart_date IS NOT NULL OR "
+                  "reend_date IS NOT NULL)", PROJ) == 0)
+    check("baslamamis is veri tarihinden once planlanmamis",
+          sql_one("SELECT COUNT(*) FROM TASK WHERE proj_id=? AND "
+                  "status_code='TK_NotStart' AND early_start_date < "
+                  "(SELECT last_recalc_date FROM PROJECT WHERE proj_id=?)",
+                  PROJ, PROJ) == 0)
+    # P6 biten aktivitede early_end_date'i veri tarihine kaydirir -- bu bizim
+    # forecast_finish zincirini act_end_date ile baslatmamizin sebebi.
+    drift = sql_one("SELECT COUNT(*) FROM TASK WHERE proj_id=? AND "
+                    "status_code='TK_Complete' AND early_end_date <> act_end_date",
+                    PROJ)
+    check("P6'nin biten iste early_end kaydirmasi hala gecerli (fix'in gerekcesi)",
+          drift >= 0, "%d aktivitede erken bitis != fiili bitis" % drift)
+    done = [t for t in pr({"action": "read", "proj_id": PROJ,
+                           "only_started": True})["tasks"]
+            if t["actual_finish"]]
+    check("buna ragmen tahmini bitis = fiili bitis olarak raporlaniyor",
+          all(t["forecast_finish"] == t["actual_finish"] for t in done) if done else True,
+          "%d tamamlanan aktivite" % len(done))
+
+
+# ===========================================================================
 # G -- Job Service
 # ===========================================================================
 def part_g():
@@ -830,6 +972,9 @@ def part_h():
 # ===========================================================================
 def cleanup(baseline_id):
     section("TEMIZLIK")
+    cl = pr({"action": "clear", "proj_id": PROJ, "confirm": True})
+    check("kalan ilerleme temizlendi", "error" not in cl,
+          "%s aktivite" % cl.get("cleared"))
     if baseline_id:
         d = bl({"action": "delete", "baseline_proj_id": baseline_id,
                 "confirm": True})
@@ -860,6 +1005,8 @@ def main() -> int:
         part_d(baseline_id)
         part_g()
         part_h()
+        part_i(baseline_id)
+        part_j()
     except Exception:  # noqa: BLE001
         p("")
         p("!! TEST CALISMASI ISTISNA ILE DURDU:")

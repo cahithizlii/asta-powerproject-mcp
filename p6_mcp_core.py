@@ -25,7 +25,7 @@ from mcp.server.fastmcp import FastMCP
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import mcp_common as mc  # noqa: E402
-from p6 import baseline, db, evm, health, jobs, progress  # noqa: E402
+from p6 import baseline, compare, db, evm, health, jobs, progress  # noqa: E402
 from p6 import source as src  # noqa: E402
 
 # stderr only -- stdout belongs to the MCP stdio protocol
@@ -504,6 +504,28 @@ def p6_progress(params: dict) -> str:
 )
 def p6_baseline(params: dict) -> str:
     return mc.dispatch("p6_baseline", params or {}, baseline.ACTIONS)
+
+
+@mcp.tool(
+    name="p6_compare",
+    description=(
+        "Compare two P6 schedules -- revisions, a project against one of its "
+        "baselines, or two XER files.\n"
+        "actions: summary | tasks | links | progress | evm\n"
+        "params: a and b, each a source ({proj_id: ...} or "
+        "{baseline_proj_id: ...} or {type: 'xer', path: '...'}); or the flat "
+        "form proj_id_a / baseline_proj_id_b / path_b. Also fields (task "
+        "fields to diff), limit, units, alias.\n"
+        "Activities are matched on task_code, never task_id: P6 renumbers ids "
+        "on every import and baseline copy, so an id-based diff would report "
+        "every activity as both removed and added. Differing units, calendars "
+        "or data dates between the two sides are reported as warnings rather "
+        "than silently subtracted."
+    ),
+    annotations={"readOnlyHint": True},
+)
+def p6_compare(params: dict) -> str:
+    return mc.dispatch("p6_compare", params or {}, compare.ACTIONS)
 
 
 if __name__ == "__main__":

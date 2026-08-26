@@ -21,6 +21,8 @@ Kapsam:
                           ad sadakati + task_code/task_id kaniti + korumali silme
   M  CLI import           p6_cli import + repair_costs (P6_CLI_PASSWORD ister;
                           tanimli degilse bolum ATLANIR, test yine gecer)
+  N  Sifirdan kurulum     p6_task -- proje/WBS/aktivite/bag/atama kur,
+                          F9 P6 CPM'iyle dogrula, korumali silmeyle temizle
 
 Test VERIYI DEGISTIRIR ve sonunda baslangic durumuna geri alir:
 ilerleme temizlenir, olusturulan baseline silinir, veri tarihi geri konur.
@@ -1203,6 +1205,133 @@ def part_m():
 
 
 # ===========================================================================
+# N -- sifirdan kurulum: p6_task ile proje kur, P6 CPM'iyle dogrula
+# ===========================================================================
+def tsk(params):
+    return json.loads(srv.p6_task(params))
+
+
+def part_n():
+    section("N  SIFIRDAN KURULUM (p6_task)")
+    SHORT = "MCP_ACCEPT_N"
+    # Onceki yarim kalmis kosumdan artik varsa temizle.
+    stale = sql_one("SELECT proj_id FROM PROJECT WHERE proj_short_name=? "
+                    "AND delete_session_id IS NULL", SHORT)
+    if stale:
+        bl({"action": "delete", "baseline_proj_id": stale, "confirm": True,
+            "delete_project": True, "expected_short_name": SHORT})
+
+    dr = tsk({"action": "create_project", "short_name": SHORT,
+              "plan_start": "2026-09-01", "dry_run": True})
+    check("create_project dry_run on-izleme verir", "would_insert" in dr)
+    cpj = tsk({"action": "create_project", "short_name": SHORT,
+               "name": "Kabul N sifirdan kurulum", "plan_start": "2026-09-01",
+               "confirm": True})
+    pid = cpj.get("proj_id")
+    check("proje olustu", isinstance(pid, int), str(pid))
+    if not isinstance(pid, int):
+        return
+    try:
+        check("OBSPROJ trigger'i satir uretti (Job Service erisimi)",
+              cpj.get("obsproj_rows", 0) >= 1, str(cpj.get("obsproj_rows")))
+        wb = tsk({"action": "add_wbs", "proj_id": pid, "name": "Kaba Yapi",
+                  "short_name": "KY", "confirm": True})
+        check("WBS eklendi", isinstance(wb.get("wbs_id"), int))
+
+        t1 = tsk({"action": "add_task", "proj_id": pid, "name": "Hafriyat",
+                  "task_code": "N-010", "duration_h": 40, "wbs_path": "KY",
+                  "confirm": True})
+        check("aktivite eklendi (40h, WBS yoluyla)",
+              t1.get("task_code") == "N-010", str(t1.get("error", ""))[:60])
+        tsk({"action": "add_task", "proj_id": pid, "name": "Temel",
+             "task_code": "N-020", "duration_h": 80, "wbs_path": "KY",
+             "confirm": True})
+        t3 = tsk({"action": "add_task", "proj_id": pid, "name": "Bitti",
+                  "task_code": "N-M1", "task_type": "milestone",
+                  "confirm": True})
+        check("kilometre tasi 0 sure", t3.get("duration_h") == 0)
+        auto = tsk({"action": "add_task", "proj_id": pid, "name": "Oto",
+                    "duration_h": 8, "confirm": True})
+        check("task_code otomatik uretimi proje adiyla",
+              str(auto.get("task_code", "")).startswith(SHORT),
+              str(auto.get("task_code")))
+
+        tsk({"action": "add_link", "proj_id": pid, "predecessor": "N-010",
+             "successor": "N-020", "confirm": True})
+        l2 = tsk({"action": "add_link", "proj_id": pid, "predecessor": "N-020",
+                  "successor": "N-M1", "lag_h": 8, "confirm": True})
+        check("baglar eklendi (FS + FS/8h lag)", l2.get("lag_h") == 8,
+              str(l2.get("error", ""))[:60])
+        dup = tsk({"action": "add_link", "proj_id": pid, "predecessor": "N-010",
+                   "successor": "N-020", "confirm": True})
+        check("cift bag reddedilir", "zaten var" in str(dup.get("error", "")))
+        cyc = tsk({"action": "add_link", "proj_id": pid, "predecessor": "N-M1",
+                   "successor": "N-010", "confirm": True})
+        check("dongu olusturacak bag reddedilir",
+              "dongu" in str(cyc.get("error", "")))
+
+        rsrc = sql_one("SELECT TOP 1 rsrc_short_name FROM RSRC "
+                       "WHERE delete_session_id IS NULL")
+        asg = tsk({"action": "assign_resource", "proj_id": pid,
+                   "task_code": "N-020", "rsrc_short_name": rsrc,
+                   "target_qty": 80, "confirm": True})
+        check("kaynak atandi (birim/saat > 0)",
+              isinstance(asg.get("taskrsrc_id"), int),
+              str(asg.get("error", ""))[:60])
+
+        sc = jb({"action": "schedule", "proj_id": pid,
+                 "job_name": "MCP_ACCEPTANCE_N", "timeout_s": 120})
+        check("F9 JS_Complete (sifirdan kurulan proje)",
+              sc.get("status") == "JS_Complete", str(sc.get("error")))
+        rows = {r[0]: (r[1], r[2]) for r in sql_all(
+            "SELECT task_code, early_start_date, early_end_date FROM TASK "
+            "WHERE proj_id=? AND delete_session_id IS NULL", pid)}
+        check("P6 motoru 4 aktivitenin tarihini hesapladi",
+              all(v[0] and v[1] for v in rows.values()),
+              "; ".join("%s:%s" % (k, str(v[1])[:10])
+                        for k, v in sorted(rows.items())))
+        check("FS zinciri sirali (010 -> 020 -> M1)",
+              rows["N-010"][1] <= rows["N-020"][0]
+              and rows["N-020"][1] <= rows["N-M1"][0])
+
+        end_before = rows["N-M1"][1]
+        up = tsk({"action": "update_task", "proj_id": pid,
+                  "task_code": "N-020", "duration_h": 160, "confirm": True})
+        check("sure guncellendi VE atama defteri tasindi",
+              up.get("assignments_updated") == 1,
+              json.dumps(up.get("changed", {}))[:70])
+        jb({"action": "schedule", "proj_id": pid,
+            "job_name": "MCP_ACCEPTANCE_N", "timeout_s": 120})
+        end_after = sql_one(
+            "SELECT early_end_date FROM TASK WHERE proj_id=? AND "
+            "task_code='N-M1' AND delete_session_id IS NULL", pid)
+        check("KRITIK -- 80h ek sureyi P6 bitise yansitti",
+              str(end_after) > str(end_before),
+              "%s -> %s" % (str(end_before)[:10], str(end_after)[:10]))
+
+        dl = tsk({"action": "delete_link", "proj_id": pid,
+                  "predecessor": "N-020", "successor": "N-M1",
+                  "confirm": True})
+        check("bag silindi", dl.get("soft_deleted") == 1)
+        dt = tsk({"action": "delete_task", "proj_id": pid,
+                  "task_code": auto["task_code"], "confirm": True})
+        check("aktivite silindi (bag+atama dahil)",
+              dt.get("soft_deleted", {}).get("TASK") == 1)
+        ra = tsk({"action": "remove_assignment", "proj_id": pid,
+                  "task_code": "N-020", "rsrc_short_name": rsrc,
+                  "confirm": True})
+        check("atama silindi", ra.get("soft_deleted") == 1)
+    finally:
+        d = bl({"action": "delete", "baseline_proj_id": pid, "confirm": True,
+                "delete_project": True, "expected_short_name": SHORT})
+        check("N projesi korumali silmeyle temizlendi",
+              "error" not in d, str(d.get("error", ""))[:60])
+        check("DB'de iz kalmadi",
+              sql_one("SELECT COUNT(*) FROM PROJECT WHERE proj_short_name=? "
+                      "AND delete_session_id IS NULL", SHORT) == 0)
+
+
+# ===========================================================================
 # H -- korumalar
 # ===========================================================================
 def part_h():
@@ -1284,6 +1413,7 @@ def main() -> int:
         part_j()
         part_l()
         part_m()
+        part_n()
     except Exception:  # noqa: BLE001
         p("")
         p("!! TEST CALISMASI ISTISNA ILE DURDU:")

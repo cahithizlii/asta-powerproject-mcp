@@ -25,7 +25,7 @@ from mcp.server.fastmcp import FastMCP
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import mcp_common as mc  # noqa: E402
-from p6 import baseline, compare, db, evm, health, jobs, progress  # noqa: E402
+from p6 import baseline, compare, db, evm, health, jobs, progress, tasks  # noqa: E402
 from p6 import cli, writer  # noqa: E402
 from p6 import source as src  # noqa: E402
 
@@ -521,6 +521,40 @@ def p6_progress(params: dict) -> str:
 )
 def p6_baseline(params: dict) -> str:
     return mc.dispatch("p6_baseline", params or {}, baseline.ACTIONS)
+
+
+@mcp.tool(
+    name="p6_task",
+    description=(
+        "Build and edit a P6 programme: create a project from nothing, add "
+        "WBS nodes, activities, relationships and resource assignments.\n"
+        "actions: create_project | add_wbs | add_task | update_task | "
+        "delete_task | add_link | delete_link | assign_resource | "
+        "remove_assignment\n"
+        "params: proj_id; add_task: name, duration_h, task_code (auto if "
+        "omitted), task_type (task/milestone/finish_milestone/loe or TT_*), "
+        "wbs_id or wbs_path ('1.2.3' short names, default project root), "
+        "clndr_id; update_task: task_code + task_name/duration_h/task_type/"
+        "clndr_id/wbs_id/wbs_path/new_task_code; add_link/delete_link: "
+        "predecessor, successor (task_codes), link_type (FS/SS/FF/SF, "
+        "default FS), lag_h (may be negative); assign_resource: task_code, "
+        "rsrc_short_name, target_qty, cost_per_qty (default: latest "
+        "RSRCRATE); create_project: short_name, name, plan_start, clndr_id "
+        "(default: default global calendar), eps_wbs_id (default: the EPS "
+        "branch existing projects hang under). All writes take dry_run and "
+        "require confirm=true.\n"
+        "Structural defaults follow the project's own convention (modal "
+        "value of its activities; falls back to the PROJECT row). New "
+        "activities are written WITHOUT dates, like the P6 client before "
+        "the first F9 -- run p6_job action='schedule' after changes so P6's "
+        "own CPM engine computes every date. Activities are addressed by "
+        "task_code, never task_id. Duration of a started activity is "
+        "refused here -- that is p6_progress's job. add_link refuses "
+        "duplicate links and links that would close a cycle."
+    ),
+)
+def p6_task(params: dict) -> str:
+    return mc.dispatch("p6_task", params or {}, tasks.ACTIONS)
 
 
 @mcp.tool(

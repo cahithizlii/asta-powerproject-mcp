@@ -341,6 +341,43 @@ tekrar tekrar calistirilabilir.
 | 🔴 Bootstrap yayılımı | Servis **LocalSystem** olarak çalışır. `prmbootstrapV2.xml` LocalSystem profilinde de olmalı: `%WINDIR%\System32\config\systemprofile\AppData\Roaming\Oracle\Primavera P6\P6 Professional\[<sürüm>\]` — yoksa **sessizce Oracle sürücüsüne düşer**: `Cannot find OCI DLL` |
 | 🔴 `USEROBS` | P6 kurulumu bu tabloyu **boş bırakır**. Kullanıcı global superuser olsa bile proje erişimi OBS'den gelir; yoksa `No projects to schedule`. Çözüm: P6'da *Enterprise ▸ OBS ▸ Users* → `<Project Superuser>` (veya `INSERT INTO USEROBS(user_id,obs_id,prof_id)`) |
 
+### 4.1 Yedek nerede — ve neden `ls` ile göremezsiniz
+
+🔴 **Yedek çalışma klasöründe DEĞİL.** İlk deneme oraya yazmak istedi ve
+başarısız oldu: SQL Server servis hesabı `Downloads` altına yazamıyor
+(`Cannot open backup device ... Operating system error 5`). Yedek bu yüzden
+SQL Server'ın **kendi** Backup dizinine alındı:
+
+```
+C:\Program Files\Microsoft SQL Server\MSSQL17.P6EXPRESS\MSSQL\Backup\PMDB_faz3_oncesi.bak
+PMDB · 2026-08-26 14:09:34 · 43,8 MB · Database (full)
+```
+
+Çalışma klasöründeki `backup_20260826\` dizini **boştur ve öyle olmalıdır** —
+orada bir yedek yok, hiç olmadı.
+
+⚠️ **Bu dizin normal kullanıcıyla listelenemez** (`ls` → *Permission denied*),
+dosya sistemi taraması yedeği "yok" gibi gösterir. Varlığı **SQL Server'a
+sordurarak** doğrulayın — dosyayı gerçekten açıp okur:
+
+```sql
+EXEC master.dbo.xp_fileexist
+  'C:\Program Files\Microsoft SQL Server\MSSQL17.P6EXPRESS\MSSQL\Backup\PMDB_faz3_oncesi.bak';
+
+RESTORE HEADERONLY FROM DISK =
+  'C:\Program Files\Microsoft SQL Server\MSSQL17.P6EXPRESS\MSSQL\Backup\PMDB_faz3_oncesi.bak';
+
+SELECT TOP 5 bs.backup_finish_date, bs.backup_size/1024/1024 AS mb,
+       bmf.physical_device_name
+  FROM msdb.dbo.backupset bs
+  JOIN msdb.dbo.backupmediafamily bmf ON bmf.media_set_id = bs.media_set_id
+ WHERE bs.database_name = 'PMDB'
+ ORDER BY bs.backup_finish_date DESC;
+```
+
+Yeni bir yedek alırken de hedefi `SERVERPROPERTY('InstanceDefaultBackupPath')`
+ile sorun; Express sürümde `WITH COMPRESSION` desteklenmez.
+
 ---
 
 ## 5. Veri bulguları (Faz 2'de bulundu, Faz 3'te ikisi çözüldü)
@@ -363,7 +400,8 @@ Bayt kaybolduğu için **veritabanından kurtarılamazdı**; tek doğru kaynak
 projeyi üreten XER dosyasıdır. Sayısal analiz (DCMA/EVM/float) hiç
 etkilenmemişti — yalnız metin.
 
-**Çözüm uygulandı** (yedek: `backup_20260826\PMDB_faz3_oncesi.bak`, 43,8 MB):
+**Çözüm uygulandı** (yedek için bkz. §4.1 — çalışma klasöründe **değil**, SQL
+Server'ın kendi Backup dizininde):
 
 1. `_P6_MCP\collation_migrate.py` — veritabanının **tamamını**
    `Cyrillic_General_CI_AS`'e taşır (931 varchar kolon + 32 indeks + 62 check

@@ -525,6 +525,34 @@ karşılaştırma yapıyor: 950 aktivite eşleşti, 0 eşleşmeyen, uyarı yok.
    trigger'ından alır (doğrulandı). `add_link` çift bağı ve döngü kapatacak
    bağı BFS ile baştan reddeder.
 
+### Faz 6b — JOB_DATA bölüm adı gerçeği + maliyet iyileşmesi (26.08 gece, 173cf77)
+
+- 🔴 **Bölüm adları PM.exe'nin kendi string tablosundan:** yalnız `JT_Sched`
+  "Schedule Projects" kullanır; **diğer tüm iş tiplerinin JOB_DATA bölümü düz
+  "Projects"**. Uydurma "Apply Actuals" bölümü `No projects to apply actual
+  to.` veriyordu; "Projects" ile iş **JS_Complete**. (JT_Sum yanlış bölüm
+  adına aldırmıyordu — yine de düzeltildi; `jobs._SECTION`.)
+- **Apply Actuals'ın yeni-veri-tarihi parametresi blob'da taşınamadı** (üç
+  gramer denemesi: param-grubu → "No projects", key|value → "~~ is not a
+  valid integer"). Headless apply_actuals bu yüzden defter kaydıdır:
+  `PROJECT.apply_actuals_date`'i damgalar ve maliyetleri yeniden hesaplatır,
+  aktivite fiililerini İLERLETMEZ. Temiz yol JT_XERExport ile aynı: P6
+  arayüzünden bir kez iş oluşturup JOBSVC blob'unu okumak.
+- `p6_task update_task auto_compute_actuals=true` eklendi — Apply Actuals'ın
+  aktivite kurma anahtarı.
+- 🟢 **§5.2 canlı veritabanında tamamen iyileşti:** `repair_costs` global
+  RSRCRATE'i onarmıştı; tamamlanan apply_actuals P6'nın kendi maliyet
+  yeniden hesabını tetikledi → 368 `TASKRSRC` toplamı **353.160,00 = kaynak
+  XER birebir**. Canlı program artık maliyet yüklü (EVM `units=cost`'a
+  geçti).
+- 🔴 İyileşmenin açığa çıkardığı boşluk: P6 maliyeti global orandan
+  hesapladığında atamanın `cost_per_qty` kolonu 0 kalır (ölçüm:
+  cost_per_qty=0, target_cost=800, target_qty=160) —
+  `set_assignment_actuals` 0 orana düşüp fiili maliyeti oynatmıyordu, AC
+  sabit kalıyordu. Etkin oran artık `target_cost/target_qty`'den türetiliyor.
+- Kabul **276/276** (apply_actuals JS_Complete + fiil-yazmadı + damga
+  kontrolleri; temizlik `apply_actuals_date`'i geri alır) · offline **1070**.
+
 ### Faz 5c — iş tipleri ölçüldü, iki tanesi P6 Pro'da YOK (26.08 akşam)
 
 - ✅ **JT_Sum hiç "sessiz başarısız" değildi — yanlış tabloya bakılmıştı.**

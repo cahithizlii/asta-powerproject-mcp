@@ -36,7 +36,7 @@ Bu yüzden veritabanı **SQL Server**'a taşındı. Standalone SQLite alias'ı b
 
 | Dosya | Rol |
 |---|---|
-| `p6_mcp_core.py` | MCP sunucusu (ince dispatcher). 9 tool: `p6_query`, `p6_job`, `p6_health`, `p6_evm`, `p6_progress`, `p6_baseline`, `p6_compare`, `p6_write`, `p6_cli` |
+| `p6_mcp_core.py` | MCP sunucusu (ince dispatcher). 10 tool: `p6_query`, `p6_job`, `p6_health`, `p6_evm`, `p6_progress`, `p6_baseline`, `p6_compare`, `p6_write`, `p6_cli`, `p6_task` |
 | `mcp_common.py` | Paylaşılan katman: redaksiyon, JSON zarfı + **veri-seviyesi kısaltma**, dispatch, kimlik-parametresi reddi |
 | `p6/db.py` | Alias çözümleme (bootstrap XML), SQLite/SQL Server salt-okuma backend'leri, snapshot, `connect_rw` (yalnız JOBSVC), `parse_schedule_options` |
 | `p6/jobs.py` | **F9 motoru**: `build_job_data`, `submit`, `wait`, `list_jobs`, `cancel`, `purge`, `preflight`, `translate_error` |
@@ -50,6 +50,7 @@ Bu yüzden veritabanı **SQL Server**'a taşındı. Standalone SQLite alias'ı b
 | `p6/compare.py` | `p6_compare` — iki programı **`task_code`** üzerinden karşılaştırır |
 | `p6/writer.py` | `p6_write` — veritabanından XER yazar, yazdığını geri okuyup doğrular |
 | `p6/cli.py` | `p6_cli` — P6 komut satırıyla XER import + import'un düşürdüğü ücretlerin onarımı |
+| `p6/tasks.py` | `p6_task` — **Faz 6 CRUD**: sıfırdan proje, WBS, aktivite, bağ, atama; yapısal varsayılanlar projenin modal değerinden; yeni aktivite tarihsiz yazılır, tarihleri F9 hesaplar |
 | `tests/live/` | Canlı kabul testleri (P6 + SQL Server gerektirir) |
 
 ⚠️ **`p6/write.py` ≠ `p6/writer.py`.** Birincisi yazma *oturumu* (transaction,
@@ -503,9 +504,26 @@ karşılaştırma yapıyor: 950 aktivite eşleşti, 0 eşleşmeyen, uyarı yok.
 4. ✅ **İş tipleri gerçek veriyle ölçüldü** (e5aba31) — bkz. §3 "Faz 5c".
 5. `PrmJob.Job` COM `Execute`'u `comtypes` ile yeniden dene (pywin32 `VT_BYREF`
    OUT parametrelerini kabul etmiyor; servis kuyruğu çalıştığı için bloklayıcı değil).
-6. **Faz 6 — task/link/WBS CRUD**: canlı projede aktivite/bağ ekleme-silme ve
-   sıfırdan proje kurma. "Sıfırdan planlama + mevcut dosyayı düzenleme"
-   hedefinin kapanması için gereken son parça.
+6. ✅ **Faz 6 — `p6_task` (10. tool, 3bb3670)**: create_project / add_wbs /
+   add_task / update_task / delete_task / add_link / delete_link /
+   assign_resource / remove_assignment. Sıfırdan proje kurma + mevcut
+   programı düzenleme hedefi KAPANDI — kabul testi N bölümü (21 kontrol):
+   boş veritabanından proje kur → WBS → aktiviteler → bağlar → atama → F9
+   → P6 CPM tarihleri doğru ve zincir sıralı → süre değişimi bitişi tam
+   +10 iş günü kaydırdı → silmeler → korumalı silme, iz yok. Toplam 273/273.
+   Ölçülen iki F9 tuzağı koda gömüldü:
+   🔴 (a) **Atamada units/time 0 olursa F9 aktivitenin kalan VE planlanan
+   süresini SIFIRLAR** (80h DT_FixedDrtn aktivite 0h döndü) —
+   `assign_resource` artık RSRCRATE.max_qty_per_hr'den (yoksa 1/saat)
+   dolduruyor. (b) **Süre değişince atama defteri taşınmalı** — yoksa F9
+   kalan süreyi atamanın kalan biriminden geri yazar (160h yazıldı, bayat
+   80h atama geri çekti); `update_task` defterleri p6_progress gibi taşıyor
+   (`update_assignments=false` ile kapatılabilir, uyarı verir).
+   Yapısal varsayılanlar projenin kendi geleneğinden (modal değer; boş
+   projede PROJECT satırı). Yeni aktivite TARİHSİZ yazılır — ilk F9'a kadar
+   P6 istemcisindeki gibi. `create_project` OBSPROJ'u `TR_PROJECT_OBSPROJ`
+   trigger'ından alır (doğrulandı). `add_link` çift bağı ve döngü kapatacak
+   bağı BFS ile baştan reddeder.
 
 ### Faz 5c — iş tipleri ölçüldü, iki tanesi P6 Pro'da YOK (26.08 akşam)
 

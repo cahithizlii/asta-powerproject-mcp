@@ -44,7 +44,17 @@ Bu yüzden veritabanı **SQL Server**'a taşındı. Standalone SQLite alias'ı b
 | `p6/analysis.py` | **Faz 2 ortak yükleyici**: DCMA/EVM şekli, birim seçimi (`resolve_units`), baseline çözümleme, `aggregate` (BAC/PV/EV/AC), S-eğrisi kovaları |
 | `p6/health.py` | `p6_health` aksiyonları — `dcma_checks`'e bağlar, kendi hesabı yoktur |
 | `p6/evm.py` | `p6_evm` aksiyonları — `evm_math` + `currency_validator`'a bağlar, snapshot deposu |
+| `p6/write.py` | **Yazma oturumu**: tek işlem = tek transaction, NEXTKEY'den blok id, denetim kolonu damgası, `require_confirm` |
+| `p6/progress.py` | `p6_progress` — ilerleme/fiili giriş, P6 alan tutarlılığı, atama defteri senkronu |
+| `p6/baseline.py` | `p6_baseline` — baseline kopyala/ata/sil **+ `revision`** (kopyayı gerçek proje bırakır) |
+| `p6/compare.py` | `p6_compare` — iki programı **`task_code`** üzerinden karşılaştırır |
+| `p6/writer.py` | `p6_write` — veritabanından XER yazar, yazdığını geri okuyup doğrular |
+| `p6/cli.py` | `p6_cli` — P6 komut satırıyla XER import + import'un düşürdüğü ücretlerin onarımı |
 | `tests/live/` | Canlı kabul testleri (P6 + SQL Server gerektirir) |
+
+⚠️ **`p6/write.py` ≠ `p6/writer.py`.** Birincisi yazma *oturumu* (transaction,
+anahtar ayırma), ikincisi *XER yazıcısı*. Adları benzer, işleri ayrı — import
+ederken karıştırmayın.
 
 **Yeniden kullanılan, DEĞİŞTİRİLMEYEN modüller:** `xer_parser.py`, `xer_compare.py`,
 `xer_drivers.py`, `dcma_checks.py`, `evm_math.py`, `currency_validator.py`,
@@ -464,6 +474,16 @@ karşılaştırma yapıyor: 950 aktivite eşleşti, 0 eşleşmeyen, uyarı yok.
   ulaşıyor, `File name not specified.` ile düşüyor (§3, Faz 4 notu).
 - `compare_baselines_evm` **iki baseline ile denenmedi** — veritabanında tek
   baseline var (369). `variance_to_baseline` gerçek baseline ile doğrulandı.
+- 🔴 **`p6_cli` ve `p6_baseline action='revision'` kabul testinde YOK.** İkisi de
+  elle, gerçek veriyle doğrulandı (import → `repair_costs` → 353.160 = kaynak
+  XER; revizyon kopyası → 950/950 birebir, 529 Kiril korundu) ve test
+  projeleri sonradan temizlendi — ama `test_p6_full_acceptance.py` bu iki yolu
+  koşmuyor. `p6_cli` testi P6 parolası gerektirdiği için testin kimlik
+  bağımlılığı olmadan koşabilmesi ayrı bir tasarım kararı ister
+  (örn. `P6_CLI_PASSWORD` yoksa o bölümü atlamak).
+- **`p6_write`'ın ANSI çıktısı P6'ya geri import edilerek denenmedi.** UTF-16LE
+  reddedildiği ölçüldü; `encoding='cp1251'` ile yazılan dosyanın P6 tarafından
+  kabul edilip edilmediği sınanmadı.
 - **Türkçe karakter taşıyan bir P6 programı denenmedi** — collation cp1251;
   Türkçe'ye özgü harfler bu veritabanında tutulamaz (§5.1 takası).
 - **P6 arayüzünde göze bakılmadı.** Veri doğruluğu P6'nın kendi motoruyla

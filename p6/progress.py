@@ -479,9 +479,11 @@ def set_assignment_actuals(params: Mapping[str, Any]) -> dict[str, Any]:
         w.project_exists(s, proj_id)
         s.execute(
             "SELECT r.taskrsrc_id, r.task_id, t.task_code, r.rsrc_id, "
+            "rs.rsrc_short_name, "
             "r.target_qty, r.act_reg_qty, r.remain_qty, r.target_cost, "
             "r.act_reg_cost, r.remain_cost, r.cost_per_qty "
             "FROM TASKRSRC r JOIN TASK t ON t.task_id = r.task_id "
+            "LEFT JOIN RSRC rs ON rs.rsrc_id = r.rsrc_id "
             "WHERE r.proj_id = ? AND r.delete_session_id IS NULL", proj_id)
         names = [d[0] for d in s.cur.description]
         rows = [dict(zip(names, r)) for r in s.cur.fetchall()]
@@ -506,11 +508,19 @@ def set_assignment_actuals(params: Mapping[str, Any]) -> dict[str, Any]:
                 if len(target) > 1 and upd.get("rsrc_id") is not None:
                     target = [r for r in target
                               if int(r["rsrc_id"]) == int(upd["rsrc_id"])]
+                short = upd.get("rsrc_short_name") or upd.get("resource")
+                if len(target) > 1 and short:
+                    target = [r for r in target
+                              if r.get("rsrc_short_name") == short]
+                    if not target:
+                        raise ProgressError(
+                            "'%s' aktivitesinde '%s' kaynagina atama yok."
+                            % (code, short))
                 if len(target) > 1:
                     raise ProgressError(
-                        "'%s' aktivitesinde %d atama var; taskrsrc_id veya "
-                        "rsrc_id ile hangisi oldugunu belirtin."
-                        % (code, len(target)))
+                        "'%s' aktivitesinde %d atama var; rsrc_short_name, "
+                        "rsrc_id veya taskrsrc_id ile hangisi oldugunu "
+                        "belirtin." % (code, len(target)))
             rec = target[0]
 
             act_qty = upd.get("actual_qty")

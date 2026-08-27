@@ -1238,6 +1238,9 @@ def part_n():
     if stale:
         bl({"action": "delete", "baseline_proj_id": stale, "confirm": True,
             "delete_project": True, "expected_short_name": SHORT})
+    for short_r in ("MCP_N_ENG", "MCP_N_MAT"):
+        tsk({"action": "delete_resource", "rsrc_short_name": short_r,
+             "confirm": True})
 
     dr = tsk({"action": "create_project", "short_name": SHORT,
               "plan_start": "2026-09-01", "dry_run": True})
@@ -1297,6 +1300,32 @@ def part_n():
               isinstance(asg.get("taskrsrc_id"), int),
               str(asg.get("error", ""))[:60])
 
+        # --- kaynak OLUSTURMA + maliyet matematigi + sure korunumu
+        r1 = tsk({"action": "create_resource", "rsrc_short_name": "MCP_N_ENG",
+                  "rsrc_name": "Kabul N Muhendis", "rsrc_type": "labor",
+                  "cost_per_qty": 12.0, "confirm": True})
+        check("kaynak olusturuldu (labor + 12/saat rate)",
+              isinstance(r1.get("rsrc_id"), int)
+              and r1.get("rate", {}).get("cost_per_qty") == 12.0,
+              str(r1.get("error", ""))[:60])
+        r2 = tsk({"action": "create_resource", "rsrc_short_name": "MCP_N_MAT",
+                  "rsrc_name": "Kabul N Beton", "rsrc_type": "material",
+                  "cost_per_qty": 50.0, "confirm": True})
+        check("kaynak olusturuldu (material + 50/birim)",
+              isinstance(r2.get("rsrc_id"), int))
+        a1 = tsk({"action": "assign_resource", "proj_id": pid,
+                  "task_code": "N-010", "rsrc_short_name": "MCP_N_ENG",
+                  "target_qty": 40, "confirm": True})
+        check("adam-saat maliyeti oto (40h x 12 = 480)",
+              abs(float(a1.get("target_cost", 0)) - 480.0) < 0.01,
+              str(a1.get("target_cost")))
+        a2 = tsk({"action": "assign_resource", "proj_id": pid,
+                  "task_code": "N-010", "rsrc_short_name": "MCP_N_MAT",
+                  "target_qty": 120, "confirm": True})
+        check("metraj maliyeti oto (120 x 50 = 6000)",
+              abs(float(a2.get("target_cost", 0)) - 6000.0) < 0.01,
+              str(a2.get("target_cost")))
+
         sc = jb({"action": "schedule", "proj_id": pid,
                  "job_name": "MCP_ACCEPTANCE_N", "timeout_s": 120})
         check("F9 JS_Complete (sifirdan kurulan proje)",
@@ -1311,6 +1340,27 @@ def part_n():
         check("FS zinciri sirali (010 -> 020 -> M1)",
               rows["N-010"][1] <= rows["N-020"][0]
               and rows["N-020"][1] <= rows["N-M1"][0])
+        # Sure korunumu: 120 birim malzeme atamasina ragmen N-010 40h kalmali
+        # (assign_resource units/time'i sureyle tutarli yazar; yazmasaydi F9
+        # sureyi birimden 120h'e turetirdi -- olculdu).
+        check("KRITIK -- malzeme atamasi sureyi bozmadi (40h kaldi)",
+              float(sql_one("SELECT target_drtn_hr_cnt FROM TASK WHERE "
+                            "proj_id=? AND task_code='N-010' AND "
+                            "delete_session_id IS NULL", pid)) == 40.0)
+        # Coklu atamada fiili, kaynak kisa adiyla adreslenir (is anahtari).
+        af = pr({"action": "set_assignment_actuals", "proj_id": pid,
+                 "confirm": True, "updates": [
+                     {"task_code": "N-010", "rsrc_short_name": "MCP_N_ENG",
+                      "actual_qty": 10},
+                     {"task_code": "N-010", "rsrc_short_name": "MCP_N_MAT",
+                      "actual_qty": 30}]})
+        check("fiili, rsrc_short_name ile ayristirildi",
+              af.get("updated") == 2, str(af.get("error", ""))[:60])
+        n_ac = sql_one("SELECT CAST(SUM(act_reg_cost) AS DECIMAL(12,2)) "
+                       "FROM TASKRSRC WHERE proj_id=? AND "
+                       "delete_session_id IS NULL", pid)
+        check("fiili maliyet defteri (10x12 + 30x50 = 1620)",
+              abs(float(n_ac) - 1620.0) < 0.01, str(n_ac))
 
         end_before = rows["N-M1"][1]
         up = tsk({"action": "update_task", "proj_id": pid,
@@ -1344,6 +1394,13 @@ def part_n():
                 "delete_project": True, "expected_short_name": SHORT})
         check("N projesi korumali silmeyle temizlendi",
               "error" not in d, str(d.get("error", ""))[:60])
+        for short_r in ("MCP_N_ENG", "MCP_N_MAT"):
+            tsk({"action": "delete_resource", "rsrc_short_name": short_r,
+                 "confirm": True})
+        check("olusturulan kaynaklar temizlendi",
+              sql_one("SELECT COUNT(*) FROM RSRC WHERE rsrc_short_name IN "
+                      "('MCP_N_ENG','MCP_N_MAT') AND delete_session_id "
+                      "IS NULL") == 0)
         check("DB'de iz kalmadi",
               sql_one("SELECT COUNT(*) FROM PROJECT WHERE proj_short_name=? "
                       "AND delete_session_id IS NULL", SHORT) == 0)

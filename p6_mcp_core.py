@@ -530,10 +530,15 @@ def p6_baseline(params: dict) -> str:
     name="p6_task",
     description=(
         "Build and edit a P6 programme: create a project from nothing, add "
-        "WBS nodes, activities, relationships and resource assignments.\n"
+        "WBS nodes, activities, relationships, resources and assignments.\n"
         "actions: create_project | add_wbs | add_task | update_task | "
-        "delete_task | add_link | delete_link | assign_resource | "
-        "remove_assignment\n"
+        "delete_task | add_link | delete_link | create_resource | "
+        "delete_resource | assign_resource | remove_assignment\n"
+        "create_resource makes a global resource (labor/nonlabor/material) "
+        "with an optional cost_per_qty rate; assign_resource prices the "
+        "assignment from that rate and writes units/time consistent with "
+        "the activity duration so F9 does not re-derive the duration from "
+        "the assignment ledger.\n"
         "params: proj_id; add_task: name, duration_h, task_code (auto if "
         "omitted), task_type (task/milestone/finish_milestone/loe or TT_*), "
         "wbs_id or wbs_path ('1.2.3' short names, default project root), "

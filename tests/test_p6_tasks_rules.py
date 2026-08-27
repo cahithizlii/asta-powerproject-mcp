@@ -123,4 +123,4 @@ class TestActionTable:
         assert set(tasks.ACTIONS) == {
             "create_project", "add_wbs", "add_task", "update_task",
             "delete_task", "add_link", "delete_link", "assign_resource",
-            "remove_assignment"}
+            "remove_assignment", "create_resource", "delete_resource"}

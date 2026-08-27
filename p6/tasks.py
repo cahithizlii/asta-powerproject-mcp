@@ -528,6 +528,115 @@ def delete_link(params: Mapping[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+RESOURCE_TYPES = {"labor": "RT_Labor", "nonlabor": "RT_Equip",
+                  "material": "RT_Mat"}
+
+
+def create_resource(params: Mapping[str, Any]) -> dict[str, Any]:
+    """Create a global resource (RSRC) with an optional price (RSRCRATE).
+
+    Resources are enterprise-level in P6 -- there is no proj_id here. The
+    calendar defaults to the database default calendar; the rate row starts
+    at 1900-01-01 so it covers every assignment date.
+    """
+    short = params.get("rsrc_short_name") or params.get("short_name")
+    name = params.get("rsrc_name") or params.get("name") or short
+    if not short:
+        raise w.P6WriteError("'rsrc_short_name' zorunlu.")
+    rtype_in = str(params.get("rsrc_type") or "labor").strip()
+    rtype = RESOURCE_TYPES.get(rtype_in.lower(), rtype_in if
+                               rtype_in.startswith("RT_") else None)
+    if rtype is None:
+        raise w.P6WriteError(
+            "rsrc_type labor/nonlabor/material (veya RT_*) olmali: " + rtype_in)
+    price = params.get("cost_per_qty") or params.get("price_per_unit")
+    dry = bool(params.get("dry_run"))
+    if not dry:
+        w.require_confirm(params, "Kaynak olusturma")
+    with w.open_session(params) as s:
+        dup = s.scalar("SELECT COUNT(*) FROM RSRC WHERE rsrc_short_name = ? "
+                       "AND delete_session_id IS NULL", short)
+        if dup:
+            raise w.P6WriteError("rsrc_short_name zaten var: " + str(short))
+        clndr_id = params.get("clndr_id") or s.scalar(
+            "SELECT TOP 1 clndr_id FROM CALENDAR WHERE default_flag = 'Y' "
+            "AND delete_session_id IS NULL")
+        if clndr_id is None:
+            raise w.P6WriteError("Varsayilan takvim yok; 'clndr_id' verin.")
+        curr_id = s.scalar("SELECT MIN(curr_id) FROM CURRTYPE") or 1
+        if dry:
+            return {"action": "create_resource", "dry_run": True,
+                    "would_insert": {"rsrc_short_name": short,
+                                     "rsrc_name": name, "rsrc_type": rtype,
+                                     "cost_per_qty": price,
+                                     "clndr_id": int(clndr_id)}}
+        rsrc_id = s.reserve("rsrc_rsrc_id", 1)[0]
+        seq = s.scalar("SELECT ISNULL(MAX(rsrc_seq_num),0) + 1 FROM RSRC")
+        row = {
+            "rsrc_id": rsrc_id, "clndr_id": int(clndr_id),
+            "rsrc_seq_num": seq, "timesheet_flag": "N", "active_flag": "Y",
+            "rsrc_type": rtype, "auto_compute_act_flag": "Y", "ot_flag": "N",
+            "def_cost_qty_link_flag": "Y",
+            "rsrc_short_name": str(short)[:40], "rsrc_name": str(name)[:100],
+            "curr_id": int(curr_id), "def_qty_per_hr": 1,
+            "cost_qty_type": "QT_Hour", "guid": _guid(),
+            "unit_id": params.get("unit_id"),
+        }
+        cols = s.columns("RSRC")
+        s.stamp_audit(row, cols)
+        s.insert_rows("RSRC", [c for c in cols if c in row], [row])
+        rate_id = None
+        if price is not None:
+            rate_id = s.reserve("rsrcrate_rsrc_rate_id", 1)[0]
+            rrow = {"rsrc_rate_id": rate_id, "rsrc_id": rsrc_id,
+                    "start_date": "1900-01-01 00:00:00",
+                    "max_qty_per_hr": params.get("max_qty_per_hr", 1),
+                    "cost_per_qty": float(price)}
+            rcols = s.columns("RSRCRATE")
+            s.stamp_audit(rrow, rcols)
+            s.insert_rows("RSRCRATE", [c for c in rcols if c in rrow], [rrow])
+        return {"action": "create_resource", "rsrc_id": rsrc_id,
+                "rsrc_short_name": row["rsrc_short_name"],
+                "rsrc_name": row["rsrc_name"], "rsrc_type": rtype,
+                "clndr_id": int(clndr_id),
+                "rate": ({"rsrc_rate_id": rate_id,
+                          "cost_per_qty": float(price)}
+                         if price is not None else None)}
+
+
+def delete_resource(params: Mapping[str, Any]) -> dict[str, Any]:
+    """Soft-delete a resource that has no live assignments."""
+    short = params.get("rsrc_short_name") or params.get("short_name")
+    if not short:
+        raise w.P6WriteError("'rsrc_short_name' zorunlu.")
+    dry = bool(params.get("dry_run"))
+    if not dry:
+        w.require_confirm(params, "Kaynak silme")
+    with w.open_session(params) as s:
+        rid = s.scalar("SELECT rsrc_id FROM RSRC WHERE rsrc_short_name = ? "
+                       "AND delete_session_id IS NULL", short)
+        if rid is None:
+            raise w.P6WriteError("Kaynak yok: " + str(short))
+        live = s.scalar("SELECT COUNT(*) FROM TASKRSRC WHERE rsrc_id = ? "
+                        "AND delete_session_id IS NULL", rid)
+        if live:
+            raise w.P6WriteError(
+                "Kaynagin %s canli atamasi var -- once onlari kaldirin." % live)
+        if dry:
+            return {"action": "delete_resource", "dry_run": True,
+                    "rsrc_short_name": short}
+        session_id = s.reserve("usession_session_id", 1)[0]
+        for table in ("RSRCRATE", "RSRC"):
+            s.execute("UPDATE [%s] SET delete_session_id = ?, delete_date = ? "
+                      "WHERE rsrc_id = ? AND delete_session_id IS NULL" % table,
+                      session_id, s.stamp, rid)
+        return {"action": "delete_resource", "rsrc_short_name": short,
+                "rsrc_id": rid}
+
+
+# ---------------------------------------------------------------------------
 # Resource assignment
 # ---------------------------------------------------------------------------
 def assign_resource(params: Mapping[str, Any]) -> dict[str, Any]:
@@ -565,11 +674,19 @@ def assign_resource(params: Mapping[str, Any]) -> dict[str, Any]:
             cost_per_qty = float(rate) if rate is not None else 0.0
         cost_per_qty = float(cost_per_qty)
         target_cost = qty * cost_per_qty
-        # Units/time MUST be non-zero: F9 zeroes the activity's remaining AND
-        # planned duration when the assignment carries 0 units/hr (measured
-        # 26.08.2026 -- an 80h DT_FixedDrtn activity came back 0h). P6's own
-        # default is the resource's rate-sheet max units/time, full time = 1/hr.
+        # Units/time iki olcumun kesisiminde secilir:
+        # (1) SIFIR OLAMAZ -- 0 birim/saatlik atama F9'da aktivitenin kalan VE
+        #     planlanan suresini sifirlar (80h DT_FixedDrtn aktivite 0h dondu);
+        # (2) SUREYLE TUTARLI olmali -- defterden gelen 1/saat gibi bir oran,
+        #     F9'da sureyi atamanin biriminden yeniden turetir (80h'lik
+        #     aktivite 120 birim malzeme atamasiyla 120h'e uzadi).
+        # Oncelik: acik parametre > sure-tutarli oran (qty/sure) > defterdeki
+        # max_qty_per_hr > 1.0.
         qty_per_hr = params.get("qty_per_hr")
+        if qty_per_hr is None:
+            task_dur = float(task.get("target_drtn_hr_cnt") or 0)
+            if task_dur > 0 and qty > 0:
+                qty_per_hr = qty / task_dur
         if qty_per_hr is None:
             qty_per_hr = s.scalar(
                 "SELECT TOP 1 max_qty_per_hr FROM RSRCRATE WHERE rsrc_id = ? "
@@ -769,4 +886,6 @@ ACTIONS = {
     "delete_link": delete_link,
     "assign_resource": assign_resource,
     "remove_assignment": remove_assignment,
+    "create_resource": create_resource,
+    "delete_resource": delete_resource,
 }
